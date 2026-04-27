@@ -24,6 +24,7 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "@base/common": "workspace:*",
     "@base/config": "workspace:*",
     "@base/logger": "workspace:*",
     "@base/resilience": "workspace:*",

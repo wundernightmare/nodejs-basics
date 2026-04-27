@@ -9,11 +9,13 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
+import { ZodValidationPipe } from "nestjs-zod";
 
 import {
   createDomainExceptionFilter,
   generateRequestId,
   HttpExceptionFilter,
+  OptimisticLockConflictError,
   requestIdStorage,
   type ErrorMap,
 } from "@base/common";
@@ -22,6 +24,10 @@ import { registerHttpInstrumentation } from "@base/observability";
 
 import { AppModule } from "./app.module.js";
 import { fastifyOtelInstrumentation } from "./instrumentation.js";
+import {
+  TaskAlreadyArchivedError,
+  TaskNotFoundError,
+} from "./modules/tasks/domain/task.errors.js";
 
 /**
  * Wire the domain error → HTTP status map for your app here.
@@ -29,9 +35,15 @@ import { fastifyOtelInstrumentation } from "./instrumentation.js";
  */
 const ERROR_MAP: ErrorMap = {
   OptimisticLockConflictError: { status: 409 },
+  TaskNotFoundError: { status: 404 },
+  TaskAlreadyArchivedError: { status: 409 },
 };
+
+/** Classes the NestJS @Catch decorator binds the filter to. Add new errors here. */
 const DOMAIN_ERRORS: Array<new (...args: never[]) => Error> = [
-  // Add your DomainError subclasses here.
+  OptimisticLockConflictError,
+  TaskNotFoundError,
+  TaskAlreadyArchivedError,
 ];
 
 async function bootstrap(): Promise<void> {
@@ -71,6 +83,10 @@ async function bootstrap(): Promise<void> {
   await app.register(cookie, {
     secret: process.env["COOKIE_SECRET"] ?? "dev-only-cookie-secret-change-me",
   });
+
+  // Global zod validation — every controller method whose @Body() / @Query()
+  // is a `createZodDto`-derived class gets runtime validation for free.
+  app.useGlobalPipes(new ZodValidationPipe());
 
   // Global filters: domain errors first, then NestJS HttpException catch-all.
   app.useGlobalFilters(

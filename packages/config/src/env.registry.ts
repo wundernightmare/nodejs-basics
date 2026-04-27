@@ -257,4 +257,17 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     description: "Heap usage poll interval in milliseconds.",
     usedIn: ["observability"],
   },
+
+  // ─── Example modules ──────────────────────────────────────────────────────
+
+  {
+    key: "TASK_LIST_PAGE_SIZE",
+    yaml: "tasks.list_page_size",
+    required: false,
+    default: "50",
+    description:
+      "Default page size for GET /tasks when the caller does not pass ?limit. " +
+      "Belongs to the example tasks module — drop this entry when you replace it.",
+    usedIn: ["modules/tasks"],
+  },
 ];

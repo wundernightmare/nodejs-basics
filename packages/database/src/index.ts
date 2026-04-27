@@ -1,4 +1,5 @@
 export { DatabaseModule } from "./database.module.js";
+export { PgUnitOfWork } from "./pg-unit-of-work.service.js";
 export {
   PG_BREAKER,
   PG_CONFIG,
