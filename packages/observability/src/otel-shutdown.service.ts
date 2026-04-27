@@ -33,10 +33,11 @@ export class OtelShutdownService implements OnApplicationShutdown {
   async onApplicationShutdown(signal?: string): Promise<void> {
     this.logger.info({ "process.signal": signal ?? null }, "Flushing telemetry on shutdown");
 
-    const { tracerProvider, meterProvider } = this.handle;
+    const { tracerProvider, meterProvider, stopPyroscope } = this.handle;
     const results = await Promise.allSettled([
       withShutdownTimeout(tracerProvider.forceFlush().then(() => tracerProvider.shutdown())),
       withShutdownTimeout(meterProvider.forceFlush().then(() => meterProvider.shutdown())),
+      withShutdownTimeout(stopPyroscope()),
     ]);
 
     for (const result of results) {

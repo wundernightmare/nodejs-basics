@@ -29,3 +29,14 @@ cache:
 telemetry:
   service_name: app
   # otlp_endpoint: http://otel-collector:4317
+  # sentry_dsn: https://your-key@o123.ingest.sentry.io/456    # leave unset → no-op
+  # pyroscope_address: http://pyroscope:4040                  # leave unset → no profiling
+
+# Diagnostics (heap snapshots, crash reports). All keys optional —
+# without an S3 bucket files are written to /tmp only.
+# diagnostics:
+#   s3_bucket: my-diagnostics-bucket
+#   heap_snapshot_prefix: heap-snapshots
+#   crash_report_prefix: crash-reports
+#   heap_oom_threshold: "0.85"
+#   heap_oom_poll_ms: "10000"

@@ -12,13 +12,23 @@
  *   GET  /admin/info       Build info + uptime
  *   GET  /admin/log-level  Current pino root level
  *   PUT  /admin/log-level  Change pino root level at runtime
+ *   POST /debug/heapdump   Capture a V8 heap snapshot           (if HeapSnapshotService is enabled)
+ *   POST /debug/report     Diagnostic report + heap snapshot    (if CrashReportService is enabled)
  */
 import http from "node:http";
 
-import { Inject, Injectable, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  OnApplicationBootstrap,
+  OnApplicationShutdown,
+  Optional,
+} from "@nestjs/common";
 
 import { AppLogger, ecsError, pinoLogger } from "@base/logger";
 
+import { CrashReportService } from "./crash-report.service.js";
+import { HeapSnapshotService } from "./heap-snapshot.service.js";
 import { ReadinessService } from "./readiness.service.js";
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
 
@@ -31,6 +41,8 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     private readonly readiness: ReadinessService,
     @Inject(TELEMETRY_HANDLE) private readonly telemetry: TelemetryHandle,
     appLogger: AppLogger,
+    @Optional() private readonly heapSnapshot?: HeapSnapshotService,
+    @Optional() private readonly crashReport?: CrashReportService,
   ) {
     this.logger = appLogger.child(AdminServerService.name);
   }
@@ -45,9 +57,18 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
       this.server!.listen(port, "0.0.0.0", () => {
+        const routes = [
+          "GET /metrics",
+          "GET /livez",
+          "GET /readyz",
+          "GET /admin/info",
+          "GET|PUT /admin/log-level",
+          ...(this.heapSnapshot ? ["POST /debug/heapdump"] : []),
+          ...(this.crashReport ? ["POST /debug/report"] : []),
+        ];
         this.logger.info(
           { "server.port": port },
-          "Admin server listening — GET /metrics · GET /livez · GET /readyz · GET /admin/info · GET|PUT /admin/log-level",
+          `Admin server listening — ${routes.join(" · ")}`,
         );
         resolve();
       });
@@ -130,6 +151,47 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         })
         .catch((err: Error) => {
           this.sendJson(res, 500, { error: err.message });
+        });
+      return;
+    }
+
+    if (method === "POST" && path === "/debug/heapdump") {
+      if (!this.heapSnapshot) {
+        this.sendJson(res, 503, { triggered: false, error: "HeapSnapshotService not enabled" });
+        return;
+      }
+      void this.heapSnapshot
+        .capture("manual")
+        .then((location) => {
+          if (location === null) {
+            this.sendJson(res, 409, {
+              triggered: false,
+              reason: "Another capture is already in progress",
+            });
+          } else {
+            this.sendJson(res, 200, { triggered: true, location });
+          }
+        })
+        .catch((err: Error) => {
+          this.logger.error({ ...ecsError(err) }, "Heapdump request failed");
+          this.sendJson(res, 500, { triggered: false, error: err.message });
+        });
+      return;
+    }
+
+    if (method === "POST" && path === "/debug/report") {
+      if (!this.crashReport) {
+        this.sendJson(res, 503, { triggered: false, error: "CrashReportService not enabled" });
+        return;
+      }
+      void this.crashReport
+        .writeDiagnosticReport("manual")
+        .then((result) => {
+          this.sendJson(res, 200, { triggered: true, ...result });
+        })
+        .catch((err: Error) => {
+          this.logger.error({ ...ecsError(err) }, "Diagnostic report request failed");
+          this.sendJson(res, 500, { triggered: false, error: err.message });
         });
       return;
     }

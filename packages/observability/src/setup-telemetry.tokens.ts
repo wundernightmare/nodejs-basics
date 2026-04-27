@@ -8,4 +8,6 @@ export interface TelemetryHandle {
   prometheusExporter: PrometheusExporter;
   meterProvider: MeterProvider;
   tracerProvider: BasicTracerProvider;
+  /** Stops the Pyroscope profiler if it was started. No-op otherwise. */
+  stopPyroscope: () => Promise<void>;
 }

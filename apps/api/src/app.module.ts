@@ -24,6 +24,8 @@ import { telemetry } from "./instrumentation.js";
     ObservabilityModule.forRoot({
       telemetry,
       enableDbMetrics: true,
+      enableHeapSnapshot: true,
+      enableCrashReport: true,
       readinessChecks: {
         provide: READINESS_CHECKS,
         inject: [PG_POOL, VALKEY_CLIENT],

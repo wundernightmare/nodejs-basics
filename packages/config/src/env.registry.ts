@@ -182,4 +182,79 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     description: "OTLP gRPC endpoint for trace export (e.g. http://otel-collector:4317).",
     usedIn: ["observability"],
   },
+
+  // ─── Sentry ────────────────────────────────────────────────────────────────
+
+  {
+    key: "SENTRY_DSN",
+    yaml: "telemetry.sentry_dsn",
+    required: false,
+    description:
+      "Sentry DSN for error reporting. When unset, Sentry.init() runs as a no-op " +
+      "and exceptions are not captured. @sentry/nestjs auto-instruments NestJS error " +
+      "handling once initialised.",
+    usedIn: ["observability"],
+  },
+
+  // ─── Pyroscope (continuous profiling) ─────────────────────────────────────
+
+  {
+    key: "PYROSCOPE_SERVER_ADDRESS",
+    yaml: "telemetry.pyroscope_address",
+    required: false,
+    description:
+      "Pyroscope server URL (e.g. http://pyroscope:4040). When unset, the profiler " +
+      "is not started.",
+    usedIn: ["observability"],
+  },
+
+  // ─── Heap snapshots / crash reports ───────────────────────────────────────
+
+  {
+    key: "HEAP_SNAPSHOT_S3_BUCKET",
+    yaml: "diagnostics.s3_bucket",
+    required: false,
+    description:
+      "S3 bucket for heap snapshots and crash diagnostic reports. " +
+      "If unset, files are written to the local /tmp directory only.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "HEAP_SNAPSHOT_S3_PREFIX",
+    yaml: "diagnostics.heap_snapshot_prefix",
+    required: false,
+    default: "heap-snapshots",
+    description: "S3 key prefix for heap snapshots within the bucket.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "CRASH_REPORT_S3_PREFIX",
+    yaml: "diagnostics.crash_report_prefix",
+    required: false,
+    default: "crash-reports",
+    description: "S3 key prefix for crash diagnostic reports within the bucket.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "HEAP_OOM_THRESHOLD",
+    yaml: "diagnostics.heap_oom_threshold",
+    required: false,
+    default: "0.85",
+    description:
+      "Fraction of heap_size_limit that triggers a near-OOM heap snapshot. " +
+      "Default: 0.85 (capture when used heap exceeds 85% of the V8 limit).",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "HEAP_OOM_POLL_INTERVAL_MS",
+    yaml: "diagnostics.heap_oom_poll_ms",
+    required: false,
+    default: "10000",
+    description: "Heap usage poll interval in milliseconds.",
+    usedIn: ["observability"],
+  },
 ];

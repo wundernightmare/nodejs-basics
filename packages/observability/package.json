@@ -2,7 +2,7 @@
   "name": "@base/observability",
   "version": "0.0.1",
   "private": true,
-  "description": "OpenTelemetry SDK setup, Node/HTTP/DB metrics, admin server with /metrics, /livez, /readyz, /admin/log-level.",
+  "description": "OpenTelemetry SDK setup, Sentry, Pyroscope, Node/HTTP/DB metrics, heap snapshot + crash report services, admin server (/metrics, /livez, /readyz, /admin/log-level, /debug/heapdump, /debug/report).",
   "type": "module",
   "exports": {
     ".": {
@@ -24,6 +24,7 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1032.0",
     "@base/cache": "workspace:*",
     "@base/database": "workspace:*",
     "@base/logger": "workspace:*",
@@ -36,6 +37,8 @@
     "@opentelemetry/sdk-metrics": "2.7.0",
     "@opentelemetry/sdk-trace-base": "2.7.0",
     "@opentelemetry/semantic-conventions": "1.40.0",
+    "@pyroscope/nodejs": "0.4.11",
+    "@sentry/nestjs": "10.49.0",
     "iovalkey": "0.3.3",
     "pg": "8.20.0"
   },

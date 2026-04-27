@@ -6,17 +6,21 @@
  *
  *   // apps/api/src/main.ts (very first line)
  *   import { setupTelemetry } from "@base/observability";
- *   const telemetry = setupTelemetry();
+ *   export const telemetry = setupTelemetry({ ... });
  *
- * Returns the providers so the OtelShutdownService can flush them on exit.
+ * Returns the handle so OtelShutdownService can flush providers on exit.
  *
  * Wires:
+ *  - Sentry (optional, no-op if SENTRY_DSN unset)
  *  - Prometheus metrics exporter (server is started by AdminServerService)
  *  - OTLP gRPC trace exporter (OTEL_EXPORTER_OTLP_ENDPOINT, default :4317)
  *  - W3C trace + baggage propagators
- *  - Auto-instrumentation: Fastify, NestJS, Undici, AWS SDK
+ *  - Auto-instrumentation: caller-supplied (Fastify, NestJS, Undici, AWS, ...)
  *  - Default Node.js process metrics
+ *  - Pyroscope continuous profiling (optional, gated on PYROSCOPE_SERVER_ADDRESS)
  */
+import { hostname } from "node:os";
+
 import { metrics, propagation, trace } from "@opentelemetry/api";
 import {
   CompositePropagator,
@@ -30,14 +34,13 @@ import { resourceFromAttributes } from "@opentelemetry/resources";
 import { MeterProvider } from "@opentelemetry/sdk-metrics";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
+import Pyroscope from "@pyroscope/nodejs";
+import * as Sentry from "@sentry/nestjs";
 
 import { registerNodeMetrics } from "./node-metrics.js";
+import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
 
-export interface TelemetryHandle {
-  prometheusExporter: PrometheusExporter;
-  meterProvider: MeterProvider;
-  tracerProvider: BasicTracerProvider;
-}
+export { TELEMETRY_HANDLE, type TelemetryHandle };
 
 export interface SetupTelemetryOptions {
   serviceName?: string;
@@ -50,11 +53,24 @@ export interface SetupTelemetryOptions {
 }
 
 export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHandle {
-  const serviceName =
-    options.serviceName ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
-  const serviceVersion =
-    options.serviceVersion ?? process.env["npm_package_version"] ?? "0.0.1";
+  const serviceName = options.serviceName ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
+  const serviceVersion = options.serviceVersion ?? process.env["npm_package_version"] ?? "0.0.1";
 
+  // ─── Sentry ────────────────────────────────────────────────────────────────
+  // Initialise before OTel so Sentry captures startup errors too.
+  // - skipOpenTelemetrySetup: we own the OTel SDK lifecycle below; Sentry
+  //   must not register its own providers, propagators, or span processors.
+  // - tracesSampleRate=0: traces flow via OTel/OTLP, not Sentry.
+  // A missing SENTRY_DSN makes Sentry a no-op — safe to call unconditionally.
+  Sentry.init({
+    dsn: process.env["SENTRY_DSN"],
+    environment: process.env["NODE_ENV"] ?? "development",
+    release: process.env["npm_package_version"],
+    skipOpenTelemetrySetup: true,
+    tracesSampleRate: 0,
+  });
+
+  // ─── Resource ──────────────────────────────────────────────────────────────
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: serviceName,
     [ATTR_SERVICE_VERSION]: serviceVersion,
@@ -102,5 +118,31 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   // ─── Default Node.js process metrics ──────────────────────────────────────
   registerNodeMetrics(metrics.getMeter("nodejs"));
 
-  return { prometheusExporter, meterProvider, tracerProvider };
+  // ─── Pyroscope continuous profiling ───────────────────────────────────────
+  // Wall-clock CPU samples shipped to a Pyroscope server. No-op when
+  // PYROSCOPE_SERVER_ADDRESS is unset. Init failure is swallowed — telemetry
+  // must never break the application.
+  let pyroscopeStarted = false;
+  const pyroscopeAddress = process.env["PYROSCOPE_SERVER_ADDRESS"];
+  if (pyroscopeAddress !== undefined && pyroscopeAddress !== "") {
+    try {
+      Pyroscope.init({
+        serverAddress: pyroscopeAddress,
+        appName: serviceName,
+        tags: { hostname: hostname() },
+      });
+      Pyroscope.start();
+      pyroscopeStarted = true;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[setupTelemetry] Failed to start Pyroscope:", err);
+    }
+  }
+
+  const stopPyroscope = async (): Promise<void> => {
+    if (!pyroscopeStarted) return;
+    await Pyroscope.stop();
+  };
+
+  return { prometheusExporter, meterProvider, tracerProvider, stopPyroscope };
 }
