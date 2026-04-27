@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: app
+    # Pulls /metrics from the API's admin server (ADMIN_PORT, default 9090).
+    # `host.docker.internal` resolves to the host on Docker Desktop; on Linux
+    # set --add-host=host.docker.internal:host-gateway in compose if needed.
+    static_configs:
+      - targets: ["host.docker.internal:9090"]

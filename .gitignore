@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Coverage / test reports
+coverage/
+reports/
+.stryker-tmp/
+test-results/
+playwright-report/
+.hypothesis/
+
+# Caches
+.cache/
+.turbo/
+.swc/
+.eslintcache
+.tsc-cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+*.heapsnapshot
+
+# Local secrets / scratch
+.local/
+secrets/
+*.local

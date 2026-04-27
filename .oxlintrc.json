@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "restriction": "off",
+    "suspicious": "error",
+    "pedantic": "warn",
+    "style": "off",
+    "perf": "warn"
+  },
+  "options": {
+    "typeAware": true
+  },
+  "rules": {
+    "max-classes-per-file": "off",
+    "max-lines-per-function": "off",
+    "max-lines": "off",
+    "no-extraneous-class": ["error", { "allowWithDecorator": true }],
+    "no-negated-condition": "off",
+    "no-unsafe-type-assertion": "off",
+    "no-unnecessary-type-arguments": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.spec.ts", "test/**/*.ts"],
+      "rules": {
+        "unbound-method": "off",
+        "no-promise-executor-return": "off",
+        "no-inline-comments": "off",
+        "no-unsafe-assignment": "off",
+        "no-unsafe-member-access": "off"
+      }
+    }
+  ]
+}

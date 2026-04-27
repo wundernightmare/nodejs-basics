@@ -1,0 +1,94 @@
+# Local development dependencies.
+#
+# Services:
+#   postgres   — PostgreSQL 18              localhost:5432
+#   valkey     — Redis-compatible cache     localhost:6379
+#   redpanda   — Redpanda (Kafka)           localhost:9092
+#
+# Usage (from repo root):
+#   just deps        |  docker compose -f docker/deps.yml up -d
+#   just down-deps   |  docker compose -f docker/deps.yml down
+#
+# App config (config.yaml or env):
+#   DATABASE_URL:  postgresql://app:app@localhost:5432/app
+#   VALKEY_URL:    redis://localhost:6379
+#   KAFKA_BROKERS: localhost:9092
+
+name: nodejs-basics-deps
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: nodejs-basics-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "idle_session_timeout=60000"
+      - "-c"
+      - "idle_in_transaction_session_timeout=30000"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:9.0
+    container_name: nodejs-basics-valkey
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --save
+      - "60 1"
+      - --loglevel
+      - notice
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redpanda:
+    image: redpandadata/redpanda:v26.1.1
+    container_name: nodejs-basics-redpanda
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,EXTERNAL://localhost:9092
+      - --pandaproxy-addr=PLAINTEXT://0.0.0.0:8082
+      - --advertise-pandaproxy-addr=PLAINTEXT://redpanda:8082
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+    ports:
+      - "9092:9092"
+      - "8082:8082"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+
+volumes:
+  postgres_data:
+  valkey_data:
+  redpanda_data:

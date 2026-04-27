@@ -1,0 +1,30 @@
+{
+  "name": "@base/config",
+  "version": "0.0.1",
+  "private": true,
+  "description": "YAML config loader with env-var overlay, env registry validation, and Secret-file watcher.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --fix src",
+    "format": "oxfmt \"src/**/*.ts\"",
+    "format:check": "oxfmt --check \"src/**/*.ts\"",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "clean": "tsc --build --clean && rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@base/logger": "workspace:*",
+    "yaml": "2.8.3"
+  }
+}

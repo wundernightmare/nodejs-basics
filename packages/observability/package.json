@@ -1,0 +1,49 @@
+{
+  "name": "@base/observability",
+  "version": "0.0.1",
+  "private": true,
+  "description": "OpenTelemetry SDK setup, Node/HTTP/DB metrics, admin server with /metrics, /livez, /readyz, /admin/log-level.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --fix src",
+    "format": "oxfmt \"src/**/*.ts\"",
+    "format:check": "oxfmt --check \"src/**/*.ts\"",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "clean": "tsc --build --clean && rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@base/cache": "workspace:*",
+    "@base/database": "workspace:*",
+    "@base/logger": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.7.0",
+    "@opentelemetry/exporter-prometheus": "0.215.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "0.215.0",
+    "@opentelemetry/instrumentation": "0.215.0",
+    "@opentelemetry/resources": "2.7.0",
+    "@opentelemetry/sdk-metrics": "2.7.0",
+    "@opentelemetry/sdk-trace-base": "2.7.0",
+    "@opentelemetry/semantic-conventions": "1.40.0",
+    "iovalkey": "0.3.3",
+    "pg": "8.20.0"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "11.x",
+    "fastify": "5.x"
+  },
+  "devDependencies": {
+    "@types/pg": "8.20.0"
+  }
+}

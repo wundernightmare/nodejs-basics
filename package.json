@@ -1,0 +1,48 @@
+{
+  "name": "nodejs-basics",
+  "version": "0.0.1",
+  "description": "Cloneable NestJS template: config, logger, telemetry, db, cache, kafka, jobs, idempotency, resilient HTTP client.",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start:dev": "pnpm --filter @base/api start:dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "format": "pnpm -r format",
+    "format:check": "pnpm -r format:check",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test:run",
+    "check": "pnpm -r check",
+    "clean": "pnpm -r clean"
+  },
+  "pnpm": {
+    "overrides": {
+      "fastify": "5.8.5",
+      "@types/pg": "8.20.0",
+      "zod": "4.3.6"
+    },
+    "onlyBuiltDependencies": [
+      "@confluentinc/kafka-javascript",
+      "libpq",
+      "pg-native"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "25.6.0",
+    "@typescript/native-preview": "7.0.0-dev.20260418.1",
+    "@vitest/coverage-v8": "4.1.4",
+    "lefthook": "2.1.6",
+    "oxfmt": "0.45.0",
+    "oxlint": "1.60.0",
+    "oxlint-tsgolint": "0.21.1",
+    "tsx": "4.21.0",
+    "typescript": "6.0.3",
+    "vite": "8.0.8",
+    "vitest": "4.1.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

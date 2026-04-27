@@ -1,0 +1,26 @@
+{
+  "semi": true,
+  "singleQuote": false,
+  "tabWidth": 2,
+  "trailingComma": "all",
+  "printWidth": 100,
+  "arrowParens": "always",
+  "importOrder": [
+    "^(node:.*)$",
+    "<THIRD_PARTY_MODULES>",
+    "^@base/(.*)$",
+    "^[./]"
+  ],
+  "importOrderSeparation": true,
+  "importOrderSortSpecifiers": true,
+  "importOrderParserPlugins": [
+    "typescript",
+    "decorators-legacy"
+  ],
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "pnpm-lock.yaml"
+  ]
+}

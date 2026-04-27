@@ -1,0 +1,16 @@
+# Git hooks. Install once after cloning:
+#   pnpm install
+#   pnpm lefthook install
+#
+# Skip a single invocation with `LEFTHOOK=0 git commit ...` only if
+# absolutely necessary — CI runs the same checks.
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      run: pnpm -r format:check
+    lint:
+      run: pnpm -r lint
+    typecheck:
+      run: pnpm -r typecheck
