@@ -258,6 +258,42 @@ it — Prometheus is just unscraped, traces are dropped.
 | `just obs`         | docker compose up Jaeger/Prometheus     |
 | `just dev`         | start apps/api in watch mode            |
 
+## Worktrees (multi-branch dev)
+
+This repo can be cloned as a **bare-repo container** so each branch is a clean
+sibling checkout — like the Go/Rust sibling repos. Don't nest worktrees inside a
+live checkout, or tooling will scan every branch's `node_modules` / `dist`.
+
+```sh
+# one-time container
+git clone --bare git@github.com:wundernightmare/nodejs-basics.git nodejs-basics/.bare
+cd nodejs-basics && echo 'gitdir: ./.bare' > .git
+git --git-dir=.bare config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin
+git worktree add main main
+cp main/wt ./wt && chmod +x ./wt   # the wt helper lives at the container root
+
+# per branch — the `wt` helper wraps the extra setup:
+./wt add feat/x          # worktree + mise trust + pnpm install + link secrets
+./wt list
+./wt rm  feat/x
+```
+
+What `git worktree add` does **not** do, and `wt` does:
+
+- `mise trust` the new worktree (else mise-shimmed tools fail with a misleading
+  "error parsing config file");
+- `pnpm install` to wire up node_modules + native deps (the global pnpm store
+  makes this mostly hardlinks — fast);
+- link machine-local secrets/config (`.env*`, `apps/api/config.yaml`) from the
+  canonical `main/` worktree.
+
+**Build cache.** pnpm's content-addressable store
+(`~/.local/share/pnpm/store`) is global, so install reuse across worktrees is
+automatic. **Docker** `docker/deps.yml` is a singleton (fixed project name
+`nodejs-basics-deps` + host ports) — run one deps stack and every worktree
+reaches it at `localhost:<port>`.
+
 ## License
 
 UNLICENSED — replace with your project's license.

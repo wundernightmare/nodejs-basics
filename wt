@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# wt — worktree helper for the nodejs-basics bare-container layout.
+#
+# Layout this manages (clone the repo as a bare container — see README
+# "Worktrees"):
+#   nodejs-basics/           <- container (this dir); holds .bare + .git pointer + wt
+#   ├── .bare/               <- bare git dir
+#   ├── main/                <- worktree (canonical; secrets live here)
+#   └── <branch>/            <- per-branch worktrees (slashes -> dashes)
+#
+# Place this script at the container root (next to .bare). It must NOT live
+# inside a worktree, or it would resolve the container path wrong.
+#
+# What `git worktree add` does NOT do, and this wraps:
+#   1. trust the worktree's mise.toml (new paths aren't trusted yet)
+#   2. `pnpm install` so the workspace's node_modules + native deps are wired up
+#      (the pnpm store is global, so this mostly hardlinks — fast)
+#   3. link machine-local secrets/config (.env*, apps/api/config.yaml) from the
+#      canonical `main/` worktree — by presence, so it's a no-op until they exist
+#
+# Reminders this prints (things the layout can't fix for you):
+#   - the local docker stack (docker/deps.yml + docker/stack.yml) is a SINGLETON:
+#     fixed project names + host ports, so only one stack runs across all
+#     worktrees. Bring infra up from one worktree; others reach it at
+#     localhost:<port>.
+#   - pnpm's content-addressable store (~/.local/share/pnpm/store) is global, so
+#     install reuse across worktrees is automatic.
+#
+# Usage:
+#   ./wt add <branch> [base-ref]   # base defaults to origin/main (new branches only)
+#   ./wt add <branch> --no-install # skip pnpm install
+#   ./wt rm  <branch> [--force]    # remove a worktree (refuses if dirty unless --force)
+#   ./wt list
+set -euo pipefail
+
+CONTAINER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CANON="$CONTAINER/main"
+GIT() { git -C "$CONTAINER" "$@"; }
+
+# Machine-local files to mirror from main/ into a new worktree, by presence.
+# These are gitignored; a fresh worktree starts without them. .env.example and
+# config.example.yaml are tracked, so skip them.
+secret_globs=( ".env" ".env.*" "apps/api/config.yaml" )
+
+die() { echo "wt: $*" >&2; exit 1; }
+
+sanitize() { printf '%s' "${1//\//-}"; }   # feat/foo -> feat-foo (flat dir names)
+
+link_secrets() {
+  local dst="$1" rel src linked=0
+  [[ -d "$CANON" ]] || return 0
+  shopt -s nullglob
+  for g in "${secret_globs[@]}"; do
+    for src in "$CANON"/$g; do
+      [[ -e "$src" ]] || continue
+      rel="${src#"$CANON"/}"
+      [[ "$rel" == ".env.example" || "$rel" == *config.example.yaml ]] && continue
+      mkdir -p "$dst/$(dirname "$rel")"
+      if [[ ! -e "$dst/$rel" ]]; then
+        ln -s "$src" "$dst/$rel"
+        echo "  linked: $rel -> main/$rel"
+        linked=1
+      fi
+    done
+  done
+  shopt -u nullglob
+  [[ "$linked" == 0 ]] && echo "  (no machine-local secrets/config in main/ to link — nothing to do)"
+}
+
+cmd_add() {
+  local branch="" base="origin/main" install=1
+  for a in "$@"; do
+    case "$a" in
+      --no-install) install=0 ;;
+      -*) die "unknown flag: $a" ;;
+      *) if [[ -z "$branch" ]]; then branch="$a"; else base="$a"; fi ;;
+    esac
+  done
+  [[ -n "$branch" ]] || die "usage: wt add <branch> [base-ref] [--no-install]"
+
+  local dir path; dir="$(sanitize "$branch")"; path="$CONTAINER/$dir"
+  [[ -e "$path" ]] && die "path already exists: $path"
+
+  GIT fetch --quiet origin || true
+  if GIT show-ref --verify --quiet "refs/heads/$branch"; then
+    echo "→ existing local branch '$branch'"
+    GIT worktree add "$path" "$branch"
+  elif GIT show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    echo "→ tracking remote branch 'origin/$branch'"
+    GIT worktree add "$path" --track -b "$branch" "origin/$branch"
+  else
+    echo "→ new branch '$branch' from '$base'"
+    GIT worktree add "$path" -b "$branch" "$base"
+  fi
+
+  # New worktree paths aren't trusted by mise; without this, tools resolved via
+  # mise shims can fail to start with a misleading "error parsing config file".
+  if command -v mise >/dev/null; then
+    echo "trust mise config…"
+    ( cd "$path" && mise trust >/dev/null && mise install >/dev/null 2>&1 ) \
+      && echo "  mise trusted + tools installed" \
+      || echo "  mise trust failed — run 'mise trust' in $dir/ manually"
+  fi
+
+  echo "secrets/config:"
+  link_secrets "$path"
+
+  if [[ "$install" == 1 ]] && command -v pnpm >/dev/null; then
+    echo "pnpm install (global store, mostly hardlinks)…"
+    ( cd "$path" && pnpm install ) || echo "  pnpm install failed — run it manually in $dir/"
+  else
+    echo "(skipped pnpm install)"
+  fi
+
+  cat <<EOF
+
+✓ worktree ready: $path  (branch: $branch)
+  cd $path
+  • pnpm store is global + content-addressed — install reuse is automatic
+  • Docker: the deps/stack is a SINGLETON — don't bring up a second stack;
+    reach the shared one at localhost:<port> (bring it up from one worktree)
+EOF
+}
+
+cmd_rm() {
+  local target="" force=0
+  for a in "$@"; do
+    case "$a" in
+      --force|-f) force=1 ;;
+      *) target="$a" ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "usage: wt rm <branch-or-dir> [--force]"
+  local dir path; dir="$(sanitize "$target")"; path="$CONTAINER/$dir"
+  [[ -d "$path" ]] || die "no such worktree: $path"
+  [[ "$path" == "$CANON" ]] && die "refusing to remove the canonical main worktree"
+  if [[ "$force" != 1 && -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
+    die "worktree '$dir' has uncommitted changes; commit them or pass --force"
+  fi
+  GIT worktree remove ${force:+--force} "$path" 2>/dev/null || { rm -rf "$path"; GIT worktree prune; }
+  echo "✓ removed $dir"
+}
+
+case "${1:-}" in
+  add)  shift; cmd_add "$@" ;;
+  rm)   shift; cmd_rm "$@" ;;
+  list|ls|"") GIT worktree list ;;
+  *) die "unknown command: $1  (use: add | rm | list)" ;;
+esac
