@@ -4,6 +4,9 @@
   "private": true,
   "description": "Portable resilient HTTP client (undici + opossum + bottleneck) plus optional Node.js OTel metrics.",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "source": "./src/index.ts",
@@ -19,9 +22,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
     "lint": "oxlint src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",

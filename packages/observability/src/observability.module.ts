@@ -64,10 +64,5 @@ export class ObservabilityModule {
 }
 
 function isProvider(value: unknown): value is Provider<ReadinessCheck[]> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "provide" in value
-  );
+  return typeof value === "object" && value !== null && !Array.isArray(value) && "provide" in value;
 }

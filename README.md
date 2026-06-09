@@ -7,7 +7,13 @@ for any new service. Bring your own domain.
 
 ```
 apps/
-  api/                   Reference NestJS app wiring everything together.
+  api/                   Reference NestJS app wiring everything together. Publishes
+                         a task.created event to Kafka on write. (+ distroless Dockerfile)
+  worker/                Kafka consumer worker: drains tasks.events, enqueues a
+                         BullMQ job, processes it. (+ distroless Dockerfile)
+
+e2e/                     Playwright API e2e (health, tasks CRUD, Kafka→BullMQ flow).
+benchmarks/              k6 load test for the tasks API.
 
 packages/
   resilient-client       undici + opossum + bottleneck HTTP client.
@@ -55,6 +61,30 @@ Optional observability stack:
 
 ```sh
 just obs                           # Jaeger :16686, Prometheus :9090
+```
+
+### The whole thing in containers (api + worker)
+
+```sh
+just stack-up                      # build + run deps + api + worker images
+curl -XPOST localhost:3000/tasks -H 'content-type: application/json' -d '{"title":"hi"}'
+curl -s localhost:9093/metrics | grep worker_tasks   # the worker drained the event
+just stack-down
+```
+
+The distroless images build the whole pnpm workspace and ship it on
+`gcr.io/distroless/nodejs22` (non-root). The native
+`@confluentinc/kafka-javascript` addon links only libstdc++/glibc (librdkafka is
+bundled), which the distroless base provides.
+
+### Tests, e2e, load, security
+
+```sh
+just stack-up && just e2e          # Playwright API e2e against the running stack
+just bench-tasks smoke             # k6 load test (needs the stack up)
+just setup-sec                     # one-time: install the AppSec toolchain (mise)
+just sec                           # gitleaks + semgrep + osv-scanner + hadolint
+just docker-build api              # build an image; docker-scan-ci api → grype --fail-on high
 ```
 
 ## Renaming `@base` to your org

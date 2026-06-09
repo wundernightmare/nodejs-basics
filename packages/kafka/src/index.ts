@@ -1,4 +1,5 @@
 export {
+  buildConsumerConfig,
   buildKafkaClientConfig,
   buildProducerConfig,
   type KafkaRdKafkaConfig,

@@ -1,0 +1,54 @@
+name: appsec
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for gitleaks
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  sast:
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - run: semgrep ci --config p/owasp-top-ten --config p/typescript
+        env:
+          SEMGREP_RULES: ""
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      # osv-scanner-action is a reusable workflow, not a step action; install the
+      # pinned binary directly and run it over the pnpm lockfile.
+      - run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
+      - run: osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml
+
+  hadolint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dockerfile: [apps/api/Dockerfile, apps/worker/Dockerfile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+          config: .hadolint.yaml
+          failure-threshold: error # the action defaults to "info"; pin it

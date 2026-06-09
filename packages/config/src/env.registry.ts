@@ -52,8 +52,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "app.node_env",
     required: false,
     default: "development",
-    description:
-      "Runtime environment. Sets secure-cookie flag and selects the default log level.",
+    description: "Runtime environment. Sets secure-cookie flag and selects the default log level.",
     usedIn: ["main.ts", "logger"],
   },
 

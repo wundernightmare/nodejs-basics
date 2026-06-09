@@ -1,0 +1,9 @@
+# osv-scanner config — OSV.dev advisories against pnpm-lock.yaml. Run via
+# `just sec-deps`.
+#
+# Document every ignore with the affected package, the reason, and a removal
+# trigger so waivers don't outlive their justification. Example:
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# reason = "transitive only, not reachable; remove when <dep> bumps past vX.Y.Z"
