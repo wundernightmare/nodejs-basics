@@ -1,0 +1,131 @@
+# GitLab CI — mirrors .github/workflows/{ci,appsec,docker}.yml.
+#
+# pnpm workspace (packages/*, apps/*, e2e). The container-backed test job uses
+# GitLab service containers (Postgres + Valkey); e2e + Docker builds use a
+# Docker-in-Docker service. pnpm is pinned to 10.33.0 (the lockfile's version).
+
+stages:
+  - check
+  - test
+  - security
+  - docker
+
+default:
+  image: node:22-bookworm
+  before_script:
+    - corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+# ── check: typecheck + lint + format across the workspace ─────────────────────
+check:
+  stage: check
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm check
+
+# ── test: vitest with Postgres + Valkey service containers ────────────────────
+test:
+  stage: test
+  services:
+    - name: postgres:18
+      alias: postgres
+    - name: valkey/valkey:9.0
+      alias: valkey
+  variables:
+    POSTGRES_DB: app
+    POSTGRES_USER: app
+    POSTGRES_PASSWORD: app
+    DATABASE_URL: postgresql://app:app@postgres:5432/app
+    VALKEY_URL: redis://valkey:6379
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm test
+
+# ── e2e: Playwright API suite against the running stack (deps + api + worker) ──
+e2e:
+  stage: test
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - apk add --no-cache nodejs npm bash
+    - corepack enable && corepack prepare pnpm@10.33.0 --activate
+  script:
+    - pnpm install --frozen-lockfile
+    - docker compose -f docker/deps.yml up -d
+    - docker compose -f docker/stack.yml up -d --build
+    - pnpm --filter @base/e2e exec playwright test
+  after_script:
+    - docker compose -f docker/stack.yml down -v || true
+    - docker compose -f docker/deps.yml down -v || true
+
+# ── security (AppSec) — mirrors appsec.yml ────────────────────────────────────
+secret-detection:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  before_script: []
+  script:
+    - gitleaks detect --source . --config .gitleaks.toml --verbose
+
+sast:
+  stage: security
+  image:
+    name: semgrep/semgrep:latest
+    entrypoint: [""]
+  before_script: []
+  script:
+    - semgrep ci --config p/owasp-top-ten --config p/typescript
+
+dependency-scanning:
+  stage: security
+  image: golang:1.25-bookworm
+  before_script: []
+  script:
+    - go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
+    - "$(go env GOPATH)/bin/osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml"
+
+hadolint:
+  stage: security
+  image:
+    name: hadolint/hadolint:latest-debian
+    entrypoint: [""]
+  before_script: []
+  parallel:
+    matrix:
+      - DOCKERFILE: [apps/api/Dockerfile, apps/worker/Dockerfile]
+  script:
+    - hadolint --config .hadolint.yaml "$DOCKERFILE"
+
+# ── docker: build each image, generate an SBOM, scan for CVEs ─────────────────
+docker-build-scan:
+  stage: docker
+  image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    GRYPE_DB_VALIDATE_AGE: "false"
+  parallel:
+    matrix:
+      - APP:
+          - api
+          - worker
+  before_script:
+    - apk add --no-cache curl bash
+    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.44.0
+    - curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.112.0
+  script:
+    - docker build -f "apps/$APP/Dockerfile" -t "nodejs-basics-$APP:ci" .
+    - syft "nodejs-basics-$APP:ci" -o cyclonedx-json=sbom-$APP.json
+    - grype "nodejs-basics-$APP:ci" --config .grype.yaml --fail-on high
+  artifacts:
+    paths:
+      - sbom-*.json
+    expire_in: 1 week
