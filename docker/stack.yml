@@ -7,7 +7,7 @@
 #   just stack-up      # brings deps up, then builds + runs the app image
 #   just stack-down    # tears everything (app + deps + volumes) down
 #
-# The app reaches the broker at redpanda:9092 and Postgres/Valkey by their
+# The app reaches the broker at redpanda:29092 and Postgres/Valkey by their
 # compose service names — see docker/deps.yml.
 
 name: nodejs-basics-stack
@@ -25,7 +25,7 @@ services:
       ADMIN_PORT: "9090"
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       VALKEY_URL: redis://valkey:6379
-      KAFKA_BROKERS: redpanda:9092
+      KAFKA_BROKERS: redpanda:29092
     ports:
       - "3000:3000"
       # Container admin port is 9090; published to host 9091 to avoid clashing
@@ -44,7 +44,7 @@ services:
     environment:
       ADMIN_PORT: "9090"
       VALKEY_URL: redis://valkey:6379
-      KAFKA_BROKERS: redpanda:9092
+      KAFKA_BROKERS: redpanda:29092
       # Catch events produced before the worker joined the group (demo/e2e).
       KAFKA_CONSUMER_AUTO_OFFSET_RESET: earliest
     ports:

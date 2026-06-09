@@ -76,8 +76,12 @@ services:
       # demo/dev broker (the app's tasks.events topic is not pre-provisioned).
       - --set
       - redpanda.auto_create_topics_enabled=true
-      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
-      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,EXTERNAL://localhost:9092
+      # Two Kafka listeners: INTERNAL (advertised as redpanda:29092 for app
+      # containers) and HOST (advertised as localhost:9092 for host processes).
+      # A client reconnects to the advertised address, so each must be reachable
+      # from where its clients run.
+      - --kafka-addr=INTERNAL://0.0.0.0:29092,HOST://0.0.0.0:9092
+      - --advertise-kafka-addr=INTERNAL://redpanda:29092,HOST://localhost:9092
       - --pandaproxy-addr=PLAINTEXT://0.0.0.0:8082
       - --advertise-pandaproxy-addr=PLAINTEXT://redpanda:8082
       - --rpc-addr=0.0.0.0:33145
