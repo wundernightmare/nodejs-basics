@@ -241,6 +241,11 @@ export function toClientOptions(result: ValkeyBuilderResult): Record<string, unk
  * the hood). Forces `maxRetriesPerRequest: null` because BullMQ's worker
  * blocking commands cannot tolerate the per-call retry loop, and
  * `enableReadyCheck: false` because BullMQ does its own ping handshake.
+ *
+ * Note: `commandTimeout` is deliberately NOT propagated. BullMQ workers issue
+ * long-lived blocking commands (BZPOPMIN/BRPOPLPUSH) that legitimately outlast
+ * any per-command timeout — setting one makes ioredis abort the blocking poll
+ * with "Command timed out" and the worker never drains the queue.
  */
 export function toBullMqOptions(result: ValkeyBuilderResult): Record<string, unknown> {
   return {
@@ -251,7 +256,6 @@ export function toBullMqOptions(result: ValkeyBuilderResult): Record<string, unk
     db: result.db,
     ...(result.tls ? { tls: result.tls } : {}),
     connectTimeout: result.connectTimeoutMs,
-    commandTimeout: result.commandTimeoutMs,
     keepAlive: result.keepaliveMs > 0 ? result.keepaliveMs : 0,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,

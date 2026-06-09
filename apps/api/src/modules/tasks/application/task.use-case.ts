@@ -17,10 +17,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 
 import { generateId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
-import { AppLogger } from "@base/logger";
+import { KafkaProducerService } from "@base/kafka";
+import { AppLogger, ecsError } from "@base/logger";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskAlreadyArchivedError, TaskNotFoundError } from "../domain/task.errors.js";
+import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "../domain/task.events.js";
 import {
   TASK_REPOSITORY,
   type TaskRepository,
@@ -39,6 +41,7 @@ export class TaskUseCase {
   constructor(
     @Inject(TASK_REPOSITORY) private readonly repo: TaskRepository,
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
+    private readonly kafka: KafkaProducerService,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(TaskUseCase.name);
@@ -59,12 +62,37 @@ export class TaskUseCase {
       });
     });
 
-    // Step 3 — side effects after commit. Example: publish a TaskCreated
-    // event to Kafka here, or fire a webhook. Failure is logged, never
-    // rolled back — the row is already committed.
+    // Step 3 — side effects after commit. Publish a TaskCreated event to Kafka
+    // (apps/worker drains it). Best-effort: the row is already committed, so a
+    // broker hiccup is logged, never rolled back. (Production closes this gap
+    // with a transactional outbox.)
     this.logger.info({ "task.id": task.id }, "Task created");
+    // Fire-and-forget: a best-effort side effect must not block (or fail) the
+    // response — the row is already committed. publishCreated swallows its own
+    // errors; `void` marks the floating promise intentional.
+    void this.publishCreated(task);
 
     return task;
+  }
+
+  private async publishCreated(task: Task): Promise<void> {
+    const event: TaskCreatedEvent = {
+      type: "task.created",
+      id: task.id,
+      title: task.title,
+      createdAt: task.createdAt.toISOString(),
+    };
+    try {
+      await this.kafka.producer.send({
+        topic: TASK_EVENTS_TOPIC,
+        messages: [{ key: task.id, value: JSON.stringify(event) }],
+      });
+    } catch (err) {
+      this.logger.warn(
+        { ...ecsError(err as Error), "task.id": task.id },
+        "Failed to publish task.created event",
+      );
+    }
   }
 
   async update(id: string, expectedVersion: number, patch: UpdateTaskInput): Promise<Task> {

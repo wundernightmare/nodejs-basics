@@ -121,7 +121,8 @@ export function buildKafkaClientConfig(
   clientIdSuffix?: string,
 ): KafkaRdKafkaConfig {
   const brokers = config.get<string>("KAFKA_BROKERS") ?? "localhost:9092";
-  const clientId = config.get<string>("KAFKA_CLIENT_ID") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
+  const clientId =
+    config.get<string>("KAFKA_CLIENT_ID") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
 
   const out: KafkaRdKafkaConfig = {
     "metadata.broker.list": brokers,

@@ -16,6 +16,9 @@ test-results/
 playwright-report/
 .hypothesis/
 
+# k6 load-test output
+benchmarks/results/
+
 # Caches
 .cache/
 .turbo/

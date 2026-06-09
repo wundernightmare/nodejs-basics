@@ -1,0 +1,12 @@
+# hadolint config — Dockerfile linting for every apps/*/Dockerfile.
+# Run via `just sec-iac`.
+ignored:
+  - DL3059 # multiple consecutive RUN — readability over layer-count here
+  - DL3016 # pin npm versions — pnpm is pinned via corepack prepare pnpm@<ver>
+
+failure-threshold: warning
+
+trustedRegistries:
+  - docker.io
+  - gcr.io
+  - ghcr.io

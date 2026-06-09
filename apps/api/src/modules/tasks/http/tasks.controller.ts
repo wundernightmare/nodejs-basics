@@ -8,16 +8,7 @@
  *   - Throwing domain errors directly — the global DomainExceptionFilter
  *     turns them into RFC 9457 problem+json responses
  */
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Patch,
-  Post,
-  Query,
-} from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from "@nestjs/common";
 
 import { Idempotent } from "@base/idempotency";
 

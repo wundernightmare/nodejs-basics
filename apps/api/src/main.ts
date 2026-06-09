@@ -24,10 +24,7 @@ import { registerHttpInstrumentation } from "@base/observability";
 
 import { AppModule } from "./app.module.js";
 import { fastifyOtelInstrumentation } from "./instrumentation.js";
-import {
-  TaskAlreadyArchivedError,
-  TaskNotFoundError,
-} from "./modules/tasks/domain/task.errors.js";
+import { TaskAlreadyArchivedError, TaskNotFoundError } from "./modules/tasks/domain/task.errors.js";
 
 /**
  * Wire the domain error → HTTP status map for your app here.
@@ -49,7 +46,10 @@ const DOMAIN_ERRORS: Array<new (...args: never[]) => Error> = [
 async function bootstrap(): Promise<void> {
   const adapter = new FastifyAdapter({
     disableRequestLogging: true, // we register our own access logs in registerHttpInstrumentation
-    logger: pinoLogger,
+    // Fastify 5 takes a pre-built logger via `loggerInstance`; the `logger`
+    // option only accepts a config object (passing an instance there throws
+    // FST_ERR_LOG_INVALID_LOGGER_CONFIG).
+    loggerInstance: pinoLogger,
     genReqId: (): string => generateRequestId(),
   });
 
@@ -67,7 +67,9 @@ async function bootstrap(): Promise<void> {
   // Per-request ALS for x-request-id — read by ResilientClient downstream so
   // outbound calls echo the same id and traces correlate.
   adapter.getInstance().addHook("onRequest", (req, _reply, done) => {
-    requestIdStorage.run(req.id as string, () => done());
+    requestIdStorage.run(req.id, () => {
+      done();
+    });
   });
 
   registerHttpInstrumentation(adapter.getInstance());

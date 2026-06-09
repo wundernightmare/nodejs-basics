@@ -66,10 +66,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
           ...(this.heapSnapshot ? ["POST /debug/heapdump"] : []),
           ...(this.crashReport ? ["POST /debug/report"] : []),
         ];
-        this.logger.info(
-          { "server.port": port },
-          `Admin server listening — ${routes.join(" · ")}`,
-        );
+        this.logger.info({ "server.port": port }, `Admin server listening — ${routes.join(" · ")}`);
         resolve();
       });
     });

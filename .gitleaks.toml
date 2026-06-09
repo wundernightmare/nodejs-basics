@@ -1,0 +1,19 @@
+# gitleaks config — secret scanning across the working tree + history.
+# Run via `just sec-secrets`. Extends the bundled default ruleset; add per-path
+# allowlist entries for dev-only fixtures that look like credentials rather than
+# tagging literals inline.
+title = "nodejs-basics gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths and patterns that are safe by construction"
+paths = [
+  '''(^|/)pnpm-lock\.yaml$''',         # lockfile hashes are not secrets
+  '''(^|/)config\.example\.yaml$''',   # documented placeholder config
+  '''\.env\.example$''',
+]
+regexes = [
+  '''app:app@''',     # the local dev Postgres DSN in docs/compose (app/app)
+]

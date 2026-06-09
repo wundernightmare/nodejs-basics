@@ -1,0 +1,18 @@
+# grype config — container image CVE scanning. Used by `just docker-scan` /
+# `docker-scan-ci`. The distroless/nodejs base ships node + glibc/libstdc++ and
+# almost no OS packages, so findings are nearly always in the npm dependency
+# graph (mirrored by `just sec-deps`).
+#
+# Fail the CI variant on HIGH+ (the recipe passes --fail-on high explicitly).
+# Document every waiver below with a removal trigger.
+ignore:
+  # Base-OS (Debian) CVEs the distro marked won't-fix / not-fixed: not patchable
+  # at our layer — mitigated by periodic base-image refresh, not a code change.
+  - fix-state: wont-fix
+    package:
+      type: deb
+  - fix-state: not-fixed
+    package:
+      type: deb
+#  - vulnerability: GHSA-xxxx-xxxx-xxxx   # npm-dep waiver template
+#    reason: "transitive only, not reachable; remove when <dep> bumps past vX.Y.Z"

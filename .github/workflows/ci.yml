@@ -61,3 +61,26 @@ jobs:
         env:
           DATABASE_URL: postgresql://app:app@localhost:5432/app
           VALKEY_URL: redis://localhost:6379
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Bring up the data services + build & run the app images, then drive the
+      # Playwright API suite against them (health, tasks CRUD, Kafka→BullMQ flow).
+      - run: docker compose -f docker/deps.yml up -d
+      - run: docker compose -f docker/stack.yml up -d --build
+      - run: pnpm --filter @base/e2e exec playwright test
+      - if: always()
+        run: |
+          docker compose -f docker/stack.yml down -v
+          docker compose -f docker/deps.yml down -v

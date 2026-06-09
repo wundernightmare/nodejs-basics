@@ -12,8 +12,5 @@ export {
   pgPoolProvider,
   pgReadonlyPoolProvider,
 } from "./pg-pool.provider.js";
-export {
-  buildPostgresConfig,
-  type PostgresBuilderResult,
-} from "./postgres-config.builder.js";
+export { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 export { transactionStorage } from "./transaction.storage.js";

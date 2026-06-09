@@ -4,6 +4,9 @@
   "private": true,
   "description": "Pino logger configured for ECS, OpenTelemetry trace correlation, and AsyncLocalStorage request context.",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "source": "./src/index.ts",
@@ -14,8 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
     "lint": "oxlint src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",

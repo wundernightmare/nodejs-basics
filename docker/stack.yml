@@ -1,0 +1,59 @@
+# The application stack — the api (and, later, a worker) — wired to the backing
+# services from docker/deps.yml. The in-container counterpart to `just dev`: it
+# proves the production image talks to real Postgres, Valkey and Kafka over a
+# shared network (and boots cleanly on its own admin port, free of the host's).
+#
+# Usage (from repo root):
+#   just stack-up      # brings deps up, then builds + runs the app image
+#   just stack-down    # tears everything (app + deps + volumes) down
+#
+# The app reaches the broker at redpanda:9092 and Postgres/Valkey by their
+# compose service names — see docker/deps.yml.
+
+name: nodejs-basics-stack
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: nodejs-basics-api:dev
+    container_name: nodejs-basics-api
+    restart: on-failure
+    environment:
+      PORT: "3000"
+      ADMIN_PORT: "9090"
+      DATABASE_URL: postgresql://app:app@postgres:5432/app
+      VALKEY_URL: redis://valkey:6379
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "3000:3000"
+      # Container admin port is 9090; published to host 9091 to avoid clashing
+      # with a host service on 9090 (e.g. Cockpit on Fedora).
+      - "9091:9090"
+    networks:
+      - deps
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    image: nodejs-basics-worker:dev
+    container_name: nodejs-basics-worker
+    restart: on-failure
+    environment:
+      ADMIN_PORT: "9090"
+      VALKEY_URL: redis://valkey:6379
+      KAFKA_BROKERS: redpanda:9092
+      # Catch events produced before the worker joined the group (demo/e2e).
+      KAFKA_CONSUMER_AUTO_OFFSET_RESET: earliest
+    ports:
+      - "9093:9090" # worker admin on host 9093 (9092 is the broker)
+    networks:
+      - deps
+
+networks:
+  # The network docker/deps.yml creates (compose names it "<project>_default").
+  deps:
+    name: nodejs-basics-deps_default
+    external: true

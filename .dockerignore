@@ -1,0 +1,15 @@
+# Keep the build context small and force a clean install/build inside the image.
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+# Stale incremental-build state would make tsc think dist is already up to date
+# (and skip emitting) — but dist is excluded above, so the build must be fresh.
+**/*.tsbuildinfo
+.git
+.github
+**/*.log
+**/.DS_Store
+e2e/playwright-report
+e2e/test-results
+benchmarks/results

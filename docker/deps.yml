@@ -72,6 +72,10 @@ services:
       - start
       - --node-id=0
       - --check=false
+      # Auto-create topics on first produce/subscribe — convenient for a
+      # demo/dev broker (the app's tasks.events topic is not pre-provisioned).
+      - --set
+      - redpanda.auto_create_topics_enabled=true
       - --kafka-addr=PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
       - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,EXTERNAL://localhost:9092
       - --pandaproxy-addr=PLAINTEXT://0.0.0.0:8082

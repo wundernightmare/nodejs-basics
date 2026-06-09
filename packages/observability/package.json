@@ -4,6 +4,9 @@
   "private": true,
   "description": "OpenTelemetry SDK setup, Sentry, Pyroscope, Node/HTTP/DB metrics, heap snapshot + crash report services, admin server (/metrics, /livez, /readyz, /admin/log-level, /debug/heapdump, /debug/report).",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "source": "./src/index.ts",
@@ -14,8 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsgo -p tsconfig.json --noEmit",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
     "lint": "oxlint src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
