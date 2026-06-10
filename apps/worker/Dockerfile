@@ -26,6 +26,15 @@ COPY . .
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 RUN pnpm build
+# Strip the dev-tool native binaries that ship via devDependencies — Go binaries
+# (tsgo, oxlint's tsgolint, lefthook) never invoked by the running worker, but
+# grype flags their bundled Go stdlib. Every runtime dep + the emitted dist is
+# untouched, so the image still boots. See apps/api/Dockerfile for why a full
+# pnpm-workspace prune is unreliable here.
+RUN rm -rf node_modules/.pnpm/@typescript+native-preview-linux-* \
+           node_modules/.pnpm/@oxlint-tsgolint+linux-* \
+           node_modules/.pnpm/lefthook-linux-* \
+           node_modules/.pnpm/lefthook-*
 
 FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
