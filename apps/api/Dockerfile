@@ -47,6 +47,19 @@ RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 # Build every package + the app (workspace packages emit their dist in place).
 RUN pnpm build
+# Strip the dev-tool native binaries that ship via devDependencies. These are Go
+# binaries — tsgo (typecheck), oxlint's tsgolint, lefthook (git hooks) — never
+# invoked by the running service (the container runs `node dist/src/main.js`),
+# but grype flags their bundled, older Go stdlib. Removing the .pnpm packages
+# leaves every runtime dependency and the emitted dist untouched, so the image
+# still boots; it just no longer carries unreachable dev-tool CVEs.
+# (A full pnpm-workspace prod prune is unreliable in Docker — `pnpm prune --prod`
+# drops prod deps it can't see from the root manifest, and `pnpm install --prod`
+# is a no-op once the dev tree exists — so we target the offenders directly.)
+RUN rm -rf node_modules/.pnpm/@typescript+native-preview-linux-* \
+           node_modules/.pnpm/@oxlint-tsgolint+linux-* \
+           node_modules/.pnpm/lefthook-linux-* \
+           node_modules/.pnpm/lefthook-*
 
 # ── Stage 2 – runtime ────────────────────────────────────────────────────────
 # distroless/nodejs ships node + glibc/libstdc++ — no shell, no package manager.
