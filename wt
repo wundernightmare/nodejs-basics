@@ -5,7 +5,7 @@
 # "Worktrees"):
 #   nodejs-basics/           <- container (this dir); holds .bare + .git pointer + wt
 #   ├── .bare/               <- bare git dir
-#   ├── main/                <- worktree (canonical; secrets live here)
+#   ├── master/              <- worktree (canonical; secrets live here)
 #   └── <branch>/            <- per-branch worktrees (slashes -> dashes)
 #
 # Place this script at the container root (next to .bare). It must NOT live
@@ -16,7 +16,7 @@
 #   2. `pnpm install` so the workspace's node_modules + native deps are wired up
 #      (the pnpm store is global, so this mostly hardlinks — fast)
 #   3. link machine-local secrets/config (.env*, apps/api/config.yaml) from the
-#      canonical `main/` worktree — by presence, so it's a no-op until they exist
+#      canonical `master/` worktree — by presence, so it's a no-op until they exist
 #
 # Reminders this prints (things the layout can't fix for you):
 #   - the local docker stack (docker/deps.yml + docker/stack.yml) is a SINGLETON:
@@ -27,17 +27,17 @@
 #     install reuse across worktrees is automatic.
 #
 # Usage:
-#   ./wt add <branch> [base-ref]   # base defaults to origin/main (new branches only)
+#   ./wt add <branch> [base-ref]   # base defaults to origin/master (new branches only)
 #   ./wt add <branch> --no-install # skip pnpm install
 #   ./wt rm  <branch> [--force]    # remove a worktree (refuses if dirty unless --force)
 #   ./wt list
 set -euo pipefail
 
 CONTAINER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CANON="$CONTAINER/main"
+CANON="$CONTAINER/master"
 GIT() { git -C "$CONTAINER" "$@"; }
 
-# Machine-local files to mirror from main/ into a new worktree, by presence.
+# Machine-local files to mirror from master/ into a new worktree, by presence.
 # These are gitignored; a fresh worktree starts without them. .env.example and
 # config.example.yaml are tracked, so skip them.
 secret_globs=( ".env" ".env.*" "apps/api/config.yaml" )
@@ -58,17 +58,17 @@ link_secrets() {
       mkdir -p "$dst/$(dirname "$rel")"
       if [[ ! -e "$dst/$rel" ]]; then
         ln -s "$src" "$dst/$rel"
-        echo "  linked: $rel -> main/$rel"
+        echo "  linked: $rel -> master/$rel"
         linked=1
       fi
     done
   done
   shopt -u nullglob
-  [[ "$linked" == 0 ]] && echo "  (no machine-local secrets/config in main/ to link — nothing to do)"
+  [[ "$linked" == 0 ]] && echo "  (no machine-local secrets/config in master/ to link — nothing to do)"
 }
 
 cmd_add() {
-  local branch="" base="origin/main" install=1
+  local branch="" base="origin/master" install=1
   for a in "$@"; do
     case "$a" in
       --no-install) install=0 ;;
@@ -133,7 +133,7 @@ cmd_rm() {
   [[ -n "$target" ]] || die "usage: wt rm <branch-or-dir> [--force]"
   local dir path; dir="$(sanitize "$target")"; path="$CONTAINER/$dir"
   [[ -d "$path" ]] || die "no such worktree: $path"
-  [[ "$path" == "$CANON" ]] && die "refusing to remove the canonical main worktree"
+  [[ "$path" == "$CANON" ]] && die "refusing to remove the canonical master worktree"
   if [[ "$force" != 1 && -n "$(git -C "$path" status --porcelain 2>/dev/null)" ]]; then
     die "worktree '$dir' has uncommitted changes; commit them or pass --force"
   fi
