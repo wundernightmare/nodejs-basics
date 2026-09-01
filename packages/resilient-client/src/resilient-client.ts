@@ -627,7 +627,7 @@ export class ResilientClient {
     return {
       statusCode: entry.statusCode,
       statusText: "",
-      headers: entry.headers as Dispatcher.ResponseData["headers"],
+      headers: entry.headers,
       body: new CachedBodyReadable(buf) as unknown as Dispatcher.ResponseData["body"],
       trailers: {},
       opaque: null,

@@ -17,38 +17,21 @@
     "check": "pnpm -r check",
     "clean": "pnpm -r clean"
   },
-  "pnpm": {
-    "overrides": {
-      "fastify": "5.8.5",
-      "@types/pg": "8.20.0",
-      "zod": "4.3.6",
-      "protobufjs": "8.2.0",
-      "uuid": "11.1.1",
-      "fast-uri": "3.1.2",
-      "fast-xml-builder": "1.1.9",
-      "brace-expansion": "5.0.6",
-      "@opentelemetry/exporter-prometheus": "0.217.0"
-    },
-    "onlyBuiltDependencies": [
-      "@confluentinc/kafka-javascript",
-      "libpq",
-      "pg-native"
-    ]
-  },
   "devDependencies": {
-    "@types/node": "25.6.0",
-    "@typescript/native-preview": "7.0.0-dev.20260418.1",
-    "@vitest/coverage-v8": "4.1.4",
-    "lefthook": "2.1.6",
-    "oxfmt": "0.45.0",
-    "oxlint": "1.60.0",
-    "oxlint-tsgolint": "0.21.1",
-    "tsx": "4.21.0",
+    "@types/node": "26.4.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "@vitest/coverage-v8": "4.1.11",
+    "lefthook": "2.1.12",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "oxlint-tsgolint": "7.0.2001",
+    "tsx": "4.23.13",
     "typescript": "6.0.3",
-    "vite": "8.0.8",
-    "vitest": "4.1.4"
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
   },
   "engines": {
-    "node": ">=22"
-  }
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.25.0"
 }

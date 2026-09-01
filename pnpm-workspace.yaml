@@ -2,3 +2,39 @@ packages:
   - 'packages/*'
   - 'apps/*'
   - 'e2e'
+
+# pnpm 11 no longer reads the `pnpm` field in package.json — overrides and
+# build-script approvals live here now (see https://pnpm.io/settings).
+
+# Transitive CVEs pinned out (see CLAUDE.md "AppSec"). Each entry forces a
+# floor on a dependency we don't declare directly; waivers that can't be
+# pinned out go in osv-scanner.toml / .grype.yaml instead.
+overrides:
+  fastify: 5.12.1
+  '@types/pg': 8.23.1
+  zod: 4.5.4
+  protobufjs: 8.8.0
+  uuid: 14.0.2
+  fast-uri: 4.1.3
+  fast-xml-builder: 1.3.1
+  brace-expansion: 5.0.9
+  '@opentelemetry/exporter-prometheus': 0.222.0
+  '@opentelemetry/core': 2.11.0
+
+# pnpm 11 turns an ignored build script into a hard install failure.
+allowBuilds:
+  '@confluentinc/kafka-javascript': true
+  '@datadog/pprof': true
+  '@nestjs/core': true
+  '@swc/core': true
+  esbuild: true
+  lefthook: true
+  libpq: true
+  msgpackr-extract: true
+  pg-native: true
+
+minimumReleaseAgeExclude:
+  - '@opentelemetry/core@2.11.0'
+  - '@opentelemetry/exporter-prometheus@0.222.0'
+  - '@opentelemetry/resources@2.11.0'
+  - '@opentelemetry/sdk-metrics@2.11.0'

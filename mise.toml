@@ -8,19 +8,19 @@
 # family drifts together.
 
 [tools]
-node = "22.15"
-k6   = "0.56.0"
+node = "24.20"
+k6   = "2.2.0"
 
 # AppSec — pinned for reproducibility. Bump here, then re-run `just setup-sec`.
 # Each `just sec-*` recipe invokes its tool via `mise exec --`.
-semgrep     = "1.163.0"
+semgrep     = "1.175.0"
 gitleaks    = "8.30.1"
-osv-scanner = "2.3.8"
-hadolint    = "2.14.0"
+osv-scanner = "2.5.1"
+hadolint    = "2.15.1"
 
 # Container CVE / SBOM — used by `just docker-scan` / `docker-scan-ci`.
-syft  = "1.44.0"
-grype = "0.112.0"
+syft  = "1.51.1"
+grype = "0.118.0"
 
 # Supply-chain signing — cosign in key-mode with `--tlog-upload=false`.
-cosign = "3.0.6"
+cosign = "3.1.3"

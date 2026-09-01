@@ -29,11 +29,11 @@
   "dependencies": {
     "@base/resilient-client": "workspace:*",
     "bottleneck": "2.19.5",
-    "opossum": "9.0.0"
+    "opossum": "10.0.0"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x",
-    "@nestjs/config": "4.x"
+    "@nestjs/common": "12.x",
+    "@nestjs/config": "12.x"
   },
   "devDependencies": {
     "@types/opossum": "8.1.9"

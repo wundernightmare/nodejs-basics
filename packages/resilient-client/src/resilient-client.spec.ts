@@ -460,7 +460,7 @@ describe("ResilientClient", () => {
     const res = await arrClient.request({
       path: "/q",
       method: "GET",
-      headers: ["x-custom", "val"] as unknown as Record<string, string>,
+      headers: ["x-custom", "val"],
     });
     expect(res.statusCode).toBe(200);
     await arrAgent.close();

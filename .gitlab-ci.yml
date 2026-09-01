@@ -11,9 +11,9 @@ stages:
   - docker
 
 default:
-  image: node:22-bookworm
+  image: node:24-bookworm
   before_script:
-    - corepack enable && corepack prepare pnpm@10.33.0 --activate
+    - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
 
 # ── check: typecheck + lint + format across the workspace ─────────────────────
 check:
@@ -52,7 +52,7 @@ e2e:
     DOCKER_TLS_CERTDIR: ""
   before_script:
     - apk add --no-cache nodejs npm bash
-    - corepack enable && corepack prepare pnpm@10.33.0 --activate
+    - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
   script:
     - pnpm install --frozen-lockfile
     - docker compose -f docker/deps.yml up -d

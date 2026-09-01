@@ -18,8 +18,9 @@ high-signal, easy-to-miss bits.
   (`DATABASE_URL` / `VALKEY_URL`).
 - AppSec: `just sec` (gitleaks + semgrep + osv-scanner + hadolint) +
   `just docker-scan-ci <app>` (grype `--fail-on high`). Transitive CVEs are
-  pinned out via `pnpm.overrides` in the root `package.json`; waivers go in
-  `osv-scanner.toml` / `.grype.yaml` with a documented removal trigger.
+  pinned out via `overrides` in `pnpm-workspace.yaml` (pnpm 11 no longer reads
+  the `pnpm` field in package.json); waivers go in `osv-scanner.toml` /
+  `.grype.yaml` with a documented removal trigger.
 
 ## Worktrees & the mise gotcha
 

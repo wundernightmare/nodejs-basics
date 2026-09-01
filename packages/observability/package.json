@@ -27,26 +27,26 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.1032.0",
+    "@aws-sdk/client-s3": "3.1121.0",
     "@base/cache": "workspace:*",
     "@base/database": "workspace:*",
     "@base/logger": "workspace:*",
     "@opentelemetry/api": "1.9.1",
-    "@opentelemetry/core": "2.7.0",
+    "@opentelemetry/core": "2.10.0",
     "@opentelemetry/exporter-prometheus": "0.215.0",
-    "@opentelemetry/exporter-trace-otlp-grpc": "0.215.0",
-    "@opentelemetry/instrumentation": "0.215.0",
-    "@opentelemetry/resources": "2.7.0",
-    "@opentelemetry/sdk-metrics": "2.7.0",
-    "@opentelemetry/sdk-trace-base": "2.7.0",
-    "@opentelemetry/semantic-conventions": "1.40.0",
-    "@pyroscope/nodejs": "0.4.11",
-    "@sentry/nestjs": "10.49.0",
-    "iovalkey": "0.3.3",
-    "pg": "8.20.0"
+    "@opentelemetry/exporter-trace-otlp-grpc": "0.221.0",
+    "@opentelemetry/instrumentation": "0.221.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-metrics": "2.10.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "@pyroscope/nodejs": "0.6.3",
+    "@sentry/nestjs": "10.72.0",
+    "iovalkey": "0.4.0",
+    "pg": "8.23.0"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x",
+    "@nestjs/common": "12.x",
     "fastify": "5.x"
   },
   "devDependencies": {

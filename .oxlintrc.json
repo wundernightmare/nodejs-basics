@@ -15,14 +15,23 @@
     "max-classes-per-file": "off",
     "max-lines-per-function": "off",
     "max-lines": "off",
-    "no-extraneous-class": ["error", { "allowWithDecorator": true }],
+    "no-extraneous-class": [
+      "error",
+      {
+        "allowWithDecorator": true
+      }
+    ],
     "no-negated-condition": "off",
     "no-unsafe-type-assertion": "off",
-    "no-unnecessary-type-arguments": "warn"
+    "no-unnecessary-type-arguments": "warn",
+    "no-underscore-dangle": "off"
   },
   "overrides": [
     {
-      "files": ["**/*.spec.ts", "test/**/*.ts"],
+      "files": [
+        "**/*.spec.ts",
+        "test/**/*.ts"
+      ],
       "rules": {
         "unbound-method": "off",
         "no-promise-executor-return": "off",

@@ -28,6 +28,6 @@
   },
   "dependencies": {
     "@base/logger": "workspace:*",
-    "yaml": "2.8.3"
+    "yaml": "2.9.0"
   }
 }

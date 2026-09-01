@@ -113,7 +113,7 @@ function resolveExtra(config: ConfigService): Partial<PoolConfig> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error("DATABASE_EXTRA_PROPERTIES must be a JSON object");
   }
-  return parsed as Partial<PoolConfig>;
+  return parsed;
 }
 
 /**
