@@ -270,8 +270,8 @@ git clone --bare git@github.com:wundernightmare/nodejs-basics.git nodejs-basics/
 cd nodejs-basics && echo 'gitdir: ./.bare' > .git
 git --git-dir=.bare config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 git fetch origin
-git worktree add main main
-cp main/wt ./wt && chmod +x ./wt   # the wt helper lives at the container root
+git worktree add master master
+cp master/wt ./wt && chmod +x ./wt   # the wt helper lives at the container root
 
 # per branch — the `wt` helper wraps the extra setup:
 ./wt add feat/x          # worktree + mise trust + pnpm install + link secrets
@@ -286,7 +286,7 @@ What `git worktree add` does **not** do, and `wt` does:
 - `pnpm install` to wire up node_modules + native deps (the global pnpm store
   makes this mostly hardlinks — fast);
 - link machine-local secrets/config (`.env*`, `apps/api/config.yaml`) from the
-  canonical `main/` worktree.
+  canonical `master/` worktree.
 
 **Build cache.** pnpm's content-addressable store
 (`~/.local/share/pnpm/store`) is global, so install reuse across worktrees is

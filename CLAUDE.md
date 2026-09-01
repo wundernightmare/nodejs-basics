@@ -25,7 +25,7 @@ high-signal, easy-to-miss bits.
 
 - Multi-branch work can use a **bare-repo container** (see README "Worktrees"),
   matching the Go/Rust siblings: the repo root is a bare container, code lives
-  in `main/` (or a branch worktree), and the `wt` helper at the container root
+  in `master/` (or a branch worktree), and the `wt` helper at the container root
   wraps `git worktree add` + `mise trust` + `pnpm install` + secret linking.
 - **The footgun:** a fresh worktree's `mise.toml` isn't trusted; mise-shimmed
   tools then fail with a misleading "error parsing config file". `wt` runs
