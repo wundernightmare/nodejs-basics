@@ -42,7 +42,7 @@ export class TasksController {
     const limitNum = limit !== undefined ? parseInt(limit, 10) : undefined;
     return this.queries.list(
       Number.isFinite(offsetNum) && offsetNum >= 0 ? offsetNum : 0,
-      Number.isFinite(limitNum as number) ? limitNum : undefined,
+      Number.isFinite(limitNum) ? limitNum : undefined,
     );
   }
 

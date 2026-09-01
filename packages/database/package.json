@@ -31,11 +31,11 @@
     "@base/config": "workspace:*",
     "@base/logger": "workspace:*",
     "@base/resilience": "workspace:*",
-    "pg": "8.20.0"
+    "pg": "8.23.0"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x",
-    "@nestjs/config": "4.x"
+    "@nestjs/common": "12.x",
+    "@nestjs/config": "12.x"
   },
   "devDependencies": {
     "@types/pg": "8.20.0"

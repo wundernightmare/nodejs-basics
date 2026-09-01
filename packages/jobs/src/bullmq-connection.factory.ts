@@ -14,5 +14,5 @@ import { buildValkeyConfig, toBullMqOptions } from "@base/cache";
  */
 export function createBullMQConnection(config: ConfigService): ConnectionOptions {
   const built = buildValkeyConfig(config);
-  return toBullMqOptions(built) as ConnectionOptions;
+  return toBullMqOptions(built);
 }

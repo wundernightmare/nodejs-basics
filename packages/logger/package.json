@@ -32,7 +32,7 @@
     "pino": "10.3.1"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x"
+    "@nestjs/common": "12.x"
   },
   "devDependencies": {
     "pino-pretty": "13.1.3"

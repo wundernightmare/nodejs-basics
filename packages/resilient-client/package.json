@@ -35,8 +35,8 @@
   "dependencies": {
     "@opentelemetry/api": "1.9.1",
     "bottleneck": "2.19.5",
-    "opossum": "9.0.0",
-    "undici": "8.1.0"
+    "opossum": "10.0.0",
+    "undici": "8.10.0"
   },
   "peerDependencies": {
     "@opentelemetry/sdk-metrics": "2.6.0"

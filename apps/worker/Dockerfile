@@ -15,12 +15,14 @@
 #   KAFKA_BROKERS  broker1:9092,broker2:9092
 # ─────────────────────────────────────────────────────────────────────────────
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-bookworm AS builder
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Node 26 no longer ships corepack, so install it before pinning pnpm.
+RUN npm install -g corepack@latest \
+    && corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
 COPY . .
 RUN --mount=type=cache,target=/pnpm/store \
@@ -36,7 +38,7 @@ RUN rm -rf node_modules/.pnpm/@typescript+native-preview-linux-* \
            node_modules/.pnpm/lefthook-linux-* \
            node_modules/.pnpm/lefthook-*
 
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-worker" \
       org.opencontainers.image.description="Kafka consumer + BullMQ worker draining tasks.events (nodejs-basics)" \

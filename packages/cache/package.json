@@ -30,10 +30,10 @@
     "@base/resilience": "workspace:*",
     "@base/resilient-client": "workspace:*",
     "@opentelemetry/api": "1.9.1",
-    "iovalkey": "0.3.3"
+    "iovalkey": "0.4.0"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x",
-    "@nestjs/config": "4.x"
+    "@nestjs/common": "12.x",
+    "@nestjs/config": "12.x"
   }
 }

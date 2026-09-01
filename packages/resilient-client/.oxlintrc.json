@@ -18,11 +18,14 @@
     "no-unsafe-type-assertion": "off",
     "no-useless-undefined": "off",
     "no-await-in-loop": "off",
-    "no-throw-literal": "off"
+    "no-throw-literal": "off",
+    "no-underscore-dangle": "off"
   },
   "overrides": [
     {
-      "files": ["**/*.spec.ts"],
+      "files": [
+        "**/*.spec.ts"
+      ],
       "rules": {
         "unbound-method": "off",
         "no-promise-executor-return": "off",

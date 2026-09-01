@@ -31,15 +31,17 @@
 #   KAFKA_BROKERS  broker1:9092,broker2:9092
 # ─────────────────────────────────────────────────────────────────────────────
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 # ── Stage 1 – builder ────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-bookworm AS builder
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
-# Pin pnpm to the version this lockfile was written with (CI uses pnpm 10);
-# corepack would otherwise pull the latest major and reject the lockfile.
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+# Pin pnpm to the version this lockfile was written with; corepack would
+# otherwise pull the latest major and reject the lockfile. Node 26 no longer
+# ships corepack, so install it first.
+RUN npm install -g corepack@latest \
+    && corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
 
 COPY . .
@@ -66,7 +68,7 @@ RUN rm -rf node_modules/.pnpm/@typescript+native-preview-linux-* \
 # The whole built workspace ships so the api's @base/* symlinks resolve to their
 # in-place dist; the native @confluentinc/kafka-javascript addon (built on the
 # matching glibc) loads against distroless' libstdc++.
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-api" \
       org.opencontainers.image.description="Reference NestJS API over Postgres + Valkey + Kafka (nodejs-basics)" \

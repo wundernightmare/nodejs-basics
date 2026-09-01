@@ -29,12 +29,12 @@
   "dependencies": {
     "@base/cache": "workspace:*",
     "@base/logger": "workspace:*",
-    "iovalkey": "0.3.3",
+    "iovalkey": "0.4.0",
     "rxjs": "7.8.2"
   },
   "peerDependencies": {
-    "@nestjs/common": "11.x",
-    "@nestjs/config": "4.x",
+    "@nestjs/common": "12.x",
+    "@nestjs/config": "12.x",
     "fastify": "5.x"
   }
 }
