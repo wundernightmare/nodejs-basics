@@ -73,3 +73,6 @@ allure-report/
 
 # e2e spawn-mode state (e2e/fixtures/services.ts)
 e2e/.e2e-state.json
+
+# scripts/schemathesis.sh scratch (api log)
+.run/

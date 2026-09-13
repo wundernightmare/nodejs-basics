@@ -6,14 +6,20 @@
 # `github.*` expression is inlined into a `run:` (always through `env:`).
 #
 #   check         typecheck + lint + format
+#   contracts     api/tsp → committed OpenAPI + TS types are current; oasdiff
+#                 breaking-change gate against the base branch (pull requests)
 #   unit          vitest project `unit`        → .cover/unit + allure-results
 #   integration   vitest project `integration` → .cover/integration + allure-results
 #                 (Postgres / Valkey / Redpanda from docker/deps.yml)
 #   e2e           built api + worker spawned under NODE_V8_COVERAGE, Playwright
 #                 → .cover/e2e + allure-results (+ the Playwright report on failure)
 #   e2e-stack     the production images (docker/stack.yml) serve the @smoke subset
+#   schemathesis  generated requests from the OpenAPI document against the built
+#                 api (scripts/schemathesis.sh) → allure-results
 #   coverage      istanbul-merge of the three layers, gate + no-regression ratchet
 #   allure-report one single-file HTML report from every layer's results
+#   fuzz          nightly / on demand: property specs with FC_NUM_RUNS=5000
+#   mutation      nightly / on demand: StrykerJS on packages/resilient-client → report artifact
 #   gate          the one required status check for branch protection
 name: CI
 
@@ -21,6 +27,9 @@ on:
   push:
     branches: [master]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *" # nightly: mutation testing + the deep property run (`mutation` / `fuzz` below)
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -39,6 +48,8 @@ jobs:
     outputs:
       NODE_VERSION: ${{ steps.pins.outputs.NODE_VERSION }}
       PNPM_VERSION: ${{ steps.pins.outputs.PNPM_VERSION }}
+      OASDIFF_VERSION: ${{ steps.pins.outputs.OASDIFF_VERSION }}
+      SCHEMATHESIS_VERSION: ${{ steps.pins.outputs.SCHEMATHESIS_VERSION }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: pins
@@ -59,6 +70,45 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm format:check
+
+  # Contracts: api/tsp compiles to exactly the committed OpenAPI document and
+  # TS types (`just contracts`), and on a pull request the HTTP contract has
+  # no breaking change against the base branch — oasdiff from its pinned
+  # image (OASDIFF_VERSION out of mise.toml; DOCKER_HUB for a closed network),
+  # waivers in api/oasdiff-breaking.ignore.
+  contracts:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DOCKER_HUB: ${{ vars.DOCKER_HUB || 'docker.io' }}
+      OASDIFF_VERSION: ${{ needs.versions.outputs.OASDIFF_VERSION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the base branch's spec for the breaking-change diff
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.versions.outputs.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: regenerate and compare
+        run: |
+          pnpm contracts
+          git diff --exit-code --stat -- api/openapi3 packages/contracts/src \
+            || { echo "::error::contracts are stale — run 'just contracts' and commit"; exit 1; }
+      - name: breaking changes against the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }} # never interpolate github.* into run: text (shell injection)
+        run: |
+          if git show "origin/$BASE_REF:api/openapi3/tasks.openapi.yaml" > base.openapi.yaml 2>/dev/null; then
+            docker run --rm -v "$PWD:/w:ro" -w /w "${DOCKER_HUB}/tufin/oasdiff:v${OASDIFF_VERSION}" \
+              breaking base.openapi.yaml api/openapi3/tasks.openapi.yaml --fail-on ERR --err-ignore api/oasdiff-breaking.ignore
+          else
+            echo "no base spec on $BASE_REF — first version"
+          fi
 
   # Unit layer: no services. Coverage goes to .cover/unit (istanbul json) so
   # the `coverage` job can merge it with the other layers; every test is an
@@ -206,6 +256,42 @@ jobs:
           docker compose -f docker/stack.yml down -v
           docker compose -f docker/deps.yml down -v
 
+  # Generative layer: Schemathesis (pinned image, SCHEMATHESIS_VERSION out of
+  # mise.toml) drives the built api with requests derived from
+  # api/openapi3/tasks.openapi.yaml — every operation, positive and negative
+  # data, no 5xx, every response in the contract's shape. Reports to Allure
+  # like every other layer; not a coverage input (the process runs outside
+  # NODE_V8_COVERAGE on purpose — it is the black box).
+  schemathesis:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ALLURE_RESULTS_DIR: ${{ github.workspace }}/allure-results
+      DOCKER_HUB: ${{ vars.DOCKER_HUB || 'docker.io' }}
+      SCHEMATHESIS_VERSION: ${{ needs.versions.outputs.SCHEMATHESIS_VERSION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: deps (Postgres, Valkey, Redpanda)
+        run: docker compose -f docker/deps.yml up -d --wait
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.versions.outputs.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: scripts/schemathesis.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && hashFiles('allure-results/**') != ''
+        with:
+          name: allure-results-schemathesis
+          path: allure-results
+          retention-days: 7
+      - if: failure()
+        run: tail -100 .run/schemathesis-api.log || true
+      - if: always()
+        run: docker compose -f docker/deps.yml down -v
+
   # One coverage number for the whole pyramid: the unit, integration and e2e
   # layers are istanbul-merged (hit counts summed per statement, nothing
   # counted twice) and gated by scripts/cover.config.mjs — the same as
@@ -274,10 +360,10 @@ jobs:
           retention-days: 7
 
   # One Allure HTML report from every layer's results (unit + integration +
-  # e2e). allure-commandline is a Node package (root package.json) and needs
+  # e2e + schemathesis). allure-commandline is a Node package (root package.json) and needs
   # a JRE; scripts/allure-meta.sh adds categories.json + executor.json.
   allure-report:
-    needs: [versions, unit, integration, e2e]
+    needs: [versions, unit, integration, e2e, schemathesis]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -306,9 +392,69 @@ jobs:
           path: allure-report/index.html
           retention-days: 14
 
+  # Property specs with the deep budget — nightly or on demand. `unit` already
+  # runs them per PR with 100 cases per property; here fast-check draws 5000
+  # (the Node analogue of FUZZTIME). A failure prints the shrunk
+  # counterexample and its seed in the log — pin it as an `examples:` entry of
+  # the property — so there is nothing to upload.
+  fuzz:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.versions.outputs.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: FC_NUM_RUNS=5000 pnpm fuzz
+
+  # Mutation testing of the pure-logic lib (StrykerJS, stryker.config.mjs) —
+  # nightly or on demand, never per PR: it re-runs the related specs once per
+  # mutant. The score table lands on the run page, the html + json report is
+  # the artifact; `thresholds.break` in stryker.config.mjs fails the job below
+  # the ratchet.
+  mutation:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ needs.versions.outputs.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: stryker
+        run: |
+          set -o pipefail
+          pnpm mutate 2>&1 | tee mutation.log
+      - name: score table → run summary
+        if: always()
+        run: |
+          {
+            echo '### Mutation testing (StrykerJS, packages/resilient-client)'
+            echo '```'
+            sed 's/\x1b\[[0-9;]*m//g' mutation.log | awk '/% Mutation score/{print prev; p=1} / INFO /{p=0} p{print} {prev=$0}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutation-report
+          path: |
+            reports/mutation/mutation.json
+            reports/mutation/mutation.html
+          retention-days: 14
+
   # Final status check for branch protection — the one required check.
   gate:
-    needs: [check, unit, integration, e2e, e2e-stack, coverage]
+    needs: [check, contracts, unit, integration, e2e, e2e-stack, schemathesis, coverage]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

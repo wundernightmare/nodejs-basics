@@ -1,0 +1,8 @@
+# Waivers for `oasdiff breaking` (just contracts-check / the contracts CI job).
+#
+# One waived change per line. oasdiff ignores a breaking change when a line
+# here contains both its endpoint ("POST /tasks") and its description, matched
+# case-insensitively as substrings; any other line is inert, so '#' lines
+# serve as comments.
+# Every waiver states why the change is safe and when to remove the line —
+# the same rule as the CVE waivers in .grype.yaml / osv-scanner.toml.

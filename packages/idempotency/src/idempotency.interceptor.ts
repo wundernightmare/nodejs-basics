@@ -5,9 +5,12 @@
  * Clients opt in by sending an `Idempotency-Key: <uuid>` header.
  *
  * Flow:
- *   1. Key absent → pass through (no-op).
- *   2. Key maps to a COMPLETED entry → replay the cached status + body,
- *      with `X-Idempotent-Replayed: true` response header.
+ *   1. Key absent → pass through (no-op). Key not a UUID → 400 problem.
+ *   2. Key maps to a COMPLETED entry for the *same request* (method, path and
+ *      body fingerprint) → replay the cached status + body, with
+ *      `X-Idempotent-Replayed: true`. Same key, different request → 409
+ *      problem: a key names one request, it must not hand a stranger — or a
+ *      retry with a corrupted body — someone else's 201.
  *   3. Key maps to PROCESSING → 409 (another request is in flight).
  *   4. Key absent in store → atomically set to PROCESSING (NX), execute the
  *      handler, then store the result. Lock released on error so the client
@@ -18,10 +21,13 @@
  * Configuration:
  *   IDEMPOTENCY_TTL_SECONDS  Result TTL in seconds (default: 86400 — 24 h)
  */
+import { createHash } from "node:crypto";
+
 import {
+  BadRequestException,
   type CallHandler,
+  ConflictException,
   type ExecutionContext,
-  HttpStatus,
   Inject,
   Injectable,
   type NestInterceptor,
@@ -36,12 +42,16 @@ import { AppLogger, ecsError } from "@base/logger";
 import { IDEMPOTENCY_STORE, type IdempotencyStore } from "./idempotency.store.js";
 
 const HTTP_CODE_METADATA = "__httpCode__";
+/** The header is a UUID (RFC 9562 text form); anything else is a 400 problem, not a store key. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const PROCESSING_SENTINEL = "__processing__";
 const LOCK_TTL_SECONDS = 30;
 
 interface CachedEntry {
   status: number;
   body: unknown;
+  /** sha256 of method + path + body of the request that produced the entry. */
+  fingerprint: string;
 }
 
 function isCachedEntry(value: unknown): value is CachedEntry {
@@ -52,8 +62,16 @@ function isCachedEntry(value: unknown): value is CachedEntry {
     Number.isInteger(v["status"]) &&
     v["status"] >= 100 &&
     v["status"] < 600 &&
-    "body" in v
+    "body" in v &&
+    typeof v["fingerprint"] === "string"
   );
+}
+
+/** What a key is bound to: the request line and the (parsed) body, canonicalised. */
+function fingerprintOf(request: FastifyRequest): string {
+  return createHash("sha256")
+    .update(`${request.method} ${request.url}\n${JSON.stringify(request.body ?? null)}`)
+    .digest("hex");
 }
 
 @Injectable()
@@ -82,16 +100,21 @@ export class IdempotencyInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const userId = request.user?.userId ?? "anon";
-    const storeKey = `idempotency:${userId}:${idempotencyKey}`;
+    if (!UUID.test(idempotencyKey)) {
+      throw new BadRequestException("Idempotency-Key must be a UUID");
+    }
 
-    return from(this.execute(context, next, storeKey));
+    const userId = request.user?.userId ?? "anon";
+    const storeKey = `idempotency:${userId}:${idempotencyKey.toLowerCase()}`;
+
+    return from(this.execute(context, next, storeKey, fingerprintOf(request)));
   }
 
   private async execute(
     context: ExecutionContext,
     next: CallHandler,
     storeKey: string,
+    fingerprint: string,
   ): Promise<unknown> {
     const reply = context.switchToHttp().getResponse<FastifyReply>();
     const ttl = parseInt(this.config.get<string>("IDEMPOTENCY_TTL_SECONDS") ?? "86400", 10);
@@ -108,12 +131,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     if (existing === PROCESSING_SENTINEL) {
-      void reply.status(HttpStatus.CONFLICT).send({
-        statusCode: HttpStatus.CONFLICT,
-        error: "Conflict",
-        message: "A request with this Idempotency-Key is already being processed",
-      });
-      return undefined;
+      // Thrown, not sent: the exception layer answers it as problem+json like
+      // every other error (see the contract, api/tsp/tasks.tsp).
+      throw new ConflictException("A request with this Idempotency-Key is already being processed");
     }
 
     if (existing !== null) {
@@ -124,9 +144,17 @@ export class IdempotencyInterceptor implements NestInterceptor {
         parsed = undefined;
       }
       if (isCachedEntry(parsed)) {
+        if (parsed.fingerprint !== fingerprint) {
+          throw new ConflictException(
+            "Idempotency-Key was already used for a different request (same key, same request replays; a new request needs a new key)",
+          );
+        }
+        // Hand the cached body back to NestJS instead of sending it here: the
+        // router sends once (with the handler's @HttpCode, which is what was
+        // cached), so Fastify never sees a second send.
         reply.header("X-Idempotent-Replayed", "true");
-        void reply.status(parsed.status).send(parsed.body ?? null);
-        return undefined;
+        void reply.status(parsed.status);
+        return parsed.body ?? null;
       }
       // Corrupted / old-schema entry — evict and fall through to fresh execute.
       await this.store.del(storeKey).catch(() => {});
@@ -142,12 +170,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     if (!acquired) {
-      void reply.status(HttpStatus.CONFLICT).send({
-        statusCode: HttpStatus.CONFLICT,
-        error: "Conflict",
-        message: "A request with this Idempotency-Key is already being processed",
-      });
-      return undefined;
+      // Thrown, not sent: the exception layer answers it as problem+json like
+      // every other error (see the contract, api/tsp/tasks.tsp).
+      throw new ConflictException("A request with this Idempotency-Key is already being processed");
     }
 
     // Step 3: execute handler, cache result, release lock on error
@@ -164,7 +189,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     try {
       await this.store.set(
         storeKey,
-        JSON.stringify({ status: statusCode, body: result ?? null }),
+        JSON.stringify({ status: statusCode, body: result ?? null, fingerprint }),
         ttl,
       );
     } catch (err) {

@@ -16,6 +16,11 @@ import { configDefaults, defineConfig } from "vitest/config";
  */
 const resultsDir = process.env["ALLURE_RESULTS_DIR"] ?? "allure-results";
 
+// Under Stryker (`pnpm mutate`) the suite is re-run once per mutant: no Allure
+// (it would write one result set per mutant), no integration project. Stryker
+// sets STRYKER_MUTATOR_WORKER in the processes that host its vitest runner.
+const underStryker = process.env["STRYKER_MUTATOR_WORKER"] !== undefined;
+
 export default defineConfig({
   // Workspace packages export `source` → src/index.ts (what the apps run with
   // `--conditions source` in dev); without it vite would resolve @base/* to
@@ -23,23 +28,25 @@ export default defineConfig({
   resolve: { conditions: ["source"] },
   ssr: { resolve: { conditions: ["source"], externalConditions: ["source"] } },
   test: {
-    reporters: [
-      "default",
-      [
-        "allure-vitest/reporter",
-        {
-          resultsDir,
-          environmentInfo: { runner: "vitest", node: process.version },
-          // Bare ids from `testCase("NB-101", …)` become links — sample hosts,
-          // point them at your TestOps / tracker.
-          links: {
-            tms: { urlTemplate: "https://testops.example.internal/project/1/test-cases/%s" },
-            issue: { urlTemplate: "https://issues.example.internal/browse/%s" },
-          },
-        },
-      ],
-    ],
-    setupFiles: ["allure-vitest/setup"],
+    reporters: underStryker
+      ? ["dot"]
+      : [
+          "default",
+          [
+            "allure-vitest/reporter",
+            {
+              resultsDir,
+              environmentInfo: { runner: "vitest", node: process.version },
+              // Bare ids from `testCase("NB-101", …)` become links — sample hosts,
+              // point them at your TestOps / tracker.
+              links: {
+                tms: { urlTemplate: "https://testops.example.internal/project/1/test-cases/%s" },
+                issue: { urlTemplate: "https://issues.example.internal/browse/%s" },
+              },
+            },
+          ],
+        ],
+    setupFiles: underStryker ? [] : ["allure-vitest/setup"],
     // No retries: a flake is reported (Allure), never hidden behind a re-run.
     retry: 0,
     coverage: {
@@ -65,20 +72,24 @@ export default defineConfig({
           exclude: [...configDefaults.exclude, "**/*.integration.spec.ts"],
         },
       },
-      {
-        extends: true,
-        test: {
-          name: "integration",
-          include: [
-            "packages/*/src/**/*.integration.spec.ts",
-            "apps/*/src/**/*.integration.spec.ts",
-          ],
-          // Real services on fixed ports: one file at a time.
-          fileParallelism: false,
-          testTimeout: 30_000,
-          hookTimeout: 60_000,
-        },
-      },
+      ...(underStryker
+        ? []
+        : [
+            {
+              extends: true as const,
+              test: {
+                name: "integration",
+                include: [
+                  "packages/*/src/**/*.integration.spec.ts",
+                  "apps/*/src/**/*.integration.spec.ts",
+                ],
+                // Real services on fixed ports: one file at a time.
+                fileParallelism: false,
+                testTimeout: 30_000,
+                hookTimeout: 60_000,
+              },
+            },
+          ]),
     ],
   },
 });

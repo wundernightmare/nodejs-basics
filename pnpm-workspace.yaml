@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+  - 'api'
   - 'e2e'
 
 # pnpm 11 no longer reads the `pnpm` field in package.json — overrides and

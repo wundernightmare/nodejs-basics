@@ -88,6 +88,39 @@ check:
     - pnpm install --frozen-lockfile
     - pnpm check
 
+# Contracts, step 1: api/tsp compiles to exactly the committed OpenAPI document
+# and TS types (`just contracts`; nothing to apt/curl in the node image).
+contracts:
+  stage: check
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm contracts
+    - git diff --exit-code --stat -- api/openapi3 packages/contracts/src || { echo "contracts are stale — run 'just contracts' and commit"; exit 1; }
+
+# Contracts, step 2: no breaking change against the merge request's target
+# branch — oasdiff from its pinned image (OASDIFF_VERSION out of mise.toml;
+# the image ships sh + git), waivers in api/oasdiff-breaking.ignore. Runs on
+# merge requests only; on a branch pipeline there is nothing to compare with.
+contracts-breaking:
+  extends: .pins
+  stage: check
+  image:
+    name: ${DOCKER_HUB}/tufin/oasdiff:v${OASDIFF_VERSION}
+    entrypoint: [""]
+  before_script: []
+  variables:
+    GIT_DEPTH: 0
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - git fetch --depth=1 origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - |
+      if git show "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME:api/openapi3/tasks.openapi.yaml" > base.openapi.yaml 2>/dev/null; then
+        oasdiff breaking base.openapi.yaml api/openapi3/tasks.openapi.yaml --fail-on ERR --err-ignore api/oasdiff-breaking.ignore
+      else
+        echo "no base spec on the target branch — first version"
+      fi
+
 # ── test layers — mirrors the GitHub unit / integration / e2e jobs ─────────────
 # Each layer writes its coverage (istanbul json) to .cover/<layer> and its
 # Allure results to allure-results/; the `coverage` and `allure-report` jobs
@@ -188,6 +221,50 @@ e2e-stack:
     - docker compose -f docker/stack.yml down -v || true
     - docker compose -f docker/deps.yml down -v || true
 
+# Generative layer: Schemathesis drives the built api (scripts/schemathesis.sh,
+# scratch ports) with requests derived from api/openapi3/tasks.openapi.yaml.
+# Runs inside the pinned Schemathesis image (SCHEMATHESIS_VERSION out of
+# mise.toml) — the script finds the `schemathesis` binary on PATH and skips
+# docker; deps come from docker/deps.yml through dind like the other layers,
+# and Node comes from its tarball like the allure-report job.
+schemathesis:
+  extends: [.pins, .dind]
+  stage: test
+  image:
+    name: ${DOCKER_HUB}/schemathesis/schemathesis:${SCHEMATHESIS_VERSION}
+    entrypoint: [""]
+  needs:
+    - job: versions
+      artifacts: true
+  variables:
+    TZ: UTC
+    ALLURE_RESULTS_DIR: $CI_PROJECT_DIR/allure-results
+    DATABASE_URL: postgresql://app:app@docker:5432/app
+    VALKEY_URL: redis://docker:6379
+    KAFKA_BROKERS: docker:9092
+    NODE_DIST: node-v${NODE_VERSION}-linux-x64
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    # Node from its own tarball (NODE_DIST_URL for a mirror), then pnpm via corepack;
+    # the docker CLI for `docker compose` against the dind service.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl xz-utils docker.io docker-compose-v2 >/dev/null
+    - curl -fsSL "${NODE_DIST_URL:-https://nodejs.org/dist}/v${NODE_VERSION}/${NODE_DIST}.tar.xz" | tar -xJ -C /opt
+    - export PATH="/opt/${NODE_DIST}/bin:$PATH"
+    - npm install -g corepack@latest && corepack enable && corepack prepare "pnpm@${PNPM_VERSION}" --activate
+  script:
+    - pnpm install --frozen-lockfile
+    - docker compose -f docker/deps.yml up -d --wait
+    - bash scripts/schemathesis.sh
+  after_script:
+    - tail -100 .run/schemathesis-api.log || true
+    - docker compose -f docker/deps.yml down -v || true
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - allure-results/
+
 # ── report: one coverage number, one Allure report ────────────────────────────
 
 # Merge the three layers, gate (scripts/cover.config.mjs) and ratchet against
@@ -245,6 +322,9 @@ allure-report:
     - job: e2e
       artifacts: true
       optional: true
+    - job: schemathesis
+      artifacts: true
+      optional: true
   when: always
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm >/dev/null
@@ -257,6 +337,40 @@ allure-report:
     expire_in: 2 weeks
     paths:
       - allure-report/index.html
+
+# Property specs with the deep budget (FC_NUM_RUNS=5000) — nightly, or by hand
+# on an MR. The `unit` job runs them with 100 cases per property.
+fuzz:
+  stage: report
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  script:
+    - pnpm install --frozen-lockfile
+    - FC_NUM_RUNS=5000 pnpm fuzz
+
+# Mutation testing of @base/resilient-client (StrykerJS, stryker.config.mjs) —
+# nightly or by hand, never per MR (one suite run per mutant). Fails below
+# thresholds.break; the html/json report is the artifact.
+mutation:
+  stage: report
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  script:
+    - pnpm install --frozen-lockfile
+    - set -o pipefail
+    - pnpm mutate 2>&1 | tee mutation.log
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - reports/mutation/
+      - mutation.log
 
 # ── security (AppSec) — mirrors appsec.yml ────────────────────────────────────
 # Every scanner runs from the same version-pinned image the GitHub pipeline

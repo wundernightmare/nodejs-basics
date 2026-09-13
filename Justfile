@@ -150,6 +150,32 @@ docker-sign APP TAG:
 docker-verify APP TAG:
     mise exec -- cosign verify --key cosign.pub --insecure-ignore-tlog=true nodejs-basics-{{APP}}:{{TAG}}
 
+# ── Contracts — TypeSpec → OpenAPI → TS types (see README "Contracts") ────────
+
+# Regenerate every contract artefact from api/tsp: the OpenAPI document
+# (api/openapi3) and the TS types in packages/contracts. Commit the result.
+contracts:
+    pnpm contracts
+
+# CI gate: generated artefacts are up to date, and the HTTP contract has no
+# breaking change against master (oasdiff). BASE overrides the git ref.
+contracts-check BASE="origin/master":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pnpm contracts >/dev/null
+    if ! git diff --exit-code --stat -- api/openapi3 packages/contracts/src; then
+      echo "contracts: generated files are stale — run 'just contracts' and commit" >&2; exit 1
+    fi
+    base="$(mktemp)"; trap 'rm -f "$base"' EXIT
+    for spec in api/openapi3/*.openapi.yaml; do
+      if git show "{{BASE}}:$spec" > "$base" 2>/dev/null; then
+        mise exec -- oasdiff breaking "$base" "$spec" --fail-on ERR --err-ignore api/oasdiff-breaking.ignore
+      else
+        echo "contracts: no base for $spec at {{BASE}} (first version) — skipping breaking-change check"
+      fi
+    done
+    echo "contracts OK"
+
 # ── Tests — see README "Tests" (layers, harness, Allure, coverage) ───────────
 
 # Unit layer: vitest project `unit` (no services)
@@ -170,6 +196,23 @@ test-all: test test-integration
 # Watch mode for the unit layer
 test-watch:
     pnpm test:watch
+
+# Property specs (`*.prop.spec.ts`, fast-check) with the deep budget — the fuzz
+# layer, the Go sibling's `just fuzz`. `just test` already runs them with 100 cases.
+fuzz FC_NUM_RUNS="5000":
+    FC_NUM_RUNS={{FC_NUM_RUNS}} pnpm fuzz
+
+# Mutation testing of @base/resilient-client (StrykerJS, stryker.config.mjs) →
+# reports/mutation/mutation.html; the score table is printed. Runs in place —
+# do not run a formatter or another vitest run alongside it.
+mutate:
+    pnpm mutate
+
+# Generative layer: Schemathesis drives the built api (scratch ports) with
+# requests derived from api/openapi3/tasks.openapi.yaml; results go to Allure.
+# Needs `just deps`. SKIP_BUILD=1 reuses dist/, SCHEMATHESIS_MAX_EXAMPLES tunes depth.
+schemathesis:
+    scripts/schemathesis.sh
 
 # ── Coverage — one number, three layers (scripts/cover.mjs) ───────────────────
 

@@ -92,7 +92,8 @@ just sec                           # gitleaks + semgrep + osv-scanner + hadolint
 just docker-build api              # build an image; docker-scan-ci api → grype --fail-on high
 ```
 
-See [Tests](#tests) for the layers, the harness and the coverage / Allure flow.
+See [Tests](#tests) for the layers, the harness and the coverage / Allure flow,
+[Contracts](#contracts) for the TypeSpec → OpenAPI → types pipeline.
 
 ## Renaming `@base` to your org
 
@@ -263,9 +264,13 @@ same contract as the Go sibling. The harness that makes that cheap is
 | Layer | Where | Owns | Does not repeat |
 |---|---|---|---|
 | **Unit** | `*.spec.ts` next to the code — vitest project `unit`, `just test` | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server | anything that needs a real dependency |
+| **Property** | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000) | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec |
+| **Mutation** | `packages/resilient-client` — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch | — |
 | **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration` | the libs against real Postgres / Valkey / Redpanda from `docker/deps.yml`: the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout | route behaviour already proven with fakes; process-level behaviour |
 | **E2E** | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes) | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ | per-route behaviour, error bodies (unit), the libs' semantics (integration) |
 | **Smoke** | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job | the distroless images start and serve | everything else |
+| **Contract** | `apps/api/src/app.contract.integration.spec.ts` (integration project; `createApp` + fastify `inject`, every exchange validated with `loadOpenAPI` from `@base/testing`) | the running app honours [`api/tsp`](api/tsp): every route, every declared status, problem bodies, 404/405 routing | inputs the schema can generate (generative) |
+| **Generative** | `just schemathesis` (Schemathesis against the built api and its OpenAPI document) | inputs nobody wrote a test for: every operation with generated positive and negative requests and stateful sequences, no 5xx, every response in the contract's shape — "bad input → 4xx problem" cases are owned here, not hand-written | business semantics the schema cannot express (unit / contract), effects on dependencies (integration) |
 | **Load** | [`benchmarks/`](benchmarks) (k6) | latency / error thresholds under load; reports on the load stand, outside Allure | — |
 
 When you add a behaviour, put its test at the lowest layer that can observe
@@ -288,6 +293,12 @@ it (the e2e harness waits for `/readyz`), it does not assert it again.
 - `captureLogs()` (a real pino logger writing JSON into memory) and
   `metricValue(text, name, labels)` (a sample out of Prometheus text; `-1`
   when absent) let a test assert on telemetry instead of mocking it.
+- `loadOpenAPI("openapi3/tasks.openapi.yaml").validate(method, path, status,
+  body, headers)` throws unless the exchange is in the contract (operation
+  matched by path template, status declared, content type declared, required
+  headers present, body conforms — ajv, OpenAPI 3.0 `nullable` translated);
+  `validateSchema("Problem", body)` checks a body against a named component.
+  The Node twin of the Go sibling's `testx.LoadOpenAPI`.
 
 Specs import `describe` / `it` / `expect` from `vitest` explicitly (no
 globals). The root [`vitest.config.ts`](vitest.config.ts) is the one config:
@@ -342,6 +353,132 @@ artifact on GitLab) and a pull request is compared to it with
 `--diff-threshold 0`. Old code's coverage cannot pay for new code's. The
 thresholds are a ratchet: raise them when coverage improves, lower only with a
 reason in the commit.
+
+### Contracts
+
+The HTTP API is written once, in [TypeSpec](https://typespec.io) under
+[`api/tsp`](api/tsp) (TypeSpec 1.15, OpenAPI 3.0 output — the same toolchain
+as the Go sibling), and everything else is generated from it:
+
+```
+api/tsp/*.tsp ─tsp compile─▶ api/openapi3/tasks.openapi.yaml ─openapi-typescript─▶ packages/contracts/src/tasksapi.gen.ts  (@base/contracts)
+```
+
+`just contracts` (`pnpm contracts`) regenerates both; the outputs are
+committed, so a reviewer sees the contract diff next to the code diff.
+`just contracts-check` (the `contracts` CI job) fails when the committed
+outputs are stale and, on a pull request, when `oasdiff` finds a breaking
+change against master's OpenAPI document. A change that is breaking by the
+rules but safe in practice is waived in
+[`api/oasdiff-breaking.ignore`](api/oasdiff-breaking.ignore), one line per
+change with the reason and the removal trigger — the same discipline as the
+CVE waivers.
+
+The document says what is true of the app, member for member: every object is
+closed (`seal-object-schemas` — the zod DTOs are `.strict()`), text carries
+the `^[^\u0000]*$` pattern (PostgreSQL TEXT rejects a NUL byte; lengths count
+code points, as JSON Schema does), ids are 21-character nanoids,
+`Idempotency-Key` is a UUID, and every error — validation, domain, routing
+(404 unknown path, 405 undeclared method with `Allow`), the unplanned 500 — is
+an RFC 9457 `Problem` with `errorId`, `instance` and `request_id`. The
+generated types are the wire types for a client; the app's own request DTOs
+stay zod (runtime validation), mirrored on the contract and held to it by the
+two layers below.
+
+Tests enforce it: the contract layer
+([`apps/api/src/app.contract.integration.spec.ts`](apps/api/src/app.contract.integration.spec.ts))
+boots the real app (`createApp` in `apps/api/src/app.ts`, the wiring
+`main.ts` listens with) against the real deps, drives it with fastify
+`inject` and validates every exchange with `loadOpenAPI(...).validate`; the
+generative layer (below) does the same with requests it derives from the
+document. A handler that drifts from the contract fails its own test.
+
+### Schemathesis
+
+[Schemathesis](https://schemathesis.io) is the generative layer: it reads the
+OpenAPI document and drives the *real process* (`apps/api/dist`, scratch ports
+18300/19300) with requests it derives from the schema — boundary values,
+invalid bodies, unknown members, undeclared methods, stateful
+create → read → update → archive chains over the links it infers — checking
+that nothing answers 5xx, that valid data is accepted and invalid data
+rejected, and that every response's status, headers and body are in the
+contract.
+
+```sh
+just deps && just schemathesis          # SKIP_BUILD=1 reuses dist/, SCHEMATHESIS_MAX_EXAMPLES=… tunes depth
+```
+
+It runs from its pinned image (`SCHEMATHESIS_VERSION` in `mise.toml`,
+`DOCKER_HUB` for a closed network; the script adapts to rootless podman and
+SELinux hosts), reports natively to Allure next to every other layer, and is a
+job in both pipelines (`schemathesis`, in the gate). Its first run found that
+an undeclared method got a 404 instead of a 405, that `POST /tasks/{id}/archive`
+answered 201 (NestJS's POST default) for a document that says 200, that an
+over-long id was a 414, that the bodies were strict while the document was
+open, that unknown query parameters were silently ignored, and that a reused
+`Idempotency-Key` replayed the first 201 for *any* payload (even none) — the
+interceptor now binds the key to a request fingerprint and answers a
+different request under the same key with a 409 problem. The app and the
+document agree on all of it. With it in place, hand-written
+"bad input → 4xx" tests are not needed — the schema and the generator own
+that class of case.
+
+One warning is expected and harmless: "schema validation mismatch" for
+`PATCH /tasks/{id}` and `POST /tasks/{id}/archive`. In the fuzzing phase their
+positive cases carry random well-formed ids (404) and their negative cases
+malformed bodies (400) — a ratio the heuristic reads as "mostly rejected"; the
+stateful phase, which reaches real ids through the links it infers, passes
+every scenario.
+
+### Property-based testing
+
+Everything that parses or computes from input it does not control has a
+property spec next to it — `*.prop.spec.ts`, [fast-check](https://fast-check.dev):
+`computeJitteredDelay` (`@base/resilient-client`), `redact` / `redactUrl` and
+`parseDuration` / `formatDuration` (`@base/logger`), `isValidRequestId` and
+`problemDetail` (`@base/common`), `metricValue` (`@base/testing`). They are
+unit tests: `pnpm test` runs each property with 100 generated cases
+(`propertyRuns()` in `@base/testing`); `just fuzz` / `pnpm fuzz` is the deep
+run with `FC_NUM_RUNS=5000` — the Node analogue of the Go sibling's
+`just fuzz` / `FUZZTIME` — and the nightly `fuzz` CI job. A failing property
+prints its shrunk counterexample and seed (`{ seed, path }`); pin the
+counterexample as an `examples:` entry of that property so it stays a
+regression case, the way the Go sibling commits `testdata/fuzz/` corpora. The
+first run found four: `computeJitteredDelay` returned `NaN` for
+`minTimeout: 0` once `factor^attempt` overflowed (0 · ∞); `parseDuration`
+accepted a number too long for a double as `Infinity` and returned `0` for
+`"0.0001"`; `redact()` turned an own `"__proto__"` key (what `JSON.parse`
+produces) into the copy's prototype and dropped it; `metricValue` could not
+read a label value containing `}` (a route template) or an escaped newline.
+All fixed; each spec carries the case.
+
+### Mutation testing
+
+Coverage says a line ran; mutation testing says a test would notice if it
+were wrong. [StrykerJS](https://stryker-mutator.io) mutates the code (flips a
+comparison, an operator, a branch, empties a literal), re-runs the specs that
+cover the mutated line (`coverageAnalysis: perTest`) and reports every mutant
+that *survived*. It is worth its cost on small, pure, decision-heavy code and
+noise elsewhere, so — like the Go sibling — it is scoped, not global:
+[`stryker.config.mjs`](stryker.config.mjs) mutates `packages/resilient-client`
+only (backoff, cache, errors, pool, the client; not the OTel wiring).
+
+```sh
+just mutate          # pnpm mutate → reports/mutation/mutation.html (+ mutation.json)
+```
+
+Score when introduced: 56.8 % (backoff 95, cache 86, errors 88, pool 39,
+client 56). `thresholds.break` (50) is a ratchet like the coverage gate: the
+run fails below it; raise it as survivors are triaged — a survivor is a
+missing assertion or dead code — lower it only with a reason in the commit.
+Two things make it run in this workspace: Stryker works **in place**
+(`inPlace: true`, the tree is restored on exit, backup under `.stryker-tmp/`)
+because pnpm's `node_modules` symlinks and the `source` export condition do
+not survive a sandbox copy — so never run it alongside a formatter or another
+vitest run; and the root `vitest.config.ts` drops Allure and the integration
+project when `STRYKER_MUTATOR_WORKER` is set. CI runs it nightly and on
+demand (`mutation` job), never per PR: 20 s on a 32-core box, minutes on a
+2-core runner.
 
 ### Flakiness policy
 
@@ -430,7 +567,11 @@ block a change:
 | `pnpm format`      | oxfmt                                   |
 | `pnpm test`        | unit layer (vitest project `unit`)      |
 | `pnpm test:integration` | integration layer (needs `just deps`) |
+| `just contracts` | regenerate `api/openapi3` + `@base/contracts` from `api/tsp` |
+| `just contracts-check [BASE]` | generated files current + oasdiff breaking-change gate |
+| `just schemathesis` | generative layer against the built api (needs `just deps`) |
 | `just cov-all` / `cov-check` | three-layer coverage, merged + gated |
+| `just fuzz` / `mutate` | property specs with 5000 cases / StrykerJS on resilient-client |
 | `just allure-report` | one Allure HTML report from every layer |
 | `just e2e` / `e2e-smoke` / `e2e-spawn` | Playwright vs images / @smoke / spawned processes |
 | `pnpm check`       | typecheck + lint + format:check         |
