@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only — never import from runtime code.",
+  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only \u2014 never import from runtime code.",
   "files": [
     "dist"
   ],

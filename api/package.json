@@ -3,15 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP contracts in TypeSpec — the source the OpenAPI document (api/openapi3) and the TS types (@base/contracts) are generated from",
+  "description": "HTTP contracts in TypeSpec \u2014 the source the OpenAPI document (api/openapi3) and the TS types (@base/contracts) are generated from",
   "scripts": {
     "compile": "tsp compile tsp/main.tsp",
     "clean": "rm -rf openapi3"
   },
   "devDependencies": {
-    "@typespec/compiler": "1.15.0",
-    "@typespec/http": "1.15.0",
-    "@typespec/openapi": "1.15.0",
-    "@typespec/openapi3": "1.15.0"
+    "@typespec/compiler": "1.16.0",
+    "@typespec/http": "1.16.0",
+    "@typespec/openapi": "1.16.0",
+    "@typespec/openapi3": "1.16.0"
   }
 }

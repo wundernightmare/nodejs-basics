@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "End-to-end tests for nodejs-basics (Playwright, API tests \u2014 no browser). Runs against the running stack (just stack-up).",
+  "description": "End-to-end tests for nodejs-basics (Playwright, API tests — no browser). Runs against the running stack (just stack-up).",
   "scripts": {
     "test": "playwright test",
     "test:ui": "playwright test --ui",
@@ -18,11 +18,11 @@
     "test:smoke": "playwright test --grep @smoke"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
-    "@types/node": "26.4.0",
+    "@playwright/test": "1.63.0",
+    "@types/node": "26.4.1",
+    "allure-js-commons": "3.12.1",
     "allure-playwright": "3.12.1",
-    "oxlint": "1.80.0",
-    "typescript": "6.0.3",
-    "allure-js-commons": "3.12.1"
+    "oxlint": "1.81.0",
+    "typescript": "6.0.3"
   }
 }

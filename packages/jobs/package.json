@@ -28,10 +28,10 @@
   },
   "dependencies": {
     "@base/cache": "workspace:*",
-    "@bull-board/api": "9.6.0",
-    "@bull-board/fastify": "9.6.0",
+    "@bull-board/api": "9.8.0",
+    "@bull-board/fastify": "9.8.0",
     "@opentelemetry/api": "1.9.1",
-    "bullmq": "6.3.2"
+    "bullmq": "6.3.4"
   },
   "peerDependencies": {
     "@nestjs/common": "12.x",
