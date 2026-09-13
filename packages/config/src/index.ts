@@ -1,4 +1,9 @@
-export { yamlConfigLoader } from "./config.loader.js";
+export {
+  type ConfigSnapshot,
+  type ConfigSource,
+  configSnapshot,
+  yamlConfigLoader,
+} from "./config.loader.js";
 export { ENV_REGISTRY, type EnvEntry } from "./env.registry.js";
 export {
   SecretFileWatcher,

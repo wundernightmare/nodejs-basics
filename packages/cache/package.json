@@ -35,5 +35,8 @@
   "peerDependencies": {
     "@nestjs/common": "12.x",
     "@nestjs/config": "12.x"
+  },
+  "devDependencies": {
+    "@base/testing": "workspace:*"
   }
 }

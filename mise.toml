@@ -1,15 +1,24 @@
 # mise tool versions for local development.
 #
 # Pins the toolchain so clones / CI all resolve the same binaries. Node + pnpm
-# drive the workspace; k6 drives the load tests. The AppSec toolchain
-# (semgrep / gitleaks / osv-scanner / hadolint / syft / grype / cosign) is
-# installed by `just setup-sec`; checks run via `just sec` and the docker-scan
-# recipes. Versions mirror the golang-basics / rust-basics sibling repos so the
-# family drifts together.
+# drive the workspace (pnpm itself is pinned by `packageManager` in
+# package.json and installed by corepack); k6 drives the load tests. The AppSec
+# toolchain (semgrep / gitleaks / osv-scanner / hadolint / syft / grype /
+# cosign) is installed by `just setup-sec`; checks run via `just sec` and the
+# docker-scan recipes. Versions mirror the golang-basics / rust-basics sibling
+# repos so the family drifts together.
+#
+# CI never hard-codes a version: both pipelines' `versions` job runs
+# scripts/mise-pins.sh over this file and uses the result everywhere, down to
+# the scanner `image:` tags. Bump here, nothing in .github/ or .gitlab-ci.yml
+# changes.
 
 [tools]
 node = "24.20"
 k6   = "2.2.0"
+
+# JRE for allure-commandline (`just allure-report`)
+java = "temurin-25"
 
 # AppSec — pinned for reproducibility. Bump here, then re-run `just setup-sec`.
 # Each `just sec-*` recipe invokes its tool via `mise exec --`.
@@ -24,3 +33,10 @@ grype = "0.118.0"
 
 # Supply-chain signing — cosign in key-mode with `--tlog-upload=false`.
 cosign = "3.1.3"
+
+[env]
+# Load the (gitignored) .env so the mise shims see the same proxy / registry /
+# scanner-mirror settings `just` loads via `set dotenv-load`. Silently skipped
+# when the file is absent — an open-network clone needs no .env at all. Every
+# knob is documented in .env.example.
+_.file = ".env"

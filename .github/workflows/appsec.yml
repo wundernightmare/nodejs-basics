@@ -8,47 +8,104 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Closed-network knobs (same names as .env.example) from repository /
+# organisation variables; empty means the public upstream.
+env:
+  DOCKER_HUB: ${{ vars.DOCKER_HUB || 'docker.io' }}
+  GHCR: ${{ vars.GHCR || 'ghcr.io' }}
+
 jobs:
-  secrets:
+  # Single source of truth: every pin below is read out of mise.toml (and the
+  # pnpm pin out of package.json) by scripts/mise-pins.sh. Nothing in this
+  # file hard-codes a tool version or a Dockerfile list.
+  versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      GITLEAKS_VERSION: ${{ steps.pins.outputs.GITLEAKS_VERSION }}
+      SEMGREP_VERSION: ${{ steps.pins.outputs.SEMGREP_VERSION }}
+      OSV_VERSION: ${{ steps.pins.outputs.OSV_VERSION }}
+      HADOLINT_VERSION: ${{ steps.pins.outputs.HADOLINT_VERSION }}
+      DOCKERFILES: ${{ steps.files.outputs.DOCKERFILES }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pins
+        run: scripts/mise-pins.sh >> "$GITHUB_OUTPUT"
+      - id: files
+        run: |
+          echo "DOCKERFILES=$(find apps -mindepth 2 -maxdepth 2 -name Dockerfile | sort | jq -Rsc 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+
+  # Every scanner below runs from the same version-pinned image the GitLab
+  # pipeline uses (no marketplace action with its own bundled binary, no
+  # per-organisation licence as gitleaks-action needs), so the two pipelines
+  # cannot report different findings for the same commit.
+  secrets:
+    needs: versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: ${{ vars.DOCKER_HUB || 'docker.io' }}/zricethezav/gitleaks:v${{ needs.versions.outputs.GITLEAKS_VERSION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # full history for gitleaks
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_CONFIG: .gitleaks.toml
+          fetch-depth: 0 # full history
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          gitleaks detect --source . --config .gitleaks.toml --verbose --no-banner
 
   sast:
+    needs: versions
     runs-on: ubuntu-latest
-    container: semgrep/semgrep
+    timeout-minutes: 15
+    container:
+      image: ${{ vars.DOCKER_HUB || 'docker.io' }}/semgrep/semgrep:${{ needs.versions.outputs.SEMGREP_VERSION }}
+    env:
+      # Space-separated packs, or a directory of vendored rules offline.
+      # p/owasp-top-ten also carries the GitHub Actions rules (mutable action
+      # tags, github.* context in run:) and the pnpm supply-chain rules.
+      SEMGREP_CONFIG: ${{ vars.SEMGREP_CONFIG || 'p/owasp-top-ten p/typescript' }}
     steps:
-      - uses: actions/checkout@v4
-      - run: semgrep ci --config p/owasp-top-ten --config p/typescript
-        env:
-          SEMGREP_RULES: ""
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `semgrep scan`, not `semgrep ci`: no call home to semgrep.dev, no metrics.
+      - run: |
+          set -- ; for c in $SEMGREP_CONFIG; do set -- "$@" --config "$c"; done
+          semgrep scan "$@" --error --metrics=off
 
+  # osv-scanner from its official image (the binary is the image entrypoint,
+  # hence the absolute path) instead of a `go install` that pinned it
+  # independently of mise.toml.
   deps:
+    needs: versions
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container:
+      image: ${{ vars.GHCR || 'ghcr.io' }}/google/osv-scanner:v${{ needs.versions.outputs.OSV_VERSION }}
+    env:
+      # e.g. "--offline --local-db-path /srv/mirrors/osv" — see .env.example
+      OSV_SCANNER_FLAGS: ${{ vars.OSV_SCANNER_FLAGS }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-      # osv-scanner-action is a reusable workflow, not a step action; install the
-      # pinned binary directly and run it over the pnpm lockfile.
-      - run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
-      - run: osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: |
+          # shellcheck disable=SC2086 # OSV_SCANNER_FLAGS is a flag list; splitting is intended
+          /osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml $OSV_SCANNER_FLAGS
 
   hadolint:
+    needs: versions
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
+      fail-fast: false
       matrix:
-        dockerfile: [apps/api/Dockerfile, apps/worker/Dockerfile]
+        dockerfile: ${{ fromJSON(needs.versions.outputs.DOCKERFILES) }}
+    container:
+      image: ${{ vars.DOCKER_HUB || 'docker.io' }}/hadolint/hadolint:v${{ needs.versions.outputs.HADOLINT_VERSION }}-debian
+    env:
+      DOCKERFILE: ${{ matrix.dockerfile }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: ${{ matrix.dockerfile }}
-          config: .hadolint.yaml
-          failure-threshold: error # the action defaults to "info"; pin it
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Severity threshold comes from .hadolint.yaml (failure-threshold: warning).
+      - run: hadolint --config .hadolint.yaml "$DOCKERFILE"

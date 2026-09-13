@@ -13,10 +13,10 @@ import { ZodValidationPipe } from "nestjs-zod";
 
 import {
   createDomainExceptionFilter,
-  generateRequestId,
+  genRequestId,
   HttpExceptionFilter,
   OptimisticLockConflictError,
-  requestIdStorage,
+  registerRequestContext,
   type ErrorMap,
 } from "@base/common";
 import { AppLogger, pinoLogger } from "@base/logger";
@@ -50,7 +50,8 @@ async function bootstrap(): Promise<void> {
     // option only accepts a config object (passing an instance there throws
     // FST_ERR_LOG_INVALID_LOGGER_CONFIG).
     loggerInstance: pinoLogger,
-    genReqId: (): string => generateRequestId(),
+    // X-Request-Id from the client when sane (1–128 printable ASCII), else generated.
+    genReqId: genRequestId,
   });
 
   // Fastify must register the OTel plugin before any other plugins so its
@@ -64,13 +65,12 @@ async function bootstrap(): Promise<void> {
   const appLogger = app.get(AppLogger);
   app.useLogger(appLogger);
 
-  // Per-request ALS for x-request-id — read by ResilientClient downstream so
-  // outbound calls echo the same id and traces correlate.
-  adapter.getInstance().addHook("onRequest", (req, _reply, done) => {
-    requestIdStorage.run(req.id, () => {
-      done();
-    });
-  });
+  // Per-request context: echoes X-Request-Id and puts it in ALS (every log
+  // line, every outbound ResilientClient call and every problem+json body
+  // carry it), and turns on debug logging for one request when X-Debug-Token
+  // matches DEBUG_TOKEN (response: X-Debug-Logging: on). DEBUG_TOKEN is read
+  // here, after ConfigModule merged config.yaml into process.env.
+  registerRequestContext(adapter.getInstance(), { debugToken: process.env["DEBUG_TOKEN"] });
 
   registerHttpInstrumentation(adapter.getInstance());
 
@@ -96,6 +96,9 @@ async function bootstrap(): Promise<void> {
     new HttpExceptionFilter({ logger: pinoLogger }),
   );
 
+  // SIGTERM → app.close(): ReadinessService.beforeApplicationShutdown flips
+  // /readyz to 503, Nest then drains this listener, and the admin server
+  // closes last (onApplicationShutdown) — see @base/observability.
   app.enableShutdownHooks();
 
   const port = parseInt(process.env["PORT"] ?? "3000", 10);

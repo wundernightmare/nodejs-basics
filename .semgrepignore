@@ -1,4 +1,9 @@
-# Paths semgrep skips. Run via `just sec-sast`.
+# Paths semgrep skips. Run via `just sec-sast` (and the `sast` CI job).
+#
+# Test code is excluded the way the Go sibling excludes `_test.go`: fixtures
+# with hard-coded hosts / credentials / eval-style helpers are noise for SAST.
+# This does NOT hide them from secret scanning — gitleaks does not read this
+# file and covers the whole tree + history, e2e specs included.
 node_modules/
 **/node_modules/
 **/dist/

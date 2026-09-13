@@ -4,7 +4,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
 import { ValkeyModule, VALKEY_CLIENT } from "@base/cache";
-import { yamlConfigLoader } from "@base/config";
+import { configSnapshot, yamlConfigLoader } from "@base/config";
 import { DatabaseModule, PG_POOL } from "@base/database";
 import { IdempotencyModule } from "@base/idempotency";
 import { KafkaModule } from "@base/kafka";
@@ -27,6 +27,8 @@ import { UnitOfWorkModule } from "./unit-of-work.module.js";
     IdempotencyModule.forRoot(),
     ObservabilityModule.forRoot({
       telemetry,
+      // GET /admin/config — the effective ENV_REGISTRY values (redacted).
+      configSnapshot,
       enableDbMetrics: true,
       enableHeapSnapshot: true,
       enableCrashReport: true,

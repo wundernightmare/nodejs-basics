@@ -3,10 +3,22 @@
 # Usage:   just <recipe>   |   just --list
 
 set shell := ["bash", "-c"]
+# Load the (gitignored) .env — proxy, registry mirrors, scanner DB mirrors,
+# signing key — into every recipe. Absent file = no-op. Knobs: .env.example.
+set dotenv-load := true
 
 API  := "apps/api"
 DEPS := "docker/deps.yml"
 OBS  := "docker/observability.yml"
+
+# Scanner inputs that a closed network points at vendored rules / offline DBs
+# (same names as the CI variables; defaults are the public upstreams).
+SEMGREP_CONFIG := env("SEMGREP_CONFIG", "p/owasp-top-ten p/typescript")
+OSV_SCANNER_FLAGS := env("OSV_SCANNER_FLAGS", "")
+# Proxy settings forwarded into every `docker build`. A value-less --build-arg
+# takes the variable from the environment and is skipped when unset (these are
+# Docker's predefined args, so the Dockerfiles need no ARG for them).
+DOCKER_BUILD_ARGS := "--build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY"
 
 # List available recipes
 default:
@@ -92,13 +104,16 @@ sec: sec-secrets sec-sast sec-deps sec-iac
 sec-secrets:
     mise exec -- gitleaks detect --source . --config .gitleaks.toml --verbose
 
-# SAST — semgrep OWASP + TypeScript rule packs
+# SAST — semgrep rule packs (SEMGREP_CONFIG; a directory of vendored rules offline)
 sec-sast:
-    mise exec -- semgrep --config p/owasp-top-ten --config p/typescript --error
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cfg=(); for c in {{SEMGREP_CONFIG}}; do cfg+=(--config "$c"); done
+    mise exec -- semgrep scan "${cfg[@]}" --error --metrics=off
 
-# Dependencies — osv-scanner over pnpm-lock.yaml
+# Dependencies — osv-scanner over pnpm-lock.yaml (OSV_SCANNER_FLAGS: --offline …)
 sec-deps:
-    mise exec -- osv-scanner scan --config osv-scanner.toml --lockfile pnpm-lock.yaml
+    mise exec -- osv-scanner scan --config osv-scanner.toml --lockfile pnpm-lock.yaml {{OSV_SCANNER_FLAGS}}
 
 # IaC — hadolint on every apps/*/Dockerfile
 sec-iac:
@@ -110,12 +125,13 @@ sec-iac:
 
 # Build a single app image locally (context = repo root). APP is api|worker.
 docker-build APP:
-    docker build -f apps/{{APP}}/Dockerfile -t nodejs-basics-{{APP}}:dev .
+    docker build {{DOCKER_BUILD_ARGS}} -f apps/{{APP}}/Dockerfile -t nodejs-basics-{{APP}}:dev .
 
-# Build all app images
+# Build all app images (every apps/*/Dockerfile)
 docker-build-all:
-    docker build -f apps/api/Dockerfile -t nodejs-basics-api:dev .
-    docker build -f apps/worker/Dockerfile -t nodejs-basics-worker:dev .
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for d in apps/*/Dockerfile; do a=$(basename "$(dirname "$d")"); echo "── image $a"; docker build {{DOCKER_BUILD_ARGS}} -f "$d" -t "nodejs-basics-$a:dev" .; done
 
 # syft SBOM + grype CVE scan of a locally-built image (interactive)
 docker-scan APP:
@@ -126,13 +142,74 @@ docker-scan APP:
 docker-scan-ci APP:
     mise exec -- grype nodejs-basics-{{APP}}:dev --config .grype.yaml --fail-on high
 
-# Sign an image with cosign (key-mode, no Rekor); needs COSIGN_PRIVATE_KEY
+# Sign an image with cosign (key-mode, no Rekor); needs COSIGN_PRIVATE_KEY (see .env.example)
 docker-sign APP TAG:
     mise exec -- cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false nodejs-basics-{{APP}}:{{TAG}}
 
 # Offline-verify an image against cosign.pub
 docker-verify APP TAG:
     mise exec -- cosign verify --key cosign.pub --insecure-ignore-tlog=true nodejs-basics-{{APP}}:{{TAG}}
+
+# ── Tests — see README "Tests" (layers, harness, Allure, coverage) ───────────
+
+# Unit layer: vitest project `unit` (no services)
+test:
+    pnpm test
+
+# Integration layer: vitest project `integration` against `just deps` (DATABASE_URL /
+# VALKEY_URL / KAFKA_BROKERS; a suite whose service is unset skips locally, fails on CI)
+test-integration:
+    DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
+    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
+    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    pnpm test:integration
+
+# Every vitest layer (unit + integration)
+test-all: test test-integration
+
+# Watch mode for the unit layer
+test-watch:
+    pnpm test:watch
+
+# ── Coverage — one number, three layers (scripts/cover.mjs) ───────────────────
+
+# Unit-layer coverage → .cover/unit
+cov-unit:
+    node scripts/cover.mjs unit
+
+# Integration-layer coverage → .cover/integration (needs `just deps`)
+cov-integration:
+    DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
+    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
+    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    node scripts/cover.mjs integration
+
+# E2E-layer coverage → .cover/e2e: builds, spawns api + worker under NODE_V8_COVERAGE
+# against `just deps`, runs Playwright, remaps the counters to src/** (c8)
+cov-e2e: deps
+    node scripts/cover.mjs e2e
+
+# Merge whatever layers are under .cover/ and gate (scripts/cover.config.mjs).
+# Gates on what it finds — `cov-all` is the only entry point that guarantees all three.
+cov-check:
+    node scripts/cover.mjs merge
+
+# Collect all three layers from scratch, merge, gate — what the `coverage` CI job does
+cov-all:
+    rm -rf .cover coverage-merged.lcov coverage-breakdown.json
+    just cov-unit
+    just cov-integration
+    just cov-e2e
+    just cov-check
+
+# ── Allure — one report from every layer's results ────────────────────────────
+
+# Single-file HTML report from ./allure-results (vitest + Playwright write there;
+# ALLURE_RESULTS_DIR redirects). categories.json + executor.json via scripts/allure-meta.sh.
+allure-report:
+    scripts/allure-meta.sh allure-results
+    mise exec -- pnpm exec allure generate --clean --single-file -o allure-report allure-results
+    @echo "report: allure-report/index.html"
 
 # ── E2E (Playwright) ──────────────────────────────────────────────────────────
 
@@ -144,6 +221,15 @@ e2e-install:
 # Run the e2e suite against the running stack (builds + brings it up first)
 e2e: stack-up
     cd e2e && pnpm test
+
+# The @smoke subset against the production images — what the `e2e-stack` CI job proves
+e2e-smoke: stack-up
+    cd e2e && pnpm test:smoke
+
+# Run the e2e suite against api + worker spawned from dist/ (no images; `just deps` + `pnpm build`)
+e2e-spawn: deps
+    pnpm build
+    cd e2e && E2E_SPAWN=1 pnpm test
 
 # Open the last Playwright report
 e2e-report:

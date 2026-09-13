@@ -1,6 +1,10 @@
 import { type DynamicModule, Module, type Provider } from "@nestjs/common";
 
-import { AdminServerService } from "./admin-server.service.js";
+import {
+  ADMIN_SERVER_OPTIONS,
+  AdminServerService,
+  type ConfigView,
+} from "./admin-server.service.js";
 import { CrashReportService } from "./crash-report.service.js";
 import { DbMetricsService } from "./db-metrics.service.js";
 import { HeapSnapshotService } from "./heap-snapshot.service.js";
@@ -11,8 +15,18 @@ import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens
 export interface ObservabilityModuleOptions {
   /** Telemetry handle returned by setupTelemetry() in main.ts. */
   telemetry: TelemetryHandle;
-  /** Optional readiness checks. Default: empty (always healthy). */
+  /**
+   * Optional readiness checks. Default: none. Services can also register
+   * their own at runtime via ReadinessService.register() (the module is
+   * global, so ReadinessService is injectable everywhere).
+   */
   readinessChecks?: Provider<ReadinessCheck[]> | ReadinessCheck[];
+  /**
+   * The effective configuration to serve on GET /admin/config — pass
+   * `configSnapshot` from @base/config. Secrets are redacted by the admin
+   * server (redact() from @base/logger). Without it the route is absent (404).
+   */
+  configSnapshot?: () => ConfigView;
   /** Register DbMetricsService (requires PG_POOL and VALKEY_CLIENT to be available). */
   enableDbMetrics?: boolean;
   /**
@@ -39,6 +53,7 @@ export class ObservabilityModule {
 
     const providers: Provider[] = [
       { provide: TELEMETRY_HANDLE, useValue: options.telemetry },
+      { provide: ADMIN_SERVER_OPTIONS, useValue: { configSnapshot: options.configSnapshot } },
       checksProvider,
       OtelShutdownService,
       AdminServerService,
@@ -57,8 +72,11 @@ export class ObservabilityModule {
 
     return {
       module: ObservabilityModule,
+      // Global so any feature module can inject ReadinessService and register
+      // the check for the dependency it owns (see apps/worker).
+      global: true,
       providers,
-      exports: [TELEMETRY_HANDLE],
+      exports: [TELEMETRY_HANDLE, ReadinessService],
     };
   }
 }

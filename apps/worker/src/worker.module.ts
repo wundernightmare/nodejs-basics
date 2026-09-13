@@ -1,7 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
-import { yamlConfigLoader } from "@base/config";
+import { configSnapshot, yamlConfigLoader } from "@base/config";
 import { LoggerModule } from "@base/logger";
 import { ObservabilityModule } from "@base/observability";
 
@@ -14,8 +14,9 @@ import { TaskEventsModule } from "./tasks/task-events.module.js";
     LoggerModule,
     ObservabilityModule.forRoot({
       telemetry,
-      // No DB in the worker; the admin server exposes /metrics, /livez, /readyz.
-      readinessChecks: [],
+      configSnapshot,
+      // No DB in the worker. The Kafka consumer and the BullMQ processor
+      // register their own /readyz checks (ReadinessService.register).
     }),
     TaskEventsModule,
   ],

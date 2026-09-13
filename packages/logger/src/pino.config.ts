@@ -4,15 +4,40 @@
  *  - OpenTelemetry trace/span context injection via mixin
  *  - Request context (actor.id, tenant.id, http.request.id) injection via mixin
  *  - ECS-compatible Fastify request/response serializers
+ *  - A runtime-adjustable level (`logLevel`, see log-level.ts) and per-request
+ *    debug logging (withDebugLogging() in @base/common)
  *
  * Pass directly to FastifyAdapter so Fastify and NestJS share one logger.
+ *
+ * Level handling: pino decides per level *method* — a disabled level is a
+ * no-op function, so nothing downstream (mixin, hooks) ever runs for it.
+ * To let one request bypass the level, the root logger is therefore pinned
+ * at "trace" and the real decision happens in the `logMethod` hook:
+ * `logLevel.enabled(level) || isDebugLogging()`. Every child (AppLogger
+ * contexts, Fastify's req.log) inherits the hook, so the switch applies
+ * everywhere without wrapping. Never set `pinoLogger.level` yourself — use
+ * `logLevel.set()`.
  *
  * ECS field reference: https://www.elastic.co/guide/en/ecs/current/ecs-field-reference.html
  */
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
 
-import { actorStorage, requestIdStorage, tenantStorage } from "@base/common";
+import {
+  actorStorage,
+  isDebugLogging,
+  requestIdStorage,
+  tenantStorage,
+  withDebugLogging,
+} from "@base/common";
+
+import {
+  DEFAULT_LOG_LEVEL_MAX_TTL_MS,
+  LogLevel,
+  type LogLevelName,
+  parseDuration,
+  parseLogLevelStrict,
+} from "./log-level.js";
 
 // ─── Static service attributes (set once) ────────────────────────────────────
 
@@ -128,12 +153,54 @@ const prettyTransport =
       })
     : undefined;
 
-// ─── Logger instance ──────────────────────────────────────────────────────────
+// ─── Runtime log level ────────────────────────────────────────────────────────
 
-export const pinoLogger = pino(
-  {
+function baseLevelFromEnv(): LogLevelName {
+  const raw = process.env["LOG_LEVEL"];
+  if (raw === undefined || raw === "")
+    return serviceEnvironment === "production" ? "info" : "debug";
+  return parseLogLevelStrict(raw); // a typo in LOG_LEVEL must fail startup, not fall back
+}
+
+function maxTtlFromEnv(): number {
+  const raw = process.env["LOG_LEVEL_MAX_TTL"];
+  return raw === undefined || raw === "" ? DEFAULT_LOG_LEVEL_MAX_TTL_MS : parseDuration(raw);
+}
+
+/**
+ * The level in effect for `pinoLogger` and every child. The admin server's
+ * /admin/log-level drives it; LOG_LEVEL is the base, LOG_LEVEL_MAX_TTL the cap.
+ */
+export const logLevel = new LogLevel(baseLevelFromEnv(), {
+  maxTtlMs: maxTtlFromEnv(),
+  onChange(level, previous, reason) {
+    // Explicit changes are logged by their caller (the admin server adds the
+    // client); the TTL revert has no caller, so it is logged here. Marked
+    // context: this record must land whatever the level was or is.
+    if (reason !== "expired") return;
+    withDebugLogging(() => {
+      pinoLogger.warn(
+        { "log.level.from": previous, "log.level.to": level, "event.reason": "ttl expired" },
+        "Log level reverted to base",
+      );
+    });
+  },
+});
+
+/**
+ * pino options that enforce `level` in a logMethod hook. Exported so tests can
+ * build an isolated logger with the same semantics on a sink of their own.
+ */
+export function buildPinoOptions(level: LogLevel): pino.LoggerOptions {
+  return {
     messageKey: "message",
-    level: process.env["LOG_LEVEL"] ?? (serviceEnvironment === "production" ? "info" : "debug"),
+    // Pinned: the effective level is `level`, enforced in hooks.logMethod (see file header).
+    level: "trace",
+    hooks: {
+      logMethod(args, method, levelValue) {
+        if (level.enabled(levelValue) || isDebugLogging()) method.apply(this, args);
+      },
+    },
     timestamp: ecsTimestamp,
     mixin: contextMixin,
     formatters,
@@ -148,6 +215,9 @@ export const pinoLogger = pino(
       ],
       censor: "[REDACTED]",
     },
-  },
-  prettyTransport,
-);
+  };
+}
+
+// ─── Logger instance ──────────────────────────────────────────────────────────
+
+export const pinoLogger = pino(buildPinoOptions(logLevel), prettyTransport);

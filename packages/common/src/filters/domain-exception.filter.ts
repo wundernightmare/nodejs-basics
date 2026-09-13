@@ -3,7 +3,7 @@ import { metrics } from "@opentelemetry/api";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { generateErrorId } from "../utils/nanoid.js";
-import { HTTP_STATUS_TITLES, PROBLEM_CONTENT_TYPE } from "../utils/problem-detail.js";
+import { PROBLEM_CONTENT_TYPE, problemDetail } from "../utils/problem-detail.js";
 
 export interface ErrorMapping {
   status: number;
@@ -87,14 +87,8 @@ export function createDomainExceptionFilter(
       void reply
         .status(mapping.status)
         .header("Content-Type", PROBLEM_CONTENT_TYPE)
-        .send({
-          type: "about:blank",
-          title: HTTP_STATUS_TITLES[mapping.status] ?? "Error",
-          status: mapping.status,
-          detail,
-          instance: request.url,
-          errorId,
-        });
+        // problemDetail() adds the request_id extension from the request context.
+        .send(problemDetail(mapping.status, detail, { instance: request.url, errorId }));
     }
   }
 

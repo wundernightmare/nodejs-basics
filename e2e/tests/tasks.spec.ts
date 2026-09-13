@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+import { E2E, meta, testCase } from "../fixtures/meta.js";
 import { WORKER_ADMIN_URL } from "../helpers/env.js";
+
+const FEATURE = { ...E2E, feature: "tasks API" };
 
 /** Read a counter value out of the worker's Prometheus /metrics text. */
 async function workerConsumed(
@@ -16,6 +19,8 @@ async function workerConsumed(
 
 test.describe("tasks API", () => {
   test("create → read → list @smoke", async ({ request }) => {
+    await meta(FEATURE);
+    await testCase("NB-511", "the tasks vertical works end to end over HTTP");
     const created = await request.post("/tasks", { data: { title: "e2e task" } });
     expect(created.status()).toBe(201);
     const task = await created.json();
@@ -35,6 +40,8 @@ test.describe("tasks API", () => {
   });
 
   test("archive transitions the task to ARCHIVED", async ({ request }) => {
+    await meta(FEATURE);
+    await testCase("NB-512", "archive with optimistic locking");
     const created = await request.post("/tasks", { data: { title: "to archive" } });
     const task = await created.json();
 
@@ -48,12 +55,20 @@ test.describe("tasks API", () => {
     expect((await read.json()).status).toBe("ARCHIVED");
   });
 
-  test("unknown task is a 404", async ({ request }) => {
+  test("unknown task is a 404 problem+json", async ({ request }) => {
+    await meta(FEATURE);
+    await testCase("NB-513", "a missing task is an RFC 9457 problem");
     const res = await request.get("/tasks/does-not-exist");
     expect(res.status()).toBe(404);
+    expect(res.headers()["content-type"]).toContain("application/problem+json");
+    const body = await res.json();
+    expect(body.status).toBe(404);
+    expect(body.title).toBeTruthy();
   });
 
   test("creating a task drives the worker (Kafka → BullMQ)", async ({ request }) => {
+    await meta(FEATURE);
+    await testCase("NB-514", "cross-process flow api → Kafka → worker");
     const before = await workerConsumed(request);
 
     const created = await request.post("/tasks", { data: { title: "for the worker" } });

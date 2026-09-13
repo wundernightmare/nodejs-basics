@@ -1,0 +1,36 @@
+{
+  "name": "@base/testing",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only \u2014 never import from runtime code.",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --fix src",
+    "format": "oxfmt \"src/**/*.ts\"",
+    "format:check": "oxfmt --check \"src/**/*.ts\"",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "clean": "tsc --build --clean && rm -rf dist coverage"
+  },
+  "dependencies": {
+    "allure-js-commons": "3.12.1",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}

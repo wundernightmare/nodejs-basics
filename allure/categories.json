@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Infrastructure",
+    "matchedStatuses": ["broken", "failed"],
+    "messageRegex": "(?is).*(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EADDRINUSE|docker|container|timed out waiting|not become ready|services not provisioned).*"
+  },
+  {
+    "name": "Flaky (ticketed)",
+    "matchedStatuses": ["failed", "broken"],
+    "flaky": true
+  },
+  {
+    "name": "Product defects",
+    "matchedStatuses": ["failed"]
+  },
+  {
+    "name": "Test defects",
+    "matchedStatuses": ["broken"]
+  },
+  {
+    "name": "Skipped (service not configured)",
+    "matchedStatuses": ["skipped"]
+  }
+]

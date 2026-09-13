@@ -2,11 +2,27 @@
 #
 # pnpm workspace (packages/*, apps/*, e2e). The container-backed test job uses
 # GitLab service containers (Postgres + Valkey); e2e + Docker builds use a
-# Docker-in-Docker service. pnpm is pinned to 10.33.0 (the lockfile's version).
+# Docker-in-Docker service. pnpm is pinned by `packageManager` in package.json
+# (currently 11.25.0; the Dockerfiles' builder stage pins the same via
+# corepack) — scripts/mise-pins.sh exports it as PNPM_VERSION.
+#
+# Tool versions are NOT written into the security / docker jobs. The `versions`
+# job parses mise.toml and publishes every pin as a dotenv artifact, so this
+# file and `mise install` cannot drift — the same single-source-of-truth trick
+# the GitHub `versions` job uses. Bump a version in mise.toml; nothing here
+# changes. Any job can opt in with `extends: .pins` (see below).
+#
+# Closed networks (self-hosted GitLab, no direct internet): every upstream the
+# security / docker jobs touch is a variable with the public default —
+# registry hosts (DOCKER_HUB / GHCR / GCR), scanner databases, rule packs.
+# Override them as group/project CI/CD variables (same names as .env.example);
+# nothing here needs editing.
 
 stages:
+  - prepare
   - check
   - test
+  - report
   - security
   - docker
 
@@ -15,6 +31,56 @@ default:
   before_script:
     - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
 
+variables:
+  # ── Closed-network knobs — defaults are the public upstreams ──────────────
+  # Registry hosts, used as the prefix of the scanner / docker images below.
+  # Point at a pull-through cache (Harbor proxy project, Nexus docker-proxy,
+  # or GitLab's own Dependency Proxy for Docker Hub:
+  # $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX).
+  DOCKER_HUB: docker.io
+  GHCR: ghcr.io
+  GCR: gcr.io
+  # Scanner inputs. SEMGREP_CONFIG: space-separated packs or a directory of
+  # vendored rules. OSV_SCANNER_FLAGS: e.g. "--offline --local-db-path /srv/osv".
+  # GRYPE_DB_UPDATE_URL / GRYPE_DB_AUTO_UPDATE are forwarded to grype when set.
+  SEMGREP_CONFIG: p/owasp-top-ten p/typescript
+  OSV_SCANNER_FLAGS: ""
+
+# ── prepare ───────────────────────────────────────────────────────────────────
+
+# Single source of truth: every pin is read out of mise.toml (+ the pnpm pin
+# out of package.json) and published as a dotenv artifact, which downstream
+# jobs consume as ordinary variables — including in `image:`.
+versions:
+  stage: prepare
+  image: ${DOCKER_HUB}/library/alpine:3.22
+  before_script: []
+  script:
+    # scripts/mise-pins.sh is shared with the GitHub `versions` job and exits
+    # non-zero on a missing pin, so a typo in mise.toml fails here instead of
+    # surfacing as a broken `image:` tag much later.
+    - sh scripts/mise-pins.sh | tee versions.env
+  artifacts:
+    reports:
+      dotenv: versions.env
+
+# Reusable fragment: `extends: .pins` gives a job every *_VERSION variable from
+# mise.toml (NODE_VERSION, PNPM_VERSION, K6_VERSION, SEMGREP_VERSION, …) and
+# lets it start as soon as the pins are known instead of waiting for its stage.
+.pins:
+  needs:
+    - job: versions
+      artifacts: true
+
+# Reusable fragment: Docker-in-Docker for jobs that build images.
+.dind:
+  services:
+    - name: ${DOCKER_HUB}/library/docker:28-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+
 # ── check: typecheck + lint + format across the workspace ─────────────────────
 check:
   stage: check
@@ -22,109 +88,268 @@ check:
     - pnpm install --frozen-lockfile
     - pnpm check
 
-# ── test: vitest with Postgres + Valkey service containers ────────────────────
-test:
+# ── test layers — mirrors the GitHub unit / integration / e2e jobs ─────────────
+# Each layer writes its coverage (istanbul json) to .cover/<layer> and its
+# Allure results to allure-results/; the `coverage` and `allure-report` jobs
+# in the `report` stage merge them. TZ=UTC for determinism.
+
+.test-defaults:
   stage: test
-  services:
-    - name: postgres:18
-      alias: postgres
-    - name: valkey/valkey:9.0
-      alias: valkey
   variables:
-    POSTGRES_DB: app
-    POSTGRES_USER: app
-    POSTGRES_PASSWORD: app
-    DATABASE_URL: postgresql://app:app@postgres:5432/app
-    VALKEY_URL: redis://valkey:6379
+    TZ: UTC
+    ALLURE_RESULTS_DIR: $CI_PROJECT_DIR/allure-results
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - .cover/
+      - allure-results/
+
+# Unit layer: no services.
+unit:
+  extends: .test-defaults
   script:
     - pnpm install --frozen-lockfile
-    - pnpm test
+    - node scripts/cover.mjs unit
 
-# ── e2e: Playwright API suite against the running stack (deps + api + worker) ──
-e2e:
-  stage: test
-  image: docker:27
-  services:
-    - name: docker:27-dind
-      alias: docker
+# Integration layer: the libs against real Postgres / Valkey / Redpanda
+# (docker/deps.yml through dind — the same stack `just deps` runs). CI is
+# set, so a suite whose service is missing fails instead of skipping.
+integration:
+  extends: [.test-defaults, .dind]
+  image: ${DOCKER_HUB}/library/docker:28
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
+    TZ: UTC
+    ALLURE_RESULTS_DIR: $CI_PROJECT_DIR/allure-results
+    DATABASE_URL: postgresql://app:app@docker:5432/app
+    VALKEY_URL: redis://docker:6379
+    KAFKA_BROKERS: docker:9092
   before_script:
     - apk add --no-cache nodejs npm bash
     - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
   script:
     - pnpm install --frozen-lockfile
-    - docker compose -f docker/deps.yml up -d
-    - docker compose -f docker/stack.yml up -d --build
-    - pnpm --filter @base/e2e exec playwright test
+    - docker compose -f docker/deps.yml up -d --wait
+    - node scripts/cover.mjs integration
   after_script:
+    - docker compose -f docker/deps.yml down -v || true
+
+# E2E layer: the built api + worker spawned by the Playwright harness
+# (E2E_SPAWN=1) under NODE_V8_COVERAGE, against docker/deps.yml. Redpanda's
+# HOST listener advertises localhost:9092, so the spawned processes must run
+# where the broker's ports are published: inside the dind service is not
+# reachable as "localhost" from this container, hence the host alias below.
+e2e:
+  extends: [.test-defaults, .dind]
+  image: ${DOCKER_HUB}/library/docker:28
+  variables:
+    TZ: UTC
+    ALLURE_RESULTS_DIR: $CI_PROJECT_DIR/allure-results
+    DATABASE_URL: postgresql://app:app@docker:5432/app
+    VALKEY_URL: redis://docker:6379
+    KAFKA_BROKERS: docker:9092
+    GIT_COMMIT: $CI_COMMIT_SHA
+  before_script:
+    - apk add --no-cache nodejs npm bash
+    - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
+  script:
+    - pnpm install --frozen-lockfile
+    - docker compose -f docker/deps.yml up -d --wait
+    - node scripts/cover.mjs e2e
+  after_script:
+    - docker compose -f docker/deps.yml down -v || true
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - .cover/
+      - allure-results/
+      - e2e/playwright-report/
+      - e2e/test-results/
+
+# The production images: build api + worker (docker/stack.yml), boot them
+# against the deps and run the @smoke subset — proves the distroless images
+# start and serve, which the spawned-process layer cannot.
+e2e-stack:
+  extends: .dind
+  stage: test
+  image: ${DOCKER_HUB}/library/docker:28
+  before_script:
+    - apk add --no-cache nodejs npm bash
+    - npm install -g corepack@latest && corepack enable && corepack prepare pnpm@11.25.0 --activate
+  script:
+    - pnpm install --frozen-lockfile
+    - docker compose -f docker/deps.yml up -d --wait
+    - docker compose -f docker/stack.yml up -d --build
+    - API_URL=http://docker:3000 API_ADMIN_URL=http://docker:9091 WORKER_ADMIN_URL=http://docker:9093
+      pnpm --filter @base/e2e test:smoke
+  after_script:
+    - docker compose -f docker/stack.yml logs --no-color | tail -200 || true
     - docker compose -f docker/stack.yml down -v || true
     - docker compose -f docker/deps.yml down -v || true
 
+# ── report: one coverage number, one Allure report ────────────────────────────
+
+# Merge the three layers, gate (scripts/cover.config.mjs) and ratchet against
+# the default branch's breakdown (its `coverage` artifact, optional so the
+# very first pipeline still passes). Cobertura + the MR percentage come from
+# the merged lcov via the same script.
+coverage:
+  stage: report
+  needs:
+    - job: unit
+      artifacts: true
+    - job: integration
+      artifacts: true
+      optional: true
+    - job: e2e
+      artifacts: true
+      optional: true
+    - project: $CI_PROJECT_PATH
+      job: coverage
+      ref: $CI_DEFAULT_BRANCH
+      artifacts: true
+      optional: true
+  script:
+    - pnpm install --frozen-lockfile
+    - |
+      diff_args=""
+      if [ -n "$CI_MERGE_REQUEST_IID" ] && [ -s coverage-breakdown.json ]; then
+        mv coverage-breakdown.json coverage-breakdown-base.json
+        diff_args="--diff-base coverage-breakdown-base.json --diff-threshold 0"
+      fi
+      node scripts/cover.mjs merge $diff_args | tee coverage-layers.txt
+  coverage: '/^merged\s+(\d+\.\d+)%/'
+  artifacts:
+    expire_in: 4 weeks
+    paths:
+      - coverage-merged.lcov
+      - coverage-breakdown.json
+      - coverage-layers.txt
+
+# One Allure HTML report from every layer's results (allure-commandline from
+# the root package.json needs a JRE; scripts/allure-meta.sh adds
+# categories.json + executor.json).
+allure-report:
+  extends: .pins
+  stage: report
+  image: ${DOCKER_HUB}/library/eclipse-temurin:25-jre
+  needs:
+    - job: versions
+      artifacts: true
+    - job: unit
+      artifacts: true
+    - job: integration
+      artifacts: true
+      optional: true
+    - job: e2e
+      artifacts: true
+      optional: true
+  when: always
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm >/dev/null
+    - npm install -g corepack@latest && corepack enable && corepack prepare "pnpm@${PNPM_VERSION}" --activate
+  script:
+    - pnpm install --frozen-lockfile
+    - scripts/allure-meta.sh allure-results
+    - pnpm exec allure generate --clean --single-file -o allure-report allure-results
+  artifacts:
+    expire_in: 2 weeks
+    paths:
+      - allure-report/index.html
+
 # ── security (AppSec) — mirrors appsec.yml ────────────────────────────────────
+# Every scanner runs from the same version-pinned image the GitHub pipeline
+# uses. These need neither the test matrix nor each other, so `extends: .pins`
+# lets them start as soon as the pins are known.
+
 secret-detection:
+  extends: .pins
   stage: security
   image:
-    name: zricethezav/gitleaks:latest
+    name: ${DOCKER_HUB}/zricethezav/gitleaks:v${GITLEAKS_VERSION}
     entrypoint: [""]
   before_script: []
   script:
-    - gitleaks detect --source . --config .gitleaks.toml --verbose
+    - gitleaks detect --source . --config .gitleaks.toml --verbose --no-banner
 
 sast:
+  extends: .pins
   stage: security
   image:
-    name: semgrep/semgrep:latest
+    name: ${DOCKER_HUB}/semgrep/semgrep:${SEMGREP_VERSION}
     entrypoint: [""]
   before_script: []
   script:
-    - semgrep ci --config p/owasp-top-ten --config p/typescript
+    # `semgrep scan`, not `semgrep ci`: no call home to semgrep.dev, no metrics.
+    - set -- ; for c in $SEMGREP_CONFIG; do set -- "$@" --config "$c"; done
+    - semgrep scan "$@" --error --metrics=off
 
+# osv-scanner ships an official image, which also avoids the `go install` that
+# pinned it independently of mise.toml. The binary is the image entrypoint,
+# cleared here so GitLab can run its shell wrapper — hence the absolute path.
 dependency-scanning:
-  stage: security
-  image: golang:1.25-bookworm
-  before_script: []
-  script:
-    - go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.3.8
-    - "$(go env GOPATH)/bin/osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml"
-
-hadolint:
+  extends: .pins
   stage: security
   image:
-    name: hadolint/hadolint:latest-debian
+    name: ${GHCR}/google/osv-scanner:v${OSV_VERSION}
+    entrypoint: [""]
+  before_script: []
+  script:
+    - /osv-scanner scan --config=osv-scanner.toml --lockfile pnpm-lock.yaml $OSV_SCANNER_FLAGS
+
+hadolint:
+  extends: .pins
+  stage: security
+  image:
+    name: ${DOCKER_HUB}/hadolint/hadolint:v${HADOLINT_VERSION}-debian
     entrypoint: [""]
   before_script: []
   parallel:
     matrix:
       - DOCKERFILE: [apps/api/Dockerfile, apps/worker/Dockerfile]
   script:
+    # Severity threshold comes from .hadolint.yaml (failure-threshold: warning).
     - hadolint --config .hadolint.yaml "$DOCKERFILE"
 
 # ── docker: build each image, generate an SBOM, scan for CVEs ─────────────────
+# syft and grype run from their own pinned images against a `docker save` tar,
+# so nothing is curl-installed and no docker socket has to be shared into them.
 docker-build-scan:
+  extends: [.pins, .dind]
   stage: docker
-  image: docker:27
-  services:
-    - name: docker:27-dind
-      alias: docker
+  image: ${DOCKER_HUB}/library/docker:28
+  before_script: []
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
+    # Accept the bundled vuln DB even if older than grype's 5-day default.
     GRYPE_DB_VALIDATE_AGE: "false"
   parallel:
     matrix:
-      - APP:
-          - api
-          - worker
-  before_script:
-    - apk add --no-cache curl bash
-    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin v1.44.0
-    - curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin v0.112.0
+      - APP: [api, worker]
   script:
-    - docker build -f "apps/$APP/Dockerfile" -t "nodejs-basics-$APP:ci" .
-    - syft "nodejs-basics-$APP:ci" -o cyclonedx-json=sbom-$APP.json
-    - grype "nodejs-basics-$APP:ci" --config .grype.yaml --fail-on high
+    # Proxy settings go in as build args (value-less form: taken from the job
+    # environment, skipped when unset). The dind daemon picks up HTTP_PROXY /
+    # HTTPS_PROXY / NO_PROXY from the job variables.
+    - |
+      docker build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
+        -f "apps/$APP/Dockerfile" -t "nodejs-basics-$APP:ci" .
+    - docker save -o "image-$APP.tar" "nodejs-basics-$APP:ci"
+    - |
+      docker run --rm -v "$CI_PROJECT_DIR:/w" -w /w "${DOCKER_HUB}/anchore/syft:v${SYFT_VERSION}" \
+        "docker-archive:image-$APP.tar" -o "cyclonedx-json=sbom-$APP.json"
+    # Forward only the grype knobs that are set — an empty GRYPE_DB_UPDATE_URL
+    # would override grype's default with "".
+    - |
+      pass=""; for v in GRYPE_DB_VALIDATE_AGE GRYPE_DB_UPDATE_URL GRYPE_DB_AUTO_UPDATE HTTPS_PROXY NO_PROXY; do
+        eval "val=\${$v:-}"; [ -n "$val" ] && pass="$pass -e $v"
+      done
+      # shellcheck disable=SC2086
+      docker run --rm -v "$CI_PROJECT_DIR:/w" -w /w $pass \
+        "${DOCKER_HUB}/anchore/grype:v${GRYPE_VERSION}" \
+        "docker-archive:image-$APP.tar" --config .grype.yaml --fail-on high
+    - rm -f "image-$APP.tar"
   artifacts:
     paths:
       - sbom-*.json
