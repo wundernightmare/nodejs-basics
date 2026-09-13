@@ -60,3 +60,16 @@ pnpm-debug.log*
 .local/
 secrets/
 *.local
+
+# Coverage layers (scripts/cover.mjs) + merged profile / ratchet breakdown
+.cover/
+coverage-merged.*
+coverage-breakdown.json
+coverage-layers.txt
+
+# Allure (allure-vitest / allure-playwright results, allure-commandline report)
+allure-results/
+allure-report/
+
+# e2e spawn-mode state (e2e/fixtures/services.ts)
+e2e/.e2e-state.json

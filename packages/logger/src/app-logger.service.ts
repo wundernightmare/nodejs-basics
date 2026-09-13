@@ -13,7 +13,8 @@
 import { Injectable, type LogLevel, type LoggerService, Optional } from "@nestjs/common";
 import type { Logger as PinoInstance } from "pino";
 
-import { ecsError, pinoLogger } from "./pino.config.js";
+import { type LogLevelName } from "./log-level.js";
+import { ecsError, logLevel, pinoLogger } from "./pino.config.js";
 
 function isStackTrace(value: unknown): value is string {
   return typeof value === "string" && value.includes("\n    at ");
@@ -78,10 +79,15 @@ export class AppLogger implements LoggerService {
     }
   }
 
+  /**
+   * NestJS `logger: [...]` levels map onto the shared runtime LogLevel — a
+   * permanent change (no TTL), like editing LOG_LEVEL. pino's own `level`
+   * stays pinned (see pino.config.ts).
+   */
   setLogLevels(levels: LogLevel[]): void {
     const order: LogLevel[] = ["verbose", "debug", "log", "warn", "error", "fatal"];
     const lowest = order.find((l) => levels.includes(l));
-    const pinoLevel: Record<string, string> = {
+    const pinoLevel: Record<string, LogLevelName> = {
       verbose: "trace",
       debug: "debug",
       log: "info",
@@ -89,7 +95,7 @@ export class AppLogger implements LoggerService {
       error: "error",
       fatal: "fatal",
     };
-    if (lowest) this._pino.level = pinoLevel[lowest] ?? "info";
+    if (lowest) logLevel.set(pinoLevel[lowest] ?? "info", 0);
   }
 }
 

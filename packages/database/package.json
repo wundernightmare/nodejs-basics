@@ -38,6 +38,7 @@
     "@nestjs/config": "12.x"
   },
   "devDependencies": {
-    "@types/pg": "8.20.0"
+    "@types/pg": "8.20.0",
+    "@base/testing": "workspace:*"
   }
 }

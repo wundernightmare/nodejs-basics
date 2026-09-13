@@ -17,7 +17,15 @@ import { type Queue } from "bullmq";
 
 import { bullmqQueueToken } from "@base/jobs";
 import { buildConsumerConfig, kafkaLogger } from "@base/kafka";
-import { AppLogger, ecsError } from "@base/logger";
+import {
+  AppLogger,
+  ecsError,
+  generateRequestId,
+  isValidRequestId,
+  withDebugLogging,
+  withRequestId,
+} from "@base/logger";
+import { ReadinessService } from "@base/observability";
 
 /** Topic + group — the consumer's local copy of the wire contract (decoupled). */
 const TASK_EVENTS_TOPIC = "tasks.events";
@@ -34,6 +42,9 @@ interface TaskCreatedEvent {
 export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplicationShutdown {
   private consumer: KafkaJS.Consumer | undefined;
   private readonly logger: ReturnType<AppLogger["child"]>;
+  // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
+  // and that is what dashboards expect); OTel semconv would spell it
+  // `worker.tasks.consumed` with unit "{task}" and let the exporter add `_total`.
   private readonly consumed = metrics
     .getMeter("worker")
     .createCounter("worker_tasks_consumed_total", {
@@ -44,8 +55,19 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     private readonly config: ConfigService,
     @Inject(bullmqQueueToken("task-events")) private readonly queue: Queue,
     appLogger: AppLogger,
+    readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
+    // Critical: a worker that cannot consume is not ready. assignment() throws
+    // unless the consumer is connected, which is exactly the cheap check we want.
+    readiness.register({
+      name: "kafka",
+      check: async () => {
+        if (this.consumer === undefined) throw new Error("consumer not started");
+        this.consumer.assignment();
+        return "ok";
+      },
+    });
   }
 
   async onApplicationBootstrap(): Promise<void> {
@@ -65,7 +87,17 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       await this.consumer.subscribe({ topics: [TASK_EVENTS_TOPIC] });
       await this.consumer.run({
         eachMessage: async ({ message }) => {
-          await this.handle(message.value);
+          // Correlate with the producing API request (x-request-id header) or
+          // mint an id, so every log line of this message carries one. An
+          // `x-debug-logging` header marks one message for debug logging.
+          const requestId = headerString(message.headers?.["x-request-id"]);
+          const run = (): Promise<void> =>
+            withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
+              this.handle(message.value),
+            );
+          await (message.headers?.["x-debug-logging"] !== undefined
+            ? withDebugLogging(run)
+            : run());
         },
       });
       this.logger.info(
@@ -114,4 +146,11 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   async onApplicationShutdown(): Promise<void> {
     await this.consumer?.disconnect();
   }
+}
+
+function headerString(
+  value: Buffer | string | (Buffer | string)[] | undefined,
+): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value;
+  return first === undefined ? undefined : first.toString();
 }

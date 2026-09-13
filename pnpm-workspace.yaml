@@ -20,6 +20,8 @@ overrides:
   brace-expansion: 5.0.9
   '@opentelemetry/exporter-prometheus': 0.222.0
   '@opentelemetry/core': 2.11.0
+  browserslist: 4.28.7            # GHSA (2 HIGH) via @nestjs/cli → webpack; osv-scanner clean at 4.28.7
+  baseline-browser-mapping: 2.11.21 # same chain; first fixed release older than the 7-day window
 
 # pnpm 11 turns an ignored build script into a hard install failure.
 allowBuilds:
@@ -33,8 +35,41 @@ allowBuilds:
   msgpackr-extract: true
   pg-native: true
 
+# Supply-chain hardening (semgrep p/owasp-top-ten `package_managers.pnpm.*`
+# enforces all three; `.npmrc` `min-release-age=7` is the npm twin). A
+# frozen-lockfile install of an already-compliant lockfile is unaffected; they
+# bite on `pnpm update` / a fresh resolution:
+# - a newly published version has to be 7 days old before it resolves — the
+#   window in which the recent npm worm packages were pulled;
+# - transitive deps may only come from the registry (no git / tarball URLs);
+# - a dependency update cannot silently downgrade these settings.
+minimumReleaseAge: 10080
+blockExoticSubdeps: true
+trustPolicy: no-downgrade
 minimumReleaseAgeExclude:
-  - '@opentelemetry/core@2.11.0'
-  - '@opentelemetry/exporter-prometheus@0.222.0'
-  - '@opentelemetry/resources@2.11.0'
-  - '@opentelemetry/sdk-metrics@2.11.0'
+  # allure 3.12.1 (2026-09-09) is the first allure-js release with npm
+  # provenance; trustPolicy rejects the older, unattested 3.12.0 as a downgrade
+  # and minimumReleaseAge rejects 3.12.1 as too new — the same waiver the Go
+  # sibling carries. Remove after 2026-09-17.
+  - 'allure-vitest@3.12.1'
+  - 'allure-playwright@3.12.1'
+  - 'allure-js-commons@3.12.1'
+# trustPolicy is publish-date based: a version is refused if ANY earlier-
+# published version carried stronger trust evidence (provenance / trusted
+# publisher). chokidar 4.0.1 (2024-09) was published with SLSA provenance,
+# 4.0.2 / 4.0.3 (2024-12) without it, 5.0.0 (2025-11) with it again — the
+# maintainer switched publishing methods, not a takeover (pnpm's own docs use
+# chokidar@4.0.3 as the trustPolicyExclude example). It reaches us only via
+# @nestjs/cli → fork-ts-checker-webpack-plugin (chokidar ^4.0.1), dev-time
+# only, never in the runtime image. Remove when fork-ts-checker-webpack-plugin
+# moves to chokidar ^5 (or @nestjs/cli drops it) — `pnpm why chokidar`.
+trustPolicyExclude:
+  - 'chokidar@4.0.3'
+# The escape hatch when a release is needed before the window closes: a
+# time-boxed exclusion with the reason and the removal date — the same rule as
+# the CVE waivers in osv-scanner.toml / .grype.yaml. Example (the
+# @opentelemetry 2.11.0 / 0.222.0 releases of 2026-08-31 needed this until
+# 2026-09-07):
+#
+# minimumReleaseAgeExclude:
+#   - '@opentelemetry/core@2.11.0'   # CVE floor; remove after 2026-09-07

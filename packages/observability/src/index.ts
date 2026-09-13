@@ -1,4 +1,11 @@
-export { AdminServerService } from "./admin-server.service.js";
+export { requireBearer, type BearerGuard, type GuardLogger } from "./admin-auth.js";
+export { writeProblem, type AdminProblem } from "./admin-problem.js";
+export {
+  ADMIN_SERVER_OPTIONS,
+  AdminServerService,
+  type AdminServerOptions,
+  type ConfigView,
+} from "./admin-server.service.js";
 export {
   CrashReportService,
   type CrashReportResult,
@@ -16,6 +23,7 @@ export {
   type ReadinessCheckFn,
   type ReadinessResult,
   ReadinessService,
+  type ReadinessStatus,
 } from "./readiness.service.js";
 export { setupTelemetry, type SetupTelemetryOptions } from "./setup-telemetry.js";
 export { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";

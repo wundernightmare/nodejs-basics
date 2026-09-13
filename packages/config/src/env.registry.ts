@@ -109,8 +109,53 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     key: "LOG_LEVEL",
     yaml: "app.log_level",
     required: false,
-    description: "Pino log level override (trace|debug|info|warn|error|fatal).",
+    description:
+      "Base pino log level (trace|debug|info|warn|error|fatal|silent). Default: info in " +
+      "production, debug otherwise. Changeable at runtime via PUT /admin/log-level; every " +
+      "runtime change reverts to this level. Read at process start (env only).",
     usedIn: ["logger"],
+  },
+
+  {
+    key: "LOG_LEVEL_MAX_TTL",
+    yaml: "app.log_level_max_ttl",
+    required: false,
+    default: "24h",
+    description:
+      "Cap (and default) for how long a runtime log-level change made through " +
+      "PUT /admin/log-level lasts before reverting to LOG_LEVEL. Go-style duration (30m, 2h).",
+    usedIn: ["logger", "observability"],
+  },
+
+  {
+    key: "ADMIN_TOKEN",
+    yaml: "app.admin_token",
+    required: false,
+    description:
+      "Bearer token for the mutating admin endpoints (PUT/DELETE /admin/log-level, " +
+      "POST /debug/*). Empty (the local/compose default) leaves them open; the " +
+      '"Admin server listening" log line says auth=off|bearer.',
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "DEBUG_TOKEN",
+    yaml: "app.debug_token",
+    required: false,
+    description:
+      "Value of the X-Debug-Token request header that turns on debug logging for one " +
+      "request (response carries X-Debug-Logging: on). Empty disables the feature.",
+    usedIn: ["main.ts", "common/http/request-context.hooks.ts"],
+  },
+
+  {
+    key: "GIT_COMMIT",
+    yaml: "app.git_commit",
+    required: false,
+    description:
+      "Build revision reported by GET /version (and /admin/info). Baked into the image " +
+      'at build time; "unknown" when unset.',
+    usedIn: ["observability"],
   },
 
   // ─── Database ─────────────────────────────────────────────────────────────
@@ -122,6 +167,17 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     default: "postgresql://app:app@localhost:5432/app",
     description: "PostgreSQL connection URL.",
     usedIn: ["database"],
+  },
+
+  {
+    key: "DATABASE_PASSWORD_FILE",
+    yaml: "database.password_file",
+    required: false,
+    description:
+      "Path to a Secret-mounted file holding the database password. When set it overrides " +
+      "the password in DATABASE_URL and is polled for rotation (SecretFileWatcher), so new " +
+      "connections pick up a rotated secret without a restart.",
+    usedIn: ["database", "config/secret-file-watcher.ts"],
   },
 
   {
@@ -161,6 +217,29 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     default: "app",
     description: "Kafka client.id reported to the broker.",
     usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_AUTO_OFFSET_RESET",
+    yaml: "kafka.consumer.auto_offset_reset",
+    required: false,
+    default: "latest",
+    description:
+      "librdkafka auto.offset.reset for consumers with no committed offset " +
+      "(earliest|latest). The compose stack uses earliest so the worker drains events " +
+      "produced before it joined the group.",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
+    key: "KAFKA_SASL_PASSWORD_FILE",
+    yaml: "kafka.sasl.password_file",
+    required: false,
+    description:
+      "Path to a Secret-mounted file holding the SASL password (alternative to " +
+      "KAFKA_SASL_PASSWORD). librdkafka cannot rotate credentials at runtime; the " +
+      "SecretFileWatcher only detects the rotation so operators can roll the pods.",
+    usedIn: ["kafka", "config/secret-file-watcher.ts"],
   },
 
   // ─── OpenTelemetry ─────────────────────────────────────────────────────────

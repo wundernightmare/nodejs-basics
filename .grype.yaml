@@ -1,28 +1,37 @@
 # grype config — container image CVE scanning. Used by `just docker-scan` /
-# `docker-scan-ci`. App-layer npm dependencies are gated strictly here (and by
-# osv-scanner in `just sec-deps`); the waivers below are scoped to the immutable
-# distroless base, which cannot be patched package-by-package — you bump the
-# whole base image. So they only ever silence base-image findings, never an
-# npm-dep CVE the app actually introduces.
+# `docker-scan-ci` and the docker CI jobs (grype from its pinned image against
+# a `docker save` tar). App-layer npm dependencies are gated strictly here (and
+# by osv-scanner in `just sec-deps`); the waivers below are scoped to the
+# immutable distroless base (gcr.io/distroless/nodejs24-debian12:nonroot),
+# which cannot be patched package-by-package — you bump the whole base image.
+# So they only ever silence base-image findings, never an npm-dep CVE the app
+# actually introduces.
 #
 # Fail the CI variant on HIGH+ (the recipe passes --fail-on high explicitly).
+# Document every waiver below with a removal trigger.
 ignore:
   # ── Distroless base OS (Debian 12) ──────────────────────────────────────────
-  # libssl3 / libc6 / etc. ship inside gcr.io/distroless/nodejs22-debian12 and
-  # back the node runtime. They are not `apt upgrade`-able in a distroless image;
-  # the fix is to bump the base image once distroless rebuilds on a patched
-  # Debian point release. Not an application code change.
-  # Removal trigger: drop this once the pinned base no longer reports HIGH+ deb
-  # CVEs (i.e. distroless has refreshed) — re-check on each base bump.
-  - package:
+  # libssl3 / libc6 / etc. ship inside the distroless base and back the node
+  # runtime. Only findings Debian has marked won't-fix / not-fixed are waived:
+  # nothing at our layer can change them, and a fixed one shows up again as
+  # soon as distroless rebuilds on the patched Debian point release — which is
+  # the signal to bump the base image, not to widen this waiver.
+  # Removal trigger: re-check on each base bump; drop if the pinned base
+  # reports no HIGH+ deb CVEs at all.
+  - fix-state: wont-fix
+    package:
+      type: deb
+  - fix-state: not-fixed
+    package:
       type: deb
 
   # ── Distroless node runtime ─────────────────────────────────────────────────
-  # The `node` binary version is whatever gcr.io/distroless/nodejs22 ships; we
-  # can't independently bump it. Addressed by refreshing the base image when
-  # distroless publishes the patched Node 22.x.
-  # Removal trigger: remove when the base image ships Node >= 22.22.2 (the fix
-  # for CVE-2026-21710) and grype reports no HIGH+ on the node binary.
+  # The `node` binary version is whatever gcr.io/distroless/nodejs24-debian12
+  # ships; we can't independently bump it. Addressed by refreshing the base
+  # image when distroless publishes the next patched Node 24.x.
+  # Removal trigger: remove when grype reports no HIGH+ on the node binary for
+  # the pinned base (re-check on each base bump; if a specific advisory is
+  # what keeps this alive, name it here so the trigger is verifiable).
   - package:
       type: binary
       name: node

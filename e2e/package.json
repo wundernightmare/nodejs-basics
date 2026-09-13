@@ -14,12 +14,15 @@
     "format": "oxfmt \"**/*.ts\"",
     "format:check": "oxfmt --check \"**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "rm -rf playwright-report test-results"
+    "clean": "rm -rf playwright-report test-results allure-results .e2e-state.json",
+    "test:smoke": "playwright test --grep @smoke"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "26.4.0",
+    "allure-playwright": "3.12.1",
     "oxlint": "1.80.0",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "allure-js-commons": "3.12.1"
   }
 }

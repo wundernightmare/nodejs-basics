@@ -16,7 +16,7 @@
  */
 import { Inject, Injectable } from "@nestjs/common";
 
-import { generateId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
+import { generateId, getRequestId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
 import { KafkaProducerService } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 
@@ -82,10 +82,19 @@ export class TaskUseCase {
       title: task.title,
       createdAt: task.createdAt.toISOString(),
     };
+    // The request id travels as a record header so the worker's log lines for
+    // this event correlate with the API request that produced it.
+    const requestId = getRequestId();
     try {
       await this.kafka.producer.send({
         topic: TASK_EVENTS_TOPIC,
-        messages: [{ key: task.id, value: JSON.stringify(event) }],
+        messages: [
+          {
+            key: task.id,
+            value: JSON.stringify(event),
+            ...(requestId !== undefined ? { headers: { "x-request-id": requestId } } : {}),
+          },
+        ],
       });
     } catch (err) {
       this.logger.warn(

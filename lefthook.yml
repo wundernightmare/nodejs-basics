@@ -5,6 +5,8 @@
 # Skip a single invocation with `LEFTHOOK=0 git commit ...` only if
 # absolutely necessary — CI runs the same checks.
 
+# ── pre-commit ──────────────────────────────────────────────────────────────
+# Fast correctness gates.
 pre-commit:
   parallel: true
   commands:
@@ -14,3 +16,19 @@ pre-commit:
       run: pnpm -r lint
     typecheck:
       run: pnpm -r typecheck
+    secrets:
+      # Staged-diff secret scan — the same rules CI runs over the whole tree.
+      # gitleaks is pinned in mise.toml (`just setup-sec`).
+      run: mise exec -- gitleaks git --pre-commit --staged --config .gitleaks.toml --no-banner
+
+# ── pre-push ────────────────────────────────────────────────────────────────
+# Heavier checks — too slow for every commit, fast enough before a push.
+# Unit tests only (`pnpm test` is the vitest unit layer; the container-backed
+# integration suites and e2e run in CI).
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      run: pnpm -r typecheck
+    test:
+      run: pnpm test

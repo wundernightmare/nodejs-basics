@@ -10,6 +10,8 @@
     "start:dev": "NODE_OPTIONS='--conditions source --import tsx/esm' nest start --watch",
     "start:debug": "NODE_OPTIONS='--conditions source --import tsx/esm' nest start --debug --watch",
     "typecheck": "tsgo --noEmit",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
     "lint": "oxlint src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
@@ -56,6 +58,7 @@
     "@types/pg": "8.20.0",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
-    "unplugin-swc": "1.5.11"
+    "unplugin-swc": "1.5.11",
+    "@base/testing": "workspace:*"
   }
 }

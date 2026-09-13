@@ -26,6 +26,10 @@ services:
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       VALKEY_URL: redis://valkey:6379
       KAFKA_BROKERS: redpanda:29092
+      # Runtime-debugging tokens, passed through from the host env; unset by
+      # default = admin mutations open (auth=off), X-Debug-Token disabled.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      DEBUG_TOKEN: ${DEBUG_TOKEN:-}
     ports:
       - "3000:3000"
       # Container admin port is 9090; published to host 9091 to avoid clashing
@@ -47,6 +51,8 @@ services:
       KAFKA_BROKERS: redpanda:29092
       # Catch events produced before the worker joined the group (demo/e2e).
       KAFKA_CONSUMER_AUTO_OFFSET_RESET: earliest
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      DEBUG_TOKEN: ${DEBUG_TOKEN:-}
     ports:
       - "9093:9090" # worker admin on host 9093 (9092 is the broker)
     networks:
