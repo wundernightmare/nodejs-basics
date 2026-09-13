@@ -61,17 +61,6 @@ minimumReleaseAgeExclude:
   # GHSA-2q42-4q24-7rgv (openapi3 emitter path escape; every earlier release is
   # affected). Remove after 2026-09-17.
   - '@typespec/*'
-# trustPolicy is publish-date based: a version is refused if ANY earlier-
-# published version carried stronger trust evidence (provenance / trusted
-# publisher). chokidar 4.0.1 (2024-09) was published with SLSA provenance,
-# 4.0.2 / 4.0.3 (2024-12) without it, 5.0.0 (2025-11) with it again — the
-# maintainer switched publishing methods, not a takeover (pnpm's own docs use
-# chokidar@4.0.3 as the trustPolicyExclude example). It reaches us only via
-# @nestjs/cli → fork-ts-checker-webpack-plugin (chokidar ^4.0.1), dev-time
-# only, never in the runtime image. Remove when fork-ts-checker-webpack-plugin
-# moves to chokidar ^5 (or @nestjs/cli drops it) — `pnpm why chokidar`.
-trustPolicyExclude:
-  - 'chokidar@4.0.3'
 # The escape hatch when a release is needed before the window closes: a
 # time-boxed exclusion with the reason and the removal date — the same rule as
 # the CVE waivers in osv-scanner.toml / .grype.yaml. Example (the

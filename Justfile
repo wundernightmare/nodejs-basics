@@ -71,11 +71,19 @@ down-all:
 
 # ── Development ───────────────────────────────────────────────────────────────
 
-# Start API in watch mode. Run `just deps` first.
+# Start the api in watch mode (Vite rebuild → Node restart, scripts/dev.mjs). Run `just deps` first.
 dev:
     cd {{API}} && pnpm start:dev
 
-# Build all packages
+# Start the worker in watch mode
+dev-worker:
+    cd apps/worker && pnpm start:dev
+
+# Rebuild an app's bundle on every change without running it (APP is api|worker)
+build-watch APP="api":
+    cd apps/{{APP}} && pnpm build:watch
+
+# Build every package (tsc, declarations) and app (Vite bundle → apps/<app>/dist/main.js)
 build:
     pnpm -r build
 
@@ -193,9 +201,16 @@ test-integration:
 # Every vitest layer (unit + integration)
 test-all: test test-integration
 
-# Watch mode for the unit layer
+# Watch mode for the unit layer (vitest re-runs the specs a change touches)
 test-watch:
     pnpm test:watch
+
+# Watch mode for the integration layer (needs `just deps`)
+test-watch-integration:
+    DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
+    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
+    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    pnpm test:integration:watch
 
 # Property specs (`*.prop.spec.ts`, fast-check) with the deep budget — the fuzz
 # layer, the Go sibling's `just fuzz`. `just test` already runs them with 100 cases.

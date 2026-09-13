@@ -183,7 +183,7 @@ jobs:
 
   # E2E layer: the built api + worker, spawned by the Playwright harness
   # (E2E_SPAWN=1) with NODE_V8_COVERAGE, against docker/deps.yml. The
-  # processes' counters are remapped to src/** by c8 and join the merged
+  # bundles' counters are remapped to src/** (scripts/v8-to-istanbul.mjs) and join the merged
   # coverage; Playwright reports to Allure like every other layer.
   e2e:
     needs: versions

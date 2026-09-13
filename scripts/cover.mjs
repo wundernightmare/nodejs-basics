@@ -4,19 +4,19 @@
  *
  *   node scripts/cover.mjs unit          # vitest project unit        → .cover/unit
  *   node scripts/cover.mjs integration   # vitest project integration → .cover/integration
- *   node scripts/cover.mjs e2e           # spawned api+worker under NODE_V8_COVERAGE + Playwright → .cover/e2e
+ *   node scripts/cover.mjs e2e           # spawned api+worker bundles under NODE_V8_COVERAGE + Playwright → .cover/e2e
  *   node scripts/cover.mjs merge [--diff-base <breakdown.json>] [--diff-threshold <pct>]
  *                                        # .cover/* → .cover/merged, coverage-breakdown.json, gate
  *
  * Every layer ends up as an istanbul `coverage-final.json`: vitest writes it
  * directly (provider v8, reporter json); the e2e layer is the raw V8 output
- * of the real processes, remapped through source maps to `src/**` by c8.
+ * of the real processes (Vite bundles), remapped through their source maps
+ * to `src/**` by scripts/v8-to-istanbul.mjs (ast-v8-to-istanbul).
  *
  * The merge is LINE-based, on purpose. vitest's statement maps come from the
- * source AST (one statement per executable node), c8's from source-map
- * remapping (one "statement" per source line, comments included) — the two
- * are not the same instrumentation, so an istanbul key-by-key merge would
- * misattribute hits. Instead: the set of executable lines of every file is
+ * source AST of each file, the e2e layer's from the AST of the bundle mapped
+ * back through the source map — statement boundaries and ids differ, so an
+ * istanbul key-by-key merge would misattribute hits. Instead: the set of executable lines of every file is
  * what vitest reports (it lists every included file, covered or not), and a
  * line is covered when ANY layer hit it. The e2e layer only contributes hits.
  * Nothing is counted twice; branches / functions are not gated. The result
@@ -67,31 +67,12 @@ function e2eLayer() {
     E2E_SPAWN: "1",
     NODE_V8_COVERAGE: raw,
   });
-  // c8 remaps dist/*.js → src/*.ts through the emitted source maps, then
-  // applies the include/exclude to the remapped paths.
-  run("pnpm", [
-    "exec",
-    "c8",
-    "report",
-    "--temp-directory",
+  // The raw V8 output of the bundles → istanbul, remapped to src/** through
+  // the bundles' source maps (scripts/v8-to-istanbul.mjs).
+  run(process.execPath, [
+    join(root, "scripts/v8-to-istanbul.mjs"),
     raw,
-    "--reports-dir",
-    dir,
-    "--reporter",
-    "json",
-    "--reporter",
-    "text-summary",
-    "--exclude-after-remap",
-    "--include",
-    "packages/*/src/**/*.ts",
-    "--include",
-    "apps/*/src/**/*.ts",
-    "--exclude",
-    "**/*.spec.ts",
-    "--exclude",
-    "packages/testing/**",
-    "--exclude",
-    "**/node_modules/**",
+    join(dir, "coverage-final.json"),
   ]);
 }
 
@@ -133,7 +114,7 @@ function merge() {
   }
 
   // The universe of executable lines: what the vitest layers report (every
-  // included file, covered or not). c8's line set (from the e2e processes)
+  // included file, covered or not). The e2e layer's line set (from the bundles)
   // is only used for files the vitest layers never saw.
   const universe = new Map();
   const astLayers = present.filter(([n]) => n !== "e2e");

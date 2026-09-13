@@ -6,7 +6,6 @@
   "type": "module",
   "license": "UNLICENSED",
   "scripts": {
-    "start:dev": "pnpm --filter @base/api start:dev",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "lint:fix": "pnpm -r lint:fix",
@@ -26,17 +25,20 @@
     "cov:integration": "node scripts/cover.mjs integration",
     "cov:e2e": "node scripts/cover.mjs e2e",
     "cov:check": "node scripts/cover.mjs merge",
-    "allure:report": "scripts/allure-meta.sh allure-results && allure generate --clean --single-file -o allure-report allure-results"
+    "allure:report": "scripts/allure-meta.sh allure-results && allure generate --clean --single-file -o allure-report allure-results",
+    "dev": "pnpm --filter @base/api start:dev",
+    "dev:worker": "pnpm --filter @base/worker start:dev",
+    "test:integration:watch": "vitest --project integration"
   },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
+    "@swc/core": "1.16.2",
     "@types/node": "26.4.1",
-    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitest/coverage-v8": "4.1.11",
     "allure-commandline": "2.43.0",
     "allure-vitest": "3.12.1",
-    "c8": "12.0.0",
+    "ast-v8-to-istanbul": "1.0.5",
     "fast-check": "4.9.0",
     "lefthook": "2.1.12",
     "openapi-typescript": "7.13.0",
@@ -44,7 +46,8 @@
     "oxlint": "1.81.0",
     "oxlint-tsgolint": "7.0.2001",
     "tsx": "4.23.13",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
+    "unplugin-swc": "1.5.11",
     "vite": "8.2.2",
     "vitest": "4.1.11"
   },

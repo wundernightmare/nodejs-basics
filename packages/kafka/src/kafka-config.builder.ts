@@ -227,6 +227,12 @@ export function buildConsumerConfig(
     ...base,
     "group.id": groupId,
     "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET") ?? "latest",
+    // A consumer that subscribes before the producer's first message would
+    // otherwise sit on an empty assignment until the next metadata refresh
+    // (5 min by default): with the broker's auto-create on (docker/deps.yml),
+    // subscribing creates the topic. Off in environments where topics are
+    // provisioned (KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS=false).
+    "allow.auto.create.topics": readBool(config, "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS") ?? true,
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
     "session.timeout.ms": readNumber(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
     "max.poll.interval.ms": readNumber(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,

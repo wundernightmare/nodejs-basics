@@ -42,12 +42,12 @@ const deps = {
 const SERVICES: ServiceSpec[] = [
   {
     name: "api",
-    entry: path.join(ROOT, "apps/api/dist/src/main.js"),
+    entry: path.join(ROOT, "apps/api/dist/main.js"),
     env: { ...deps, PORT: "3000", ADMIN_PORT: "9091", OTEL_SERVICE_NAME: "api" },
   },
   {
     name: "worker",
-    entry: path.join(ROOT, "apps/worker/dist/src/main.js"),
+    entry: path.join(ROOT, "apps/worker/dist/main.js"),
     env: {
       ...deps,
       ADMIN_PORT: "9093",

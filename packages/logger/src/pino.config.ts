@@ -141,6 +141,10 @@ const serializers: pino.LoggerOptions["serializers"] = {
 const prettyTransport =
   serviceEnvironment !== "production"
     ? pino.transport({
+        // pino loads a transport in a worker thread and resolves `target` from the
+        // file that called pino() — inside an app bundle that is apps/<app>/dist/main.js,
+        // so pino-pretty must be resolvable from the app: each app lists it in its
+        // devDependencies (dev-only; production logs JSON).
         target: "pino-pretty",
         options: {
           colorize: true,
