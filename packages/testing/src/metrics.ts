@@ -14,7 +14,9 @@ export function metricValue(
   for (const line of text.split("\n")) {
     if (line.startsWith("#") || !line.startsWith(name)) continue;
     const rest = line.slice(name.length);
-    const m = /^(\{([^}]*)\})?\s+(\S+)/u.exec(rest);
+    // Label values are quoted and may contain "}" (a route template) — skip
+    // over quoted strings rather than stopping at the first brace.
+    const m = /^(\{((?:"(?:\\.|[^"\\])*"|[^"}])*)\})?\s+(\S+)/u.exec(rest);
     if (!m) continue;
     const have = parseLabels(m[2] ?? "");
     if (Object.entries(labels).every(([k, v]) => have[k] === v)) return Number(m[3]);
@@ -25,7 +27,10 @@ export function metricValue(
 function parseLabels(s: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of s.matchAll(/(\w+)="((?:\\.|[^"\\])*)"/gu)) {
-    out[m[1] as string] = (m[2] as string).replace(/\\(.)/gu, "$1");
+    // The exposition format escapes \\, " and newline (as \n).
+    out[m[1] as string] = (m[2] as string).replace(/\\(.)/gu, (_, c: string) =>
+      c === "n" ? "\n" : c,
+    );
   }
   return out;
 }

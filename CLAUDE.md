@@ -29,6 +29,34 @@ high-signal, easy-to-miss bits.
   before c8 remaps them. `just cov-all` is the only entry point that
   guarantees all three layers; `cov-check` gates on what it finds.
 - **No retries** in any layer; a flake is reported (Allure), ticketed, fixed.
+- **Property specs** (`*.prop.spec.ts`, fast-check) are unit tests: `pnpm test`
+  runs them with 100 cases per property (`propertyRuns()` in `@base/testing`,
+  driven by `FC_NUM_RUNS`), `pnpm fuzz` / `just fuzz` with 5000 (nightly `fuzz`
+  job). Pin a found counterexample as an `examples:` entry.
+- **Mutation testing** is StrykerJS scoped to `packages/resilient-client`
+  (`stryker.config.mjs`, `pnpm mutate`, nightly `mutation` job, report in
+  `reports/mutation/`). It mutates the tree **in place** (pnpm symlinks and the
+  `source` condition do not survive Stryker's sandbox copy) — never run it
+  concurrently with a formatter or another vitest run. `vitest.config.ts`
+  drops Allure and the integration project when `STRYKER_MUTATOR_WORKER` is
+  set; the runner plugin is named by path because Stryker's
+  `@stryker-mutator/*` glob looks next to its own package under pnpm.
+  `thresholds.break` is a ratchet (50 at 56.8 %).
+- **Contracts are generated, never edited**: `api/tsp/*.tsp` is the source;
+  `api/openapi3/tasks.openapi.yaml` and `packages/contracts/src/tasksapi.gen.ts`
+  are committed outputs. Change the TypeSpec, run `just contracts`, commit all
+  three; `just contracts-check` (CI `contracts` job) fails on stale outputs and
+  on an oasdiff breaking change (waivers: `api/oasdiff-breaking.ignore`). The
+  app's zod DTOs mirror the document (`.strict()` ↔ sealed schemas, NUL
+  pattern, code-point lengths, UUID `Idempotency-Key`); every error is a
+  problem+json `Problem`, 405 (+`Allow`) for a known path with another method.
+- **Schemathesis owns "bad input → 4xx"**: `just schemathesis` drives the built
+  api from the document (100 examples/operation, `--checks all`); don't
+  hand-write "empty title → 400" tests, add constraints to the TypeSpec so a
+  schema-compliant request is always accepted and a non-compliant one is a
+  400 problem, never a 500. The contract layer
+  (`apps/api/src/app.contract.integration.spec.ts`, `loadOpenAPI` from
+  `@base/testing`) validates every response of the real app in-process.
 - AppSec: `just sec` (gitleaks + semgrep + osv-scanner + hadolint) +
   `just docker-scan-ci <app>` (grype `--fail-on high`). Transitive CVEs are
   pinned out via `overrides` in `pnpm-workspace.yaml` (pnpm 11 no longer reads

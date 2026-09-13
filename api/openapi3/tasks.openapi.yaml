@@ -1,0 +1,453 @@
+openapi: 3.0.0
+info:
+  title: Tasks
+  version: 1.0.0
+  description: |-
+    Tasks — the HTTP contract of apps/api.
+
+    This file tree is the source of truth: the OpenAPI document (api/openapi3),
+    the TypeScript types (packages/contracts) and the response validation in the
+    tests are generated from it. Change the contract here, run `just contracts`,
+    and the compiler tells you which handler no longer fits.
+
+    Errors are RFC 9457 problem details (application/problem+json); every error
+    response is a `Problem`.
+tags: []
+paths:
+  /health:
+    get:
+      operationId: HealthOps_health
+      description: Report that the API process is up.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+  /tasks:
+    post:
+      operationId: TasksOps_create
+      description: |-
+        Create a task. Publishes a `task.created` event to Kafka best-effort.
+        409: the Idempotency-Key is in flight or was used for a different request.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          headers:
+            X-Idempotent-Replayed:
+              required: false
+              description: '"true" when the response was replayed for a repeated Idempotency-Key.'
+              schema:
+                type: string
+                enum:
+                  - 'true'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTask'
+    get:
+      operationId: TasksOps_list
+      description: |-
+        List tasks, newest first, one page at a time. The query is closed like
+        the bodies: an unknown query parameter is a 400 problem.
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          description: Rows to skip.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+            default: 0
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          description: Page size; the server default (TASK_LIST_PAGE_SIZE, 50) when absent.
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 1000
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListPage'
+        '400':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /tasks/{id}:
+    get:
+      operationId: TasksOps_get
+      description: Fetch one task.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/TaskId'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
+      operationId: TasksOps_update
+      description: Change title and/or description with optimistic locking.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/TaskId'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTask'
+  /tasks/{id}/archive:
+    post:
+      operationId: TasksOps_archive
+      description: 'Archive a task (terminal: archiving an archived task is a 409 problem).'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/TaskId'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveTask'
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ArchiveTask:
+      type: object
+      required:
+        - expectedVersion
+      properties:
+        expectedVersion:
+          type: integer
+          format: int32
+          minimum: 0
+          description: The version the client last read — a stale value is a 409 problem.
+      additionalProperties:
+        not: {}
+      description: Body of POST /tasks/{id}/archive. Closed object.
+    CreateTask:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[^\u0000]*$
+        description:
+          type: string
+          maxLength: 2000
+          pattern: ^[^\u0000]*$
+      additionalProperties:
+        not: {}
+      description: |-
+        Body of POST /tasks. Closed, like every object here (tspconfig
+        `seal-object-schemas`): an unknown member is rejected with a 400 problem.
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - service
+        - env
+        - uptimeSeconds
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+          description: Always "ok" — the process answered.
+        service:
+          type: string
+          description: Service name (OTEL_SERVICE_NAME; "app" when unset).
+        env:
+          type: string
+          description: NODE_ENV of the process ("development" when unset).
+        uptimeSeconds:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Whole seconds since the process started.
+        timestamp:
+          type: string
+          format: date-time
+          description: Time of the answer, RFC 3339 UTC.
+      additionalProperties:
+        not: {}
+      description: |-
+        Body of GET /health — the public-side liveness of the API process.
+        Kubernetes probes target the admin listener (/healthz, /readyz on
+        ADMIN_PORT), not this route; it exists so a client can tell the API is up.
+    Problem:
+      type: object
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          description: URI reference identifying the problem type; "about:blank" for a generic HTTP error.
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type (the HTTP reason phrase for about:blank).
+        status:
+          type: integer
+          format: int32
+          minimum: 100
+          maximum: 599
+          description: HTTP status of this occurrence — always equals the response status.
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence.
+        instance:
+          type: string
+          description: URI reference identifying this occurrence — the request path (with query).
+        errorId:
+          type: string
+          description: Opaque id of this error occurrence, also on the server's log line (error.id).
+        request_id:
+          type: string
+          description: |-
+            The request's correlation id — the same value as the X-Request-Id
+            response header and the http.request.id field of the service's log lines.
+      additionalProperties:
+        not: {}
+      description: |-
+        RFC 9457 problem details. Extension members are inlined (RFC 9457 §3.2):
+        every error the API emits carries `errorId` and `instance`, and
+        `request_id` whenever the request had a context (always, for a route).
+    Task:
+      type: object
+      required:
+        - id
+        - title
+        - description
+        - status
+        - createdAt
+        - updatedAt
+        - version
+      properties:
+        id:
+          $ref: '#/components/schemas/TaskId'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[^\u0000]*$
+          description: Human-readable title; 1..200 characters.
+        description:
+          type: string
+          nullable: true
+          maxLength: 2000
+          pattern: ^[^\u0000]*$
+          description: Longer description, up to 2000 characters; null when the task has none.
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation time, RFC 3339 UTC.
+        updatedAt:
+          type: string
+          format: date-time
+          description: Time of the last write, RFC 3339 UTC (equals createdAt until the first update).
+        version:
+          type: integer
+          format: int32
+          minimum: 0
+          description: 'Optimistic-lock counter: 0 at creation, +1 on every write; sent back as `expectedVersion`.'
+      additionalProperties:
+        not: {}
+      description: A single to-do item.
+    TaskId:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{21}$
+      description: |-
+        Server-assigned task identifier: a 21-character nanoid over the URL-safe
+        alphabet (generated at the application layer by packages/common `generateId`).
+    TaskListItem:
+      type: object
+      required:
+        - id
+        - title
+        - status
+        - createdAt
+      properties:
+        id:
+          $ref: '#/components/schemas/TaskId'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[^\u0000]*$
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        createdAt:
+          type: string
+          format: date-time
+      additionalProperties:
+        not: {}
+      description: One row of GET /tasks — the list projection carries no description/version.
+    TaskListPage:
+      type: object
+      required:
+        - items
+        - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskListItem'
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Number of tasks in the store (all pages).
+      additionalProperties:
+        not: {}
+      description: 'Body of GET /tasks: one page, newest first, plus the total row count.'
+    TaskStatus:
+      type: string
+      enum:
+        - ACTIVE
+        - ARCHIVED
+      description: Lifecycle state of a task.
+    UpdateTask:
+      type: object
+      required:
+        - expectedVersion
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[^\u0000]*$
+        description:
+          type: string
+          nullable: true
+          maxLength: 2000
+          pattern: ^[^\u0000]*$
+        expectedVersion:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties:
+        not: {}
+      description: |-
+        Body of PATCH /tasks/{id}. Only the members present are changed;
+        `description: null` clears it. `expectedVersion` is the version the client
+        last read — a stale value is a 409 problem. Closed object.
+servers:
+  - url: http://localhost:3000
+    description: local
+    variables: {}

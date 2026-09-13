@@ -31,11 +31,14 @@ export function redact(value: unknown, secret = false): unknown {
   if (Array.isArray(value)) return value.map((item) => redact(item, secret));
   if (value instanceof Date) return value;
   if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = redact(item, secret || isSecretKey(key));
-    }
-    return out;
+    // Object.fromEntries, not `out[key] = …`: an own "__proto__" key (what
+    // JSON.parse produces for it) must stay a key, not become the prototype.
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        redact(item, secret || isSecretKey(key)),
+      ]),
+    );
   }
   return value; // number, boolean, bigint, symbol, function: as is
 }

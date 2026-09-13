@@ -1,0 +1,29 @@
+{
+  "name": "@base/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript types of the HTTP contract, generated from api/openapi3/tasks.openapi.yaml (openapi-typescript). Types only — nothing at runtime.",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsgo -p tsconfig.json --noEmit",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
+    "lint": "oxlint src",
+    "lint:fix": "oxlint --fix src",
+    "format": "oxfmt \"src/**/*.ts\"",
+    "format:check": "oxfmt --check \"src/**/*.ts\"",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "clean": "tsc --build --clean && rm -rf dist coverage"
+  }
+}

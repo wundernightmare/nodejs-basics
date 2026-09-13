@@ -65,14 +65,16 @@ const DURATION_UNITS: Readonly<Record<string, number>> = {
 
 /**
  * Parses a Go-style duration ("30m", "2h", "45s", "1500ms", "1h30m") into
- * milliseconds. A bare number is seconds. Throws on anything else or on a
- * non-positive result.
+ * milliseconds. A bare number is seconds. Throws on anything else, on a
+ * result below 1ms and on a number too large for a double.
  */
 export function parseDuration(raw: string): number {
   const input = raw.trim();
   if (/^\d+(\.\d+)?$/.test(input)) {
-    const seconds = Number(input);
-    if (seconds > 0) return Math.round(seconds * 1_000);
+    const ms = Math.round(Number(input) * 1_000);
+    if (!Number.isFinite(ms))
+      throw new Error(`invalid duration ${JSON.stringify(raw)} (too large)`);
+    if (ms > 0) return ms;
     throw new Error(`duration must be positive: ${JSON.stringify(raw)}`);
   }
   const re = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/gy;
@@ -82,10 +84,13 @@ export function parseDuration(raw: string): number {
     total += Number(m[1]) * DURATION_UNITS[m[2]!]!;
     matched = re.lastIndex;
   }
-  if (matched !== input.length || matched === 0 || !(total > 0)) {
+  // Rounded first: "0.0001ms" is not a positive duration, and a number too
+  // long for a double is Infinity, not a duration.
+  const ms = Math.round(total);
+  if (matched !== input.length || matched === 0 || !Number.isFinite(ms) || !(ms > 0)) {
     throw new Error(`invalid duration ${JSON.stringify(raw)} (want e.g. 30m, 2h, 45s, 1500ms)`);
   }
-  return Math.round(total);
+  return ms;
 }
 
 /** Renders milliseconds the way parseDuration reads them ("1h30m", "45s", "500ms"). */

@@ -40,8 +40,8 @@ export interface BackoffSpec {
  * `attempt` is zero-indexed: attempt 0 is the first retry (after the
  * initial call failed), attempt 1 the second, and so on.
  *
- * Negative attempt numbers and non-finite `minTimeout` / `maxTimeout`
- * values collapse to `0` — they signal a misconfigured policy, and
+ * Negative attempt numbers, non-finite `minTimeout` / `maxTimeout` values
+ * and a cap that is not a number collapse to `0` — they signal a misconfigured policy, and
  * sleeping forever or burning CPU on `Infinity` is worse than returning
  * immediately and letting the caller's retry-budget decide whether to
  * try again.
@@ -54,7 +54,8 @@ export function computeJitteredDelay(
   if (!Number.isFinite(spec.minTimeout) || !Number.isFinite(spec.maxTimeout)) return 0;
   if (attempt < 0) return 0;
   const rawCap = spec.minTimeout * Math.pow(spec.factor, attempt);
-  const cap = Math.max(0, Math.min(rawCap, spec.maxTimeout));
+  // 0 · Infinity (minTimeout 0 once factor^attempt overflows) is NaN, not 0.
+  const cap = Number.isNaN(rawCap) ? 0 : Math.max(0, Math.min(rawCap, spec.maxTimeout));
   return Math.floor(rng() * cap);
 }
 

@@ -42,6 +42,7 @@
     "@opentelemetry/sdk-metrics": "2.6.0"
   },
   "devDependencies": {
-    "@types/opossum": "8.1.9"
+    "@types/opossum": "8.1.9",
+    "@base/testing": "workspace:*"
   }
 }

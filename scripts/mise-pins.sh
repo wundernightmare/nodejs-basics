@@ -38,6 +38,10 @@ emit HADOLINT_VERSION hadolint
 emit SYFT_VERSION     syft
 emit GRYPE_VERSION    grype
 emit COSIGN_VERSION   cosign
+# Contracts: oasdiff is a `ubi:` tool (quoted key in mise.toml); Schemathesis
+# is not a tool but a pinned image version under [env] (scripts/schemathesis.sh).
+emit OASDIFF_VERSION  ubi:oasdiff/oasdiff
+emit SCHEMATHESIS_VERSION SCHEMATHESIS_VERSION
 
 pnpm="$(sed -nE 's/.*"packageManager":[[:space:]]*"pnpm@([^"]+)".*/\1/p' "$pj" | head -1)"
 if [ -z "$pnpm" ]; then
