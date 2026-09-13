@@ -45,7 +45,7 @@ pnpm install
 pnpm lefthook install              # one-time git hooks setup
 just deps                          # postgres + valkey + redpanda
 cp apps/api/config.example.yaml apps/api/config.yaml
-just dev                           # starts apps/api on :3000, admin :9090
+just dev                           # apps/api on :3000, admin :9090 — rebuilds + restarts on every save
 ```
 
 Then:
@@ -94,6 +94,44 @@ just docker-build api              # build an image; docker-scan-ci api → gryp
 
 See [Tests](#tests) for the layers, the harness and the coverage / Allure flow,
 [Contracts](#contracts) for the TypeSpec → OpenAPI → types pipeline.
+
+## Build & watch
+
+Packages are compiled by `tsc` (they ship `dist/` with declarations); the
+apps are bundled by **Vite** — one ESM file per app, `apps/<app>/dist/main.js`
+(+ source map), from [`vite.app.config.ts`](vite.app.config.ts):
+
+- `@base/*` is bundled **from `src/`** (the `source` export condition, the
+  same one vitest and the tests use), so an app build needs no package build
+  and a watch picks up a change anywhere in the workspace. Every other bare
+  import stays external — native addons and OpenTelemetry's module patching
+  need the real modules on disk.
+- Imports a bundled package makes (`@opentelemetry/api` from
+  `@base/observability`, `pg` from `@base/database`, …) are resolved at build
+  time from that package's own `node_modules` and emitted as paths relative to
+  `dist/`: pnpm's strict layout would not let the app resolve them, and each
+  package keeps declaring exactly what it imports. The resolution follows
+  Node's (`node` / `import` / `default` conditions, `main` field), so a package
+  imported both bare by the app and by path from a bundle is one module
+  instance.
+- NestJS needs legacy decorators with `emitDecoratorMetadata`; Vite's oxc
+  transform does not emit it, so the transform is SWC (`unplugin-swc`). There
+  is no Nest CLI.
+
+```sh
+pnpm build                         # every package (tsc) + every app (vite)
+just dev                           # api: vite build --watch + restart after each build (scripts/dev.mjs)
+just dev-worker                    # the same for the worker
+just build-watch api               # rebuild only, no process
+just test-watch                    # vitest, unit project — re-runs what a change touches
+just test-watch-integration        # vitest, integration project (needs `just deps`)
+```
+
+`scripts/dev.mjs` restarts the app **after** Vite reports a successful build
+(SIGTERM → the app's graceful shutdown → spawn), never on a file event, so a
+half-written bundle is never started and a save with a syntax error keeps the
+last good build running. `pnpm start:debug` passes `--inspect` to the app
+process. The Docker images run the same bundle (`CMD ["dist/main.js"]`).
 
 ## Renaming `@base` to your org
 
@@ -334,11 +372,13 @@ is not in the test plan.
 `coverage-final.json`: vitest writes it directly (v8 provider), and for the e2e
 layer the harness spawns the built api + worker under `NODE_V8_COVERAGE`
 (`E2E_SPAWN=1`), waits for them to exit on SIGTERM (that is when Node flushes
-the counters) and c8 remaps the raw V8 output to `src/**` through the emitted
-source maps. `merge` unions them **per line**: the executable lines of every
-file are what vitest reports (it lists every included file, covered or not —
-c8's remapped maps count comment lines too, so they only contribute hits), and
-a line is covered when any layer hit it. Nothing is counted twice; it writes
+the counters) and `scripts/v8-to-istanbul.mjs` (ast-v8-to-istanbul, the
+converter vitest itself uses) maps the bundles' raw V8 ranges back to `src/**`
+through their source maps — c8 was tried first and silently dropped every
+*uncovered* range of a bundle. `merge` unions the layers **per line**: the
+executable lines of every file are what vitest reports (it lists every
+included file, covered or not; the e2e layer only contributes hits), and a
+line is covered when any layer hit it. Nothing is counted twice; it writes
 `coverage-merged.lcov` + a per-package `coverage-breakdown.json`, and gates on
 [`scripts/cover.config.mjs`](scripts/cover.config.mjs). `just cov-check`
 gates whatever is under `.cover/`; `just cov-all` is the only entry point that
@@ -562,7 +602,7 @@ block a change:
 
 | Command            | What it does                            |
 |--------------------|-----------------------------------------|
-| `pnpm typecheck`   | tsgo --noEmit per package               |
+| `pnpm typecheck`   | tsc --noEmit per package (TypeScript 7, native) |
 | `pnpm lint`        | oxlint                                  |
 | `pnpm format`      | oxfmt                                   |
 | `pnpm test`        | unit layer (vitest project `unit`)      |
@@ -578,7 +618,9 @@ block a change:
 | `pnpm clean`       | drop dist/coverage                      |
 | `just deps`        | docker compose up postgres/valkey/kafka |
 | `just obs`         | docker compose up Jaeger/Prometheus     |
-| `just dev`         | start apps/api in watch mode            |
+| `just dev` / `dev-worker` | vite build --watch + restart after each build |
+| `just build-watch <app>` | rebuild an app bundle on change, no process |
+| `just test-watch[-integration]` | vitest watch, unit / integration project |
 | `just setup-sec`   | install the AppSec toolchain (mise)     |
 | `just sec`         | gitleaks + semgrep + osv-scanner + hadolint |
 | `just docker-build <app>` | build `nodejs-basics-<app>:dev`  |

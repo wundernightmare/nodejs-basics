@@ -31,7 +31,7 @@ max_examples="${SCHEMATHESIS_MAX_EXAMPLES:-100}"
 extra_args=(${SCHEMATHESIS_ARGS:-})
 port="${SCHEMATHESIS_PORT:-18300}"
 admin="${SCHEMATHESIS_ADMIN_PORT:-19300}"
-entry="$root/apps/api/dist/src/main.js"
+entry="$root/apps/api/dist/main.js"
 mkdir -p "$results" "$root/.run"
 
 log() { printf '\033[36m▸ %s\033[0m\n' "$*"; }

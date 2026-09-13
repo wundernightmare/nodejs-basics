@@ -9,6 +9,23 @@ high-signal, easy-to-miss bits.
 - pnpm workspace (`packages/*`, `apps/*`, `e2e`). Workspace-wide:
   `pnpm check` (typecheck + lint + format), `pnpm test`, `pnpm build`, or the
   `just` recipes (`just check` / `just dev` / `just deps`).
+- **Apps are built by Vite, packages by tsc.** `apps/<app>/vite.config.ts` →
+  `vite.app.config.ts` (root): one ESM bundle `dist/main.js` per app, SWC
+  transform (NestJS needs legacy decorators + `emitDecoratorMetadata`, which
+  Vite's oxc transform does not emit), `@base/*` bundled from `src/` (the
+  `source` condition — no package build needed), everything else external.
+  Bare imports made *by a bundled package* are resolved from that package's
+  own node_modules at build time and emitted as paths relative to dist/
+  (pnpm's strict layout would not let the app resolve them) — with Node's
+  resolution (`node`/`import`/`default` conditions, `main` field, never the
+  bundler-only `module` field: @aws-sdk's `dist-es` is not loadable by Node).
+  Packages still emit `dist/` with tsc for their declarations and the
+  `import` condition. No Nest CLI, no nest-cli.json.
+- **Watch mode**: `just dev` / `just dev-worker` = `scripts/dev.mjs`: `vite
+  build --watch` + `node --watch-path=dist dist/main.js` — a save anywhere in
+  the app or a bundled package rebuilds in ~70 ms and restarts the app through
+  its graceful shutdown; a broken save keeps the last good build running.
+  `just test-watch` / `test-watch-integration` for vitest.
 - **Lint/format** are oxlint + oxfmt (Rust-based, fast). Each app/e2e package
   needs its own `.oxlintrc.json` extending the root — oxlint's `typeAware`
   option is only valid in the config it treats as the root, so a package run
@@ -26,7 +43,9 @@ high-signal, easy-to-miss bits.
   no-regression ratchet in CI). The e2e layer spawns the built api + worker
   under `NODE_V8_COVERAGE` (`E2E_SPAWN=1`) — Node flushes counters only when
   the process exits, so the harness waits for the SIGTERM shutdown to finish
-  before c8 remaps them. `just cov-all` is the only entry point that
+  before `scripts/v8-to-istanbul.mjs` (ast-v8-to-istanbul + vite's parser)
+  maps the bundles' ranges back to src/** — not c8, which drops a bundle's
+  uncovered ranges. `just cov-all` is the only entry point that
   guarantees all three layers; `cov-check` gates on what it finds.
 - **No retries** in any layer; a flake is reported (Allure), ticketed, fixed.
 - **Property specs** (`*.prop.spec.ts`, fast-check) are unit tests: `pnpm test`
@@ -43,8 +62,7 @@ high-signal, easy-to-miss bits.
   `@stryker-mutator/*` glob looks next to its own package under pnpm.
   `thresholds.break` is a ratchet (50 at 56.8 %). **vitest stays on 4.x until
   @stryker-mutator/vitest-runner supports vitest 5** — under 5.0.0 the runner
-  reports nearly every mutant as survived (checked 2026-09-13); typescript
-  stays on 6.x until Nest CLI accepts 7.x (7.0 ships no compiler API).
+  reports nearly every mutant as survived (checked 2026-09-13).
 - **Contracts are generated, never edited**: `api/tsp/*.tsp` is the source;
   `api/openapi3/tasks.openapi.yaml` and `packages/contracts/src/tasksapi.gen.ts`
   are committed outputs. Change the TypeSpec, run `just contracts`, commit all
@@ -98,9 +116,11 @@ high-signal, easy-to-miss bits.
   legitimately outlives any per-command timeout) — see `@base/cache`
   `toBullMqOptions`.
 - **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs24-debian12`). The
-  build copies the whole built workspace; `.dockerignore` must exclude
+  build runs `pnpm build` (tsc for packages, Vite for the apps) and copies the
+  whole workspace — the app bundle imports its externals by path relative to
+  dist/, so the tree must move as one; `.dockerignore` must exclude
   `*.tsbuildinfo` (stale incremental state makes tsc skip emitting `dist`), and
-  each `@base/*` package needs `files: ["dist"]`.
+  each `@base/*` package needs `files: ["dist"]`. `CMD ["dist/main.js"]`.
 
 ## Pipelines & security
 

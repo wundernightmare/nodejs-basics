@@ -232,6 +232,19 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
+    key: "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS",
+    yaml: "kafka.consumer.allow_auto_create_topics",
+    required: false,
+    default: "true",
+    description:
+      "librdkafka allow.auto.create.topics for consumers: a subscribe creates a " +
+      "missing topic (the broker's auto-create must be on, as in docker/deps.yml), so a " +
+      "worker that starts before the first producer gets its assignment at once. " +
+      "Set false where topics are provisioned.",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
     key: "KAFKA_SASL_PASSWORD_FILE",
     yaml: "kafka.sasl.password_file",
     required: false,

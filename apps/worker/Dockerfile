@@ -33,8 +33,7 @@ RUN pnpm build
 # grype flags their bundled Go stdlib. Every runtime dep + the emitted dist is
 # untouched, so the image still boots. See apps/api/Dockerfile for why a full
 # pnpm-workspace prune is unreliable here.
-RUN rm -rf node_modules/.pnpm/@typescript+native-preview-linux-* \
-           node_modules/.pnpm/@oxlint-tsgolint+linux-* \
+RUN rm -rf node_modules/.pnpm/@oxlint-tsgolint+linux-* \
            node_modules/.pnpm/lefthook-linux-* \
            node_modules/.pnpm/lefthook-*
 
@@ -54,4 +53,4 @@ ENV NODE_ENV=production
 EXPOSE 9090
 
 USER nonroot
-CMD ["dist/src/main.js"]
+CMD ["dist/main.js"]
