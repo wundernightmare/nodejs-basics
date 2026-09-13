@@ -11,7 +11,7 @@ packages:
 # floor on a dependency we don't declare directly; waivers that can't be
 # pinned out go in osv-scanner.toml / .grype.yaml instead.
 overrides:
-  fastify: 5.12.1
+  fastify: 5.12.3
   '@types/pg': 8.23.1
   zod: 4.5.4
   protobufjs: 8.8.0
@@ -23,6 +23,8 @@ overrides:
   '@opentelemetry/core': 2.11.0
   browserslist: 4.28.7            # GHSA (2 HIGH) via @nestjs/cli → webpack; osv-scanner clean at 4.28.7
   baseline-browser-mapping: 2.11.21 # same chain; first fixed release older than the 7-day window
+  js-yaml: 4.3.2                  # GHSA-2883-xcg3-v3hh via openapi-typescript → @redocly/openapi-core
+  qs: 6.16.0                      # GHSA-4mjr-xmp4-gh2g / x5fp-wj9c-mxmx / q8mj-m7cp-5q26 via @stryker-mutator/core → typed-rest-client
 
 # pnpm 11 turns an ignored build script into a hard install failure.
 allowBuilds:
@@ -55,6 +57,10 @@ minimumReleaseAgeExclude:
   - 'allure-vitest@3.12.1'
   - 'allure-playwright@3.12.1'
   - 'allure-js-commons@3.12.1'
+  # @typespec 1.16.0 (2026-09-09, with its 0.79.x helper packages) fixes
+  # GHSA-2q42-4q24-7rgv (openapi3 emitter path escape; every earlier release is
+  # affected). Remove after 2026-09-17.
+  - '@typespec/*'
 # trustPolicy is publish-date based: a version is refused if ANY earlier-
 # published version carried stronger trust evidence (provenance / trusted
 # publisher). chokidar 4.0.1 (2024-09) was published with SLSA provenance,

@@ -41,7 +41,10 @@ high-signal, easy-to-miss bits.
   drops Allure and the integration project when `STRYKER_MUTATOR_WORKER` is
   set; the runner plugin is named by path because Stryker's
   `@stryker-mutator/*` glob looks next to its own package under pnpm.
-  `thresholds.break` is a ratchet (50 at 56.8 %).
+  `thresholds.break` is a ratchet (50 at 56.8 %). **vitest stays on 4.x until
+  @stryker-mutator/vitest-runner supports vitest 5** — under 5.0.0 the runner
+  reports nearly every mutant as survived (checked 2026-09-13); typescript
+  stays on 6.x until Nest CLI accepts 7.x (7.0 ships no compiler API).
 - **Contracts are generated, never edited**: `api/tsp/*.tsp` is the source;
   `api/openapi3/tasks.openapi.yaml` and `packages/contracts/src/tasksapi.gen.ts`
   are committed outputs. Change the TypeSpec, run `just contracts`, commit all

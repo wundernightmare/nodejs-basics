@@ -28,5 +28,12 @@ export async function setupBullBoard(app: NestFastifyApplication, queues: Queue[
     serverAdapter,
   });
 
-  await app.register(serverAdapter.registerPlugin(), { prefix: BULL_BOARD_PATH });
+  // @bull-board/fastify types its plugin against the fastify declarations it
+  // resolves itself (a second copy under pnpm's isolated layout), so the
+  // structurally identical FastifyPluginCallback is a different nominal type
+  // from the one NestFastifyApplication.register expects. Type-only cast.
+  type Plugin = Parameters<NestFastifyApplication["register"]>[0];
+  // tsgolint resolves fastify once and calls the cast unnecessary; tsgo does not.
+  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion
+  await app.register(serverAdapter.registerPlugin() as Plugin, { prefix: BULL_BOARD_PATH });
 }

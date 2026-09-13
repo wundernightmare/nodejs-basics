@@ -34,15 +34,15 @@
     "@fastify/cookie": "11.1.2",
     "@fastify/cors": "11.3.0",
     "@fastify/helmet": "13.1.1",
-    "@fastify/otel": "0.20.1",
+    "@fastify/otel": "0.21.0",
     "@nestjs/common": "12.0.1",
     "@nestjs/config": "12.0.0",
     "@nestjs/core": "12.0.1",
     "@nestjs/platform-fastify": "12.0.1",
-    "@opentelemetry/instrumentation": "0.221.0",
-    "@opentelemetry/instrumentation-aws-sdk": "0.76.0",
-    "@opentelemetry/instrumentation-nestjs-core": "0.67.0",
-    "@opentelemetry/instrumentation-undici": "0.31.0",
+    "@opentelemetry/instrumentation": "0.222.0",
+    "@opentelemetry/instrumentation-aws-sdk": "0.77.0",
+    "@opentelemetry/instrumentation-nestjs-core": "0.68.0",
+    "@opentelemetry/instrumentation-undici": "0.32.0",
     "fastify": "5.8.5",
     "iovalkey": "0.4.0",
     "nestjs-zod": "5.5.0",
@@ -52,13 +52,13 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@base/testing": "workspace:*",
     "@nestjs/cli": "12.0.0",
     "@swc/cli": "0.8.1",
-    "@swc/core": "1.16.1",
+    "@swc/core": "1.16.2",
     "@types/pg": "8.20.0",
     "tsx": "4.23.13",
     "typescript": "6.0.3",
-    "unplugin-swc": "1.5.11",
-    "@base/testing": "workspace:*"
+    "unplugin-swc": "1.5.11"
   }
 }
