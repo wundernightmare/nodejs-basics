@@ -9,6 +9,7 @@ import { DatabaseModule, PG_POOL } from "@base/database";
 import { IdempotencyModule } from "@base/idempotency";
 import { KafkaModule } from "@base/kafka";
 import { LoggerModule } from "@base/logger";
+import { OutboxModule } from "@base/outbox";
 import { ObservabilityModule, READINESS_CHECKS, type ReadinessCheck } from "@base/observability";
 
 import { telemetry } from "./instrumentation.js";
@@ -24,6 +25,8 @@ import { UnitOfWorkModule } from "./unit-of-work.module.js";
     UnitOfWorkModule,
     ValkeyModule,
     KafkaModule,
+    // Transactional outbox → Kafka (OutboxWriter in use cases, OutboxRelay in the background).
+    OutboxModule,
     IdempotencyModule.forRoot(),
     ObservabilityModule.forRoot({
       telemetry,

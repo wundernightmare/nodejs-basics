@@ -351,7 +351,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 18
       },
@@ -406,8 +406,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 18
       },
       "fieldConfig": {
@@ -438,6 +438,52 @@
           "refId": "A",
           "expr": "sum(increase(worker_tasks_consumed_total{job=\"worker\"}[15m])) - sum(increase(worker_tasks_processed_total{job=\"worker\"}[15m]))",
           "legendFormat": "backlog"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox pending",
+      "id": 17,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Events committed by the api but not yet on Kafka (@base/outbox). Flat at ~0 normally; growing = the relay cannot publish.",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "max(outbox_pending{job=\"api\"})",
+          "legendFormat": "pending"
         }
       ]
     },

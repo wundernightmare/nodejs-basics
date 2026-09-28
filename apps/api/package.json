@@ -31,6 +31,7 @@
     "@base/kafka": "workspace:*",
     "@base/logger": "workspace:*",
     "@base/observability": "workspace:*",
+    "@base/outbox": "workspace:*",
     "@base/resilience": "workspace:*",
     "@base/resilient-client": "workspace:*",
     "@fastify/cookie": "11.1.2",

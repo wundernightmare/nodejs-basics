@@ -7,8 +7,9 @@
  *   2. Reads + writes INSIDE one transaction via IUnitOfWork.runInTransaction.
  *      Both happen on the same PoolClient, so a concurrent request cannot
  *      mutate the row between our check and our write (TOCTOU-safe).
- *   3. Best-effort side effects (events, emails, webhooks) AFTER the
- *      transaction commits — never roll back side effects.
+ *   3. Events that must not be lost go into the outbox INSIDE the
+ *      transaction (@base/outbox); only best-effort side effects (a cache
+ *      warm-up, a metric) run after it commits.
  *
  * The use case throws domain errors (TaskNotFoundError, TaskAlreadyArchivedError,
  * OptimisticLockConflictError). The global DomainExceptionFilter maps them to
@@ -16,10 +17,10 @@
  */
 import { Inject, Injectable } from "@nestjs/common";
 
-import { generateId, getRequestId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
+import { generateId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
 import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
-import { KafkaProducerService } from "@base/kafka";
-import { AppLogger, ecsError } from "@base/logger";
+import { AppLogger } from "@base/logger";
+import { OutboxWriter } from "@base/outbox";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskAlreadyArchivedError, TaskNotFoundError } from "../domain/task.errors.js";
@@ -41,7 +42,7 @@ export class TaskUseCase {
   constructor(
     @Inject(TASK_REPOSITORY) private readonly repo: TaskRepository,
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
-    private readonly kafka: KafkaProducerService,
+    private readonly outbox: OutboxWriter,
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(TaskUseCase.name);
@@ -52,57 +53,28 @@ export class TaskUseCase {
     // the application layer (nanoid 21 chars → ~126 bits entropy).
     const id = generateId();
 
-    // Step 2 — atomic write. Trivial here (single insert) but the same
-    // shape scales to read-then-write flows that need TOCTOU safety.
+    // Step 2 — atomic write: the row and its task.created event in one
+    // transaction. The event goes into the outbox (@base/outbox), not to Kafka:
+    // it commits or rolls back with the task, and OutboxRelay publishes it
+    // afterwards — no event lost to a broker hiccup, none for a rolled-back write.
     const task = await this.uow.runInTransaction(async () => {
-      return this.repo.create({
+      const created = await this.repo.create({
         id,
         title: cmd.title,
         description: cmd.description ?? null,
       });
+      const event: TaskCreatedEvent = {
+        type: "task.created",
+        id: created.id,
+        title: created.title,
+        createdAt: created.createdAt.toISOString(),
+      };
+      await this.outbox.add({ topic: TASK_EVENTS_TOPIC, key: created.id, value: event });
+      return created;
     });
 
-    // Step 3 — side effects after commit. Publish a TaskCreated event to Kafka
-    // (apps/worker drains it). Best-effort: the row is already committed, so a
-    // broker hiccup is logged, never rolled back. (Production closes this gap
-    // with a transactional outbox.)
     this.logger.info({ "task.id": task.id }, "Task created");
-    // Fire-and-forget: a best-effort side effect must not block (or fail) the
-    // response — the row is already committed. publishCreated swallows its own
-    // errors; `void` marks the floating promise intentional.
-    void this.publishCreated(task);
-
     return task;
-  }
-
-  private async publishCreated(task: Task): Promise<void> {
-    const event: TaskCreatedEvent = {
-      type: "task.created",
-      id: task.id,
-      title: task.title,
-      createdAt: task.createdAt.toISOString(),
-    };
-    // The request id travels as a record header so the worker's log lines for
-    // this event correlate with the API request that produced it; send() adds
-    // the trace context next to it, so the worker's spans join this trace.
-    const requestId = getRequestId();
-    try {
-      await this.kafka.send({
-        topic: TASK_EVENTS_TOPIC,
-        messages: [
-          {
-            key: task.id,
-            value: JSON.stringify(event),
-            ...(requestId !== undefined ? { headers: { "x-request-id": requestId } } : {}),
-          },
-        ],
-      });
-    } catch (err) {
-      this.logger.warn(
-        { ...ecsError(err as Error), "task.id": task.id },
-        "Failed to publish task.created event",
-      );
-    }
   }
 
   async update(id: string, expectedVersion: number, patch: UpdateTaskInput): Promise<Task> {

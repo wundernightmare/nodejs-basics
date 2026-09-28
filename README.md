@@ -7,8 +7,9 @@ for any new service. Bring your own domain.
 
 ```
 apps/
-  api/                   Reference NestJS app wiring everything together. Publishes
-                         a task.created event to Kafka on write. (+ distroless Dockerfile)
+  api/                   Reference NestJS app wiring everything together. Writes a
+                         task.created event to the outbox with each new task.
+                         (+ distroless Dockerfile)
   worker/                Kafka consumer worker: drains tasks.events, enqueues a
                          BullMQ job, processes it. (+ distroless Dockerfile)
   migrate/               Forward-only SQL migration runner: one self-contained
@@ -34,6 +35,8 @@ packages/
                          BullMQ, OTel client metrics.
   kafka                  Confluent Kafka producer + librdkafka SASL/TLS config
                          builder + OTel client metrics.
+  outbox                 Transactional outbox: OutboxWriter (inside the UoW
+                         transaction) + OutboxRelay (→ Kafka, at least once).
   jobs                   BullMQ NestJS module: configurable named queues,
                          OTel metrics, BullBoard wiring.
   idempotency            Idempotency-Key interceptor + decorator with pluggable
@@ -236,6 +239,29 @@ Wire in your AppModule:
 ```ts
 { provide: UNIT_OF_WORK, useClass: PrismaUnitOfWork }
 ```
+
+### Outbox
+
+An event that must not be lost is written in the same transaction as the
+state change it announces, then published by a background relay:
+
+```ts
+await uow.runInTransaction(async () => {
+  const task = await repo.create(...);
+  await outbox.add({ topic: TASK_EVENTS_TOPIC, key: task.id, value: event });
+});
+```
+
+`OutboxWriter` inserts into `outbox` (migrations/0002) through the ambient
+transaction client, with the request's trace context and request id.
+`OutboxRelay` (every `OUTBOX_POLL_INTERVAL_MS`, 200 ms) takes up to
+`OUTBOX_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED` — every replica can run one —
+sends them and deletes them in that transaction; a failed send leaves them
+for the next pass (backoff to 30 s). Delivery is at least once, so consumers
+are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
+each record in the trace of the request that wrote it, so the trace still
+reads request → Kafka → worker. `outbox_pending` (Grafana: "Outbox pending")
+is the one number to alert on.
 
 ### Migrations
 
