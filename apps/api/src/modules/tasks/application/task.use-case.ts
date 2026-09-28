@@ -17,12 +17,12 @@
 import { Inject, Injectable } from "@nestjs/common";
 
 import { generateId, getRequestId, type IUnitOfWork, UNIT_OF_WORK } from "@base/common";
+import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { KafkaProducerService } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskAlreadyArchivedError, TaskNotFoundError } from "../domain/task.errors.js";
-import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "../domain/task.events.js";
 import {
   TASK_REPOSITORY,
   type TaskRepository,

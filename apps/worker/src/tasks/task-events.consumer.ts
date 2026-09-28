@@ -1,6 +1,7 @@
 /**
  * Drains the `tasks.events` Kafka topic (produced by apps/api) and, for each
- * `task.created` event, enqueues a BullMQ job — demonstrating the Kafka
+ * `task.created` event (TaskCreatedEvent — generated from api/tsp/events.tsp,
+ * the same type the producer writes), enqueues a BullMQ job — demonstrating the Kafka
  * consumer + the hand-off to the job system. The TaskEventsProcessor handles
  * the enqueued job.
  */
@@ -15,6 +16,7 @@ import { ConfigService } from "@nestjs/config";
 import { metrics } from "@opentelemetry/api";
 import { type Queue } from "bullmq";
 
+import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
 import { buildConsumerConfig, kafkaLogger, traceKafkaMessage } from "@base/kafka";
 import {
@@ -27,16 +29,7 @@ import {
 } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
-/** Topic + group — the consumer's local copy of the wire contract (decoupled). */
-const TASK_EVENTS_TOPIC = "tasks.events";
 const GROUP_ID = "tasks-worker";
-
-interface TaskCreatedEvent {
-  type?: string;
-  id: string;
-  title: string;
-  createdAt: string;
-}
 
 @Injectable()
 export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -138,6 +131,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       this.logger.warn({ ...ecsError(err as Error) }, "Skipping undecodable event");
       return;
     }
+    // The topic may carry other event types (additive contract): not ours, skip.
+    if (event.type !== "task.created") return;
     this.consumed.add(1);
     // Hand off to the job system; jobId = task id makes redelivery idempotent.
     // addTraced stores the trace context with the job for the processor.

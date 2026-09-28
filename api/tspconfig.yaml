@@ -1,9 +1,14 @@
-# TypeSpec → OpenAPI 3.0 (the HTTP contract). The output is committed;
+# TypeSpec → OpenAPI 3.0 (the HTTP contract) and JSON Schema (the events,
+# `@jsonSchema` namespaces only). The output is committed;
 # `just contracts` regenerates it and the TS types in @base/contracts, and CI
 # fails when a commit forgets to (`just contracts-check`).
 emit:
   - "@typespec/openapi3"
+  - "@typespec/json-schema"
 options:
+  "@typespec/json-schema":
+    emitter-output-dir: "{project-root}/jsonschema"
+    file-type: json
   "@typespec/openapi3":
     emitter-output-dir: "{project-root}/openapi3"
     output-file: "tasks.openapi.yaml"

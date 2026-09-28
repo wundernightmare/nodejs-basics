@@ -1,9 +1,10 @@
-// The tasks service: the HTTP contract of apps/api. One OpenAPI document
-// (api/openapi3/tasks.openapi.yaml) is emitted from this entry point;
-// tasks.tsp and health.tsp contribute to the same `Tasks` namespace.
+// The tasks service: the HTTP contract of apps/api (one OpenAPI document,
+// api/openapi3/tasks.openapi.yaml; tasks.tsp and health.tsp contribute to the
+// `Tasks` namespace) and its Kafka events (events.tsp → api/jsonschema).
 import "@typespec/http";
 import "@typespec/openapi";
 
+import "./events.tsp";
 import "./health.tsp";
 import "./tasks.tsp";
 

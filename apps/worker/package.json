@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@base/config": "workspace:*",
+    "@base/contracts": "workspace:*",
     "@base/jobs": "workspace:*",
     "@base/kafka": "workspace:*",
     "@base/logger": "workspace:*",

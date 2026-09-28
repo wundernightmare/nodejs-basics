@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "TypeScript types of the HTTP contract, generated from api/openapi3/tasks.openapi.yaml (openapi-typescript). Types only — nothing at runtime.",
+  "description": "TypeScript types of the HTTP and event contracts, generated from api/openapi3 and api/jsonschema (openapi-typescript), plus the event topic name.",
   "files": [
     "dist"
   ],
