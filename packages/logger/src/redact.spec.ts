@@ -28,6 +28,7 @@ describe("redact", () => {
       apikey: "k",
       PRIVATE_KEY: "-----BEGIN",
       credentials: { user: "u", pass: "p" },
+      KAFKA_EXTRA_PROPERTIES: '{"sasl.password":"p"}',
       PORT: "3000",
     });
     expect(out).toEqual({
@@ -40,6 +41,7 @@ describe("redact", () => {
       apikey: REDACTED,
       PRIVATE_KEY: REDACTED,
       credentials: { user: REDACTED, pass: REDACTED },
+      KAFKA_EXTRA_PROPERTIES: REDACTED,
       PORT: "3000",
     });
   });

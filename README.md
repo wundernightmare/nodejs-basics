@@ -182,8 +182,13 @@ process.env  >  YAML structured (database.url)  >  YAML flat (DATABASE_URL)  >  
 ```
 
 Defined once in `packages/config/src/env.registry.ts`. Every config knob your
-app reads should be added there — the loader fails fast at startup if a
-`required: true` entry is missing.
+app reads must be added there — `env.registry.spec.ts` scans the runtime
+sources and fails on a key read through `config.get`, a builder's reader or
+`process.env` that is not registered (only a registered key has a YAML path and
+shows up in `GET /admin/config`). The loader fails fast at startup if a
+`required: true` entry is missing. Telemetry keys (`OTEL_*`, `SENTRY_DSN`,
+`PYROSCOPE_SERVER_ADDRESS`) are environment-only: tracing starts before the
+YAML file is read.
 
 ### Domain errors → HTTP
 

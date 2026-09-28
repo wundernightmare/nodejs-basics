@@ -21,7 +21,7 @@ export const VALKEY_METRICS = Symbol("VALKEY_METRICS");
  *
  * Wires the full VALKEY_* env surface (TLS CA, timeouts, pool, reconnect,
  * retry) through `buildValkeyConfig` so every knob is driven by a single
- * registered env key — see infra/valkey/valkey-config.builder.ts.
+ * registered env key — see valkey-config.builder.ts.
  * Local / dev defaults are preserved: plaintext `redis://localhost:6379`
  * with `maxRetriesPerRequest=3` + `lazyConnect` + `enableOfflineQueue=false`.
  * Commands issued inside a span get a CLIENT span of their own (valkey-tracing.ts).

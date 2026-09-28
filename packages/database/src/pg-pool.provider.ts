@@ -127,7 +127,7 @@ function buildPool(
  *
  * Responsibilities:
  *   - Build options via `buildPostgresConfig` so every DATABASE_* env
- *     key flows through a single point (see infra/config/env.registry.ts
+ *     key flows through a single point (see @base/config env.registry.ts
  *     and the companion builder spec for the full surface).
  *   - Pick between pg and pg-native depending on DATABASE_USE_NATIVE —
  *     the only way to get multi-host primary selection in this process.

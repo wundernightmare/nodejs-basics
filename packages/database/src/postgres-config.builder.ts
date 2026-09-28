@@ -3,7 +3,7 @@
  *
  * The backend's primary store sits under every HTTP request — connect /
  * pool / failover correctness is load-bearing. This builder takes the
- * DATABASE_* env surface (see infra/config/env.registry.ts) and returns:
+ * DATABASE_* env surface (see @base/config env.registry.ts) and returns:
  *
  *   1. A `PoolConfig` object ready for `new Pool(opts)`, already merged
  *      with TLS material and pool-size knobs.
@@ -180,7 +180,10 @@ export function buildPostgresConfig(
   // picks them up too via pg-connection-string — same semantic, single
   // source of truth.
   const connectTimeoutMs = readNum(config, "DATABASE_CONNECT_TIMEOUT_MS", 5000);
-  const baseAppName = readStr(config, "DATABASE_APPLICATION_NAME") ?? "mayak-backend";
+  // pg_stat_activity shows which service holds a connection: the OTel service
+  // name (nodejs-basics-api / -worker) unless set explicitly.
+  const baseAppName =
+    readStr(config, "DATABASE_APPLICATION_NAME") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
   const appName = variant === "readonly" ? `${baseAppName}-ro` : baseAppName;
 
   // target_session_attrs: primary pool defaults to whatever the operator
