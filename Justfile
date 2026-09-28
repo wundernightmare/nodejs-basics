@@ -184,7 +184,9 @@ contracts-check BASE="origin/master":
     #!/usr/bin/env bash
     set -euo pipefail
     pnpm contracts >/dev/null
-    if ! git diff --exit-code --stat -- api/openapi3 packages/contracts/src; then
+    # status, not diff: a newly generated file (a new event schema) is untracked
+    if [ -n "$(git status --porcelain -- api/openapi3 api/jsonschema packages/contracts/src)" ]; then
+      git status --short -- api/openapi3 api/jsonschema packages/contracts/src
       echo "contracts: generated files are stale — run 'just contracts' and commit" >&2; exit 1
     fi
     base="$(mktemp)"; trap 'rm -f "$base"' EXIT

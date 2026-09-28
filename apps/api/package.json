@@ -24,6 +24,7 @@
     "@base/cache": "workspace:*",
     "@base/common": "workspace:*",
     "@base/config": "workspace:*",
+    "@base/contracts": "workspace:*",
     "@base/database": "workspace:*",
     "@base/idempotency": "workspace:*",
     "@base/jobs": "workspace:*",

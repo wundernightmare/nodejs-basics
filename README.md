@@ -472,15 +472,24 @@ reason in the commit.
 
 ### Contracts
 
-The HTTP API is written once, in [TypeSpec](https://typespec.io) under
-[`api/tsp`](api/tsp) (TypeSpec 1.15, OpenAPI 3.0 output — the same toolchain
-as the Go sibling), and everything else is generated from it:
+The HTTP API and the Kafka events are written once, in
+[TypeSpec](https://typespec.io) under [`api/tsp`](api/tsp) (TypeSpec 1.16 —
+the same toolchain as the Go sibling), and everything else is generated from
+it:
 
 ```
-api/tsp/*.tsp ─tsp compile─▶ api/openapi3/tasks.openapi.yaml ─openapi-typescript─▶ packages/contracts/src/tasksapi.gen.ts  (@base/contracts)
+api/tsp/*.tsp ─tsp compile─▶ api/openapi3/tasks.openapi.yaml ─openapi-typescript─▶ packages/contracts/src/tasksapi.gen.ts
+              └────────────▶ api/jsonschema/*.json ─────────(same, via a 3.1 wrapper)─▶ packages/contracts/src/events.gen.ts
 ```
 
-`just contracts` (`pnpm contracts`) regenerates both; the outputs are
+The events (`api/tsp/events.tsp`, `@jsonSchema`) become one JSON Schema per
+event — the artefact another service, in any language, builds its consumer
+from — and a TypeScript type in `@base/contracts` (`TaskCreatedEvent`, plus
+`TASK_EVENTS_TOPIC`) that the api writes into the outbox and the worker reads,
+so the two sides cannot drift. Evolve an event additively: new fields
+optional, never remove or retype one.
+
+`just contracts` (`pnpm contracts`) regenerates all of it; the outputs are
 committed, so a reviewer sees the contract diff next to the code diff.
 `just contracts-check` (the `contracts` CI job) fails when the committed
 outputs are stale and, on a pull request, when `oasdiff` finds a breaking

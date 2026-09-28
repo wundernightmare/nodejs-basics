@@ -96,7 +96,9 @@ jobs:
       - name: regenerate and compare
         run: |
           pnpm contracts
-          git diff --exit-code --stat -- api/openapi3 packages/contracts/src \
+          # status, not diff: a newly generated file (a new event schema) is untracked
+          git status --short -- api/openapi3 api/jsonschema packages/contracts/src
+          test -z "$(git status --porcelain -- api/openapi3 api/jsonschema packages/contracts/src)" \
             || { echo "::error::contracts are stale — run 'just contracts' and commit"; exit 1; }
       - name: breaking changes against the base branch
         if: github.event_name == 'pull_request'

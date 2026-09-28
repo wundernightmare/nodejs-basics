@@ -243,12 +243,15 @@ importers:
       '@typespec/http':
         specifier: 1.16.0
         version: 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))
+      '@typespec/json-schema':
+        specifier: 1.16.0
+        version: 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))
       '@typespec/openapi':
         specifier: 1.16.0
         version: 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))
       '@typespec/openapi3':
         specifier: 1.16.0
-        version: 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/openapi@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))))
+        version: 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/json-schema@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/openapi@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))))
       openapi-typescript:
         specifier: 7.13.0
         version: 7.13.0(typescript@6.0.3)
@@ -267,6 +270,9 @@ importers:
       '@base/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@base/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@base/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -383,6 +389,9 @@ importers:
       '@base/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@base/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@base/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -2541,6 +2550,12 @@ packages:
     peerDependenciesMeta:
       '@typespec/streams':
         optional: true
+
+  '@typespec/json-schema@1.16.0':
+    resolution: {integrity: sha512-an9fuC2KFSJraODr8ZNcQwMKNemcuFN3V2RYdsOpexzMtdldd81fTid19N8of10OotBd8O7+TeMW9s3PZ4H7Uw==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@typespec/compiler': ^1.16.0
 
   '@typespec/openapi3@1.16.0':
     resolution: {integrity: sha512-eRyTwn4w5hWSRm15ys20O2Jp1aHDPHp6TZsctOsG3nxo+N50Qg7Epgu44ATsxaELmnCEg9G0B7N9czZKb51dSQ==}
@@ -6135,7 +6150,13 @@ snapshots:
     dependencies:
       '@typespec/compiler': 1.16.0(@types/node@26.6.2)
 
-  '@typespec/openapi3@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/openapi@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))))':
+  '@typespec/json-schema@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))':
+    dependencies:
+      '@typespec/asset-emitter': 0.79.2(@typespec/compiler@1.16.0(@types/node@26.6.2))
+      '@typespec/compiler': 1.16.0(@types/node@26.6.2)
+      yaml: 2.9.1
+
+  '@typespec/openapi3@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/json-schema@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))(@typespec/openapi@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))))':
     dependencies:
       '@scalar/json-magic': 0.13.2
       '@scalar/openapi-parser': 0.28.16
@@ -6145,6 +6166,8 @@ snapshots:
       '@typespec/http': 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))
       '@typespec/openapi': 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))
       yaml: 2.9.0
+    optionalDependencies:
+      '@typespec/json-schema': 1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))
 
   '@typespec/openapi@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2))(@typespec/http@1.16.0(@typespec/compiler@1.16.0(@types/node@26.6.2)))':
     dependencies:

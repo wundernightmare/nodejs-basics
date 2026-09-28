@@ -65,9 +65,12 @@ high-signal, easy-to-miss bits.
   @stryker-mutator/vitest-runner supports vitest 5** — under 5.0.0 the runner
   reports nearly every mutant as survived (checked 2026-09-13).
 - **Contracts are generated, never edited**: `api/tsp/*.tsp` is the source;
-  `api/openapi3/tasks.openapi.yaml` and `packages/contracts/src/tasksapi.gen.ts`
-  are committed outputs. Change the TypeSpec, run `just contracts`, commit all
-  three; `just contracts-check` (CI `contracts` job) fails on stale outputs and
+  `api/openapi3/tasks.openapi.yaml`, `api/jsonschema/*.json` (events.tsp,
+  `@jsonSchema`) and `packages/contracts/src/{tasksapi,events}.gen.ts` are
+  committed outputs (event types: api/scripts/event-types.mjs runs the JSON
+  Schemas through openapi-typescript in a 3.1 wrapper — no second
+  generator). Producer and consumer use the same `TaskCreatedEvent`. Change
+  the TypeSpec, run `just contracts`, commit the outputs; `just contracts-check` (CI `contracts` job) fails on stale outputs and
   on an oasdiff breaking change (waivers: `api/oasdiff-breaking.ignore`).
   `api/` (`@base/api-spec`) holds its own TypeScript 6 for openapi-typescript,
   which prints through the compiler API TypeScript 7 no longer ships. The

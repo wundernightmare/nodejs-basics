@@ -95,7 +95,8 @@ contracts:
   script:
     - pnpm install --frozen-lockfile
     - pnpm contracts
-    - git diff --exit-code --stat -- api/openapi3 packages/contracts/src || { echo "contracts are stale — run 'just contracts' and commit"; exit 1; }
+    - git status --short -- api/openapi3 api/jsonschema packages/contracts/src
+    - test -z "$(git status --porcelain -- api/openapi3 api/jsonschema packages/contracts/src)" || { echo "contracts are stale — run 'just contracts' and commit"; exit 1; }
 
 # Contracts, step 2: no breaking change against the merge request's target
 # branch — oasdiff from its pinned image (OASDIFF_VERSION out of mise.toml;
