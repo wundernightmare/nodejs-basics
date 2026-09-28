@@ -7,6 +7,13 @@ import { API_URL } from "./helpers/env.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Workspace packages (@base/contracts: the typed client) resolve to their
+// TypeScript sources, as in vitest — the specs need no package build. The
+// test workers inherit this.
+process.env["NODE_OPTIONS"] = [process.env["NODE_OPTIONS"], "--conditions=source"]
+  .filter(Boolean)
+  .join(" ");
+
 /**
  * Playwright config for the nodejs-basics e2e suite — pure API tests (no
  * browser), driving the stack through Playwright's APIRequestContext.

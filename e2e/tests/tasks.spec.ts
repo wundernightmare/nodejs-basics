@@ -1,7 +1,16 @@
 import { expect, test } from "@playwright/test";
 
+import { createTasksClient } from "@base/contracts";
+
 import { E2E, meta, testCase } from "../fixtures/meta.js";
-import { WORKER_ADMIN_URL } from "../helpers/env.js";
+import { API_URL, WORKER_ADMIN_URL } from "../helpers/env.js";
+
+/**
+ * The api through the typed client generated from the contract — what another
+ * service would use: a path, a parameter or a body the contract does not
+ * have does not compile, and each response is typed by its status.
+ */
+const api = createTasksClient({ baseUrl: API_URL });
 
 const FEATURE = { ...E2E, feature: "tasks API" };
 
@@ -18,52 +27,55 @@ async function workerConsumed(
 }
 
 test.describe("tasks API", () => {
-  test("create → read → list @smoke", async ({ request }) => {
+  test("create → read → list @smoke", async () => {
     await meta(FEATURE);
     await testCase("NB-511", "the tasks vertical works end to end over HTTP");
-    const created = await request.post("/tasks", { data: { title: "e2e task" } });
-    expect(created.status()).toBe(201);
-    const task = await created.json();
+    const created = await api.POST("/tasks", { body: { title: "e2e task" } });
+    expect(created.response.status).toBe(201);
+    const task = created.data!;
     expect(task.title).toBe("e2e task");
     expect(task.status).toBe("ACTIVE");
     expect(task.id).toBeTruthy();
 
-    const read = await request.get(`/tasks/${task.id}`);
-    expect(read.status()).toBe(200);
-    expect((await read.json()).id).toBe(task.id);
+    const read = await api.GET("/tasks/{id}", { params: { path: { id: task.id } } });
+    expect(read.response.status).toBe(200);
+    expect(read.data?.id).toBe(task.id);
 
-    const list = await request.get("/tasks");
-    expect(list.status()).toBe(200);
-    const body = await list.json();
-    expect(Array.isArray(body.items)).toBe(true);
-    expect(body.items.some((t: { id: string }) => t.id === task.id)).toBe(true);
+    const list = await api.GET("/tasks", { params: { query: { limit: 100 } } });
+    expect(list.response.status).toBe(200);
+    expect(list.data?.items.some((t) => t.id === task.id)).toBe(true);
   });
 
-  test("archive transitions the task to ARCHIVED", async ({ request }) => {
+  test("archive transitions the task to ARCHIVED", async () => {
     await meta(FEATURE);
     await testCase("NB-512", "archive with optimistic locking");
-    const created = await request.post("/tasks", { data: { title: "to archive" } });
-    const task = await created.json();
+    const task = (await api.POST("/tasks", { body: { title: "to archive" } })).data!;
 
     // Archive uses optimistic locking — pass the task's current version.
-    const archived = await request.post(`/tasks/${task.id}/archive`, {
-      data: { expectedVersion: task.version },
+    const archived = await api.POST("/tasks/{id}/archive", {
+      params: { path: { id: task.id } },
+      body: { expectedVersion: task.version },
     });
-    expect([200, 201]).toContain(archived.status());
+    expect(archived.response.status).toBe(200);
+    expect(archived.data?.status).toBe("ARCHIVED");
 
-    const read = await request.get(`/tasks/${task.id}`);
-    expect((await read.json()).status).toBe("ARCHIVED");
+    // A stale version is the contract's 409 problem.
+    const stale = await api.POST("/tasks/{id}/archive", {
+      params: { path: { id: task.id } },
+      body: { expectedVersion: task.version },
+    });
+    expect(stale.response.status).toBe(409);
+    expect(stale.error?.status).toBe(409);
   });
 
-  test("unknown task is a 404 problem+json", async ({ request }) => {
+  test("unknown task is a 404 problem+json", async () => {
     await meta(FEATURE);
     await testCase("NB-513", "a missing task is an RFC 9457 problem");
-    const res = await request.get("/tasks/does-not-exist");
-    expect(res.status()).toBe(404);
-    expect(res.headers()["content-type"]).toContain("application/problem+json");
-    const body = await res.json();
-    expect(body.status).toBe(404);
-    expect(body.title).toBeTruthy();
+    const res = await api.GET("/tasks/{id}", { params: { path: { id: "does-not-exist" } } });
+    expect(res.response.status).toBe(404);
+    expect(res.response.headers.get("content-type")).toContain("application/problem+json");
+    expect(res.error?.status).toBe(404);
+    expect(res.error?.title).toBeTruthy();
   });
 
   test("creating a task drives the worker (Kafka → BullMQ)", async ({ request }) => {
@@ -71,10 +83,10 @@ test.describe("tasks API", () => {
     await testCase("NB-514", "cross-process flow api → Kafka → worker");
     const before = await workerConsumed(request);
 
-    const created = await request.post("/tasks", { data: { title: "for the worker" } });
-    expect(created.status()).toBe(201);
+    const created = await api.POST("/tasks", { body: { title: "for the worker" } });
+    expect(created.response.status).toBe(201);
 
-    // The api publishes task.created best-effort; the worker consumes it.
+    // task.created goes api → outbox → relay → Kafka → worker.
     await expect
       .poll(async () => workerConsumed(request), { timeout: 15_000, intervals: [500] })
       .toBeGreaterThan(before);

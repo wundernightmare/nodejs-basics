@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "TypeScript types of the HTTP and event contracts, generated from api/openapi3 and api/jsonschema (openapi-typescript), plus the event topic name.",
+  "description": "TypeScript types of the HTTP and event contracts, generated from api/openapi3 and api/jsonschema (openapi-typescript), plus the event topic name and a typed client (openapi-fetch).",
   "files": [
     "dist"
   ],
@@ -25,5 +25,8 @@
     "format:check": "oxfmt --check \"src/**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
     "clean": "tsc --build --clean && rm -rf dist coverage"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0"
   }
 }

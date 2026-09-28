@@ -5,9 +5,10 @@
  *   tasksapi.gen.ts  the HTTP contract, from api/openapi3/tasks.openapi.yaml
  *   events.gen.ts    the Kafka events, from api/jsonschema/*.json
  * This module names the types a producer, a consumer, a client or a test
- * reaches for.
+ * reaches for, and createTasksClient (client.ts) — the typed client.
  */
 export type { components, operations, paths } from "./tasksapi.gen.js";
+export { createTasksClient, type TasksClient } from "./client.js";
 
 import type { components } from "./tasksapi.gen.js";
 
