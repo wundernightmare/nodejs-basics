@@ -3,7 +3,9 @@
  * GET /admin/config serves. Mirrors httpx.Redact in golang-basics:
  *
  *   - the value under any key that looks like a secret (password, passwd,
- *     secret, token, api key, private key, credential) becomes "[redacted]";
+ *     secret, token, api key, private key, credential) becomes "[redacted]" —
+ *     so does a `*_EXTRA_PROPERTIES` escape hatch: a JSON string of driver
+ *     options that may carry `sasl.password` and is not parsed here;
  *     an empty string stays empty so "unset" remains visible;
  *   - the password of any string that parses as a URL with userinfo is
  *     replaced (postgres://app:s3cret@h → postgres://app:xxxxx@h);
@@ -15,7 +17,8 @@
 
 export const REDACTED = "[redacted]";
 
-const SECRET_KEY = /(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential)/i;
+const SECRET_KEY =
+  /(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|extra[_-]?properties)/i;
 
 /** Whether a key names a secret by convention. */
 export function isSecretKey(key: string): boolean {

@@ -7,7 +7,7 @@
 app:
   node_env: development
   port: 3000
-  admin_port: 9090
+  admin_port: 9091          # `just dev` passes the same; 9090 in a container
   url: http://localhost:3000
   log_level: debug
   cookie_secret: dev-only-cookie-secret-change-me-32-chars-min
@@ -24,13 +24,19 @@ cache:
 
 # kafka:
 #   brokers: localhost:9092
-#   client_id: app
+#   client_id: my-service      # default: OTEL_SERVICE_NAME
+#   security_protocol: sasl_ssl
+#   sasl:
+#     mechanism: SCRAM-SHA-512
+#     username: my-service
+#     password_file: /run/secrets/kafka-password
+#
+# Every key, its YAML path and its default: packages/config/src/env.registry.ts
+# (the running values, secrets redacted: GET /admin/config on the admin port).
 
-telemetry:
-  service_name: app
-  # otlp_endpoint: http://otel-collector:4317
-  # sentry_dsn: https://your-key@o123.ingest.sentry.io/456    # leave unset → no-op
-  # pyroscope_address: http://pyroscope:4040                  # leave unset → no profiling
+# Telemetry is configured by the ENVIRONMENT only — it starts before this file
+# is read: OTEL_SERVICE_NAME (default nodejs-basics-api), OTEL_EXPORTER_OTLP_ENDPOINT
+# (default http://localhost:4317), SENTRY_DSN, PYROSCOPE_SERVER_ADDRESS.
 
 # Diagnostics (heap snapshots, crash reports). All keys optional —
 # without an S3 bucket files are written to /tmp only.

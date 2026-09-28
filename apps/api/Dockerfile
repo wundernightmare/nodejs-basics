@@ -71,7 +71,7 @@ FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-api" \
       org.opencontainers.image.description="Reference NestJS API over Postgres + Valkey + Kafka (nodejs-basics)" \
-      org.opencontainers.image.vendor="tracehub" \
+      org.opencontainers.image.vendor="wundernightmare" \
       org.opencontainers.image.source="https://github.com/wundernightmare/nodejs-basics" \
       org.opencontainers.image.licenses="UNLICENSED"
 

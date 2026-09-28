@@ -493,6 +493,10 @@ importers:
       yaml:
         specifier: 2.9.1
         version: 2.9.1
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
 
   packages/contracts: {}
 

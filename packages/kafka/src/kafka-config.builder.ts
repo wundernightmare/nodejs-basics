@@ -13,15 +13,14 @@ const kafkaLogger = pinoLogger.child({ "log.logger": "KafkaConfigBuilder" });
  * and each consumer (modules/**\/*.consumer.ts) — funnel through this module
  * so that SASL credentials, TLS CA material, producer durability flags, and
  * consumer offset semantics are resolved from a single registry-backed env
- * surface (see infra/config/env.registry.ts — the KAFKA_* entries).
+ * surface (see @base/config env.registry.ts — the KAFKA_* entries).
  *
  * The keys written into the returned objects are the raw librdkafka property
  * names (`security.protocol`, `sasl.mechanism`, `auto.offset.reset`, …) rather
  * than the confluentinc/kafka-javascript `kafkaJS` shortcut dialect. librdkafka
  * accepts both on the same constructor call, but using the raw names makes the
- * mapping from env.registry to runtime behaviour grep-able, and mirrors the
- * TOML layout the Rust edge services already use (worker-core's
- * KafkaSecurityConfig).
+ * mapping from env.registry to runtime behaviour grep-able (and matches the
+ * librdkafka docs a platform team hands out).
  *
  * Behaviour preserved for local dev / tests: when the security / tunable env
  * vars are unset the returned configs degrade to plaintext + librdkafka
@@ -211,8 +210,8 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
 
 /**
  * Consumer role flags: group id (per caller), offset-reset policy, explicit
- * commit by default (at-least-once semantics both control-plane consumers
- * rely on), and rebalance timeouts. Builders that need different defaults
+ * commit by default (at-least-once semantics: an event is committed only once
+ * it is handled), and rebalance timeouts. Builders that need different defaults
  * per consumer still accept per-caller overrides via groupId — everything
  * else is process-scoped.
  */
