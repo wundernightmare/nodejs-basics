@@ -30,7 +30,8 @@ paths:
     post:
       operationId: TasksOps_create
       description: |-
-        Create a task. Publishes a `task.created` event to Kafka best-effort.
+        Create a task. Its `task.created` event is written in the same
+        transaction (outbox) and reaches Kafka shortly after.
         409: the Idempotency-Key is in flight or was used for a different request.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -56,6 +57,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '504':
           description: A problem response with the given status and content type.
           content:
             application/problem+json:
@@ -106,6 +119,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '504':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /tasks/{id}:
     get:
       operationId: TasksOps_get
@@ -124,6 +143,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Task'
         '404':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '504':
           description: A problem response with the given status and content type.
           content:
             application/problem+json:
@@ -158,6 +183,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '504':
           description: A problem response with the given status and content type.
           content:
             application/problem+json:
@@ -199,6 +236,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
         '409':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          description: A problem response with the given status and content type.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '504':
           description: A problem response with the given status and content type.
           content:
             application/problem+json:

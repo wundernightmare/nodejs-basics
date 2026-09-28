@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { type IUnitOfWork } from "@base/common";
 
+import { limitTransaction } from "./pg-deadline.js";
 import { PG_POOL } from "./pg-pool.provider.js";
 import { transactionStorage } from "./transaction.storage.js";
 
@@ -35,6 +36,9 @@ export class PgUnitOfWork implements IUnitOfWork {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Under a request deadline the server cancels a statement that would
+      // outlive it (SET LOCAL: this transaction only).
+      await limitTransaction(client);
       const result = await transactionStorage.run(client, fn);
       await client.query("COMMIT");
       return result;

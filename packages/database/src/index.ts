@@ -12,6 +12,7 @@ export {
   pgPoolProvider,
   pgReadonlyPoolProvider,
 } from "./pg-pool.provider.js";
+export { guardPgPool, limitTransaction } from "./pg-deadline.js";
 export { pgTarget, tracePgClient, tracePgPool } from "./pg-tracing.js";
 export { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 export { transactionStorage } from "./transaction.storage.js";

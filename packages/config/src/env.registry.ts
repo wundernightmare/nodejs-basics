@@ -71,6 +71,27 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
+    key: "HTTP_BODY_LIMIT_BYTES",
+    yaml: "app.http.body_limit_bytes",
+    required: false,
+    default: "1048576",
+    description: "Largest request body the api accepts; a bigger one is a 413 problem.",
+    usedIn: ["apps/api/src/app.ts"],
+  },
+
+  {
+    key: "HTTP_REQUEST_TIMEOUT_MS",
+    yaml: "app.http.request_timeout_ms",
+    required: false,
+    default: "10000",
+    description:
+      "Budget of one api request: receiving it, and every Postgres / Valkey / HTTP call made " +
+      "while handling it (the deadline, @base/common deadline.ts) — then 504. A caller's " +
+      "x-request-timeout-ms header can shorten it, never extend it.",
+    usedIn: ["apps/api/src/app.ts", "common"],
+  },
+
+  {
     key: "ADMIN_PORT",
     yaml: "app.admin_port",
     required: false,

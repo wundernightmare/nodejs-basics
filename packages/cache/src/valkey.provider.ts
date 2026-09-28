@@ -6,6 +6,7 @@ import { DependencyCircuitBreaker } from "@base/resilience";
 
 import { buildValkeyConfig, toClientOptions } from "./valkey-config.builder.js";
 import { registerValkeyMetrics, type ValkeyMetricsHandle } from "./valkey-metrics.js";
+import { guardValkeyClient } from "./valkey-deadline.js";
 import { traceValkeyClient } from "./valkey-tracing.js";
 
 export const VALKEY_CLIENT = Symbol("VALKEY_CLIENT");
@@ -24,7 +25,8 @@ export const VALKEY_METRICS = Symbol("VALKEY_METRICS");
  * registered env key — see valkey-config.builder.ts.
  * Local / dev defaults are preserved: plaintext `redis://localhost:6379`
  * with `maxRetriesPerRequest=3` + `lazyConnect` + `enableOfflineQueue=false`.
- * Commands issued inside a span get a CLIENT span of their own (valkey-tracing.ts).
+ * Commands issued inside a span get a CLIENT span of their own (valkey-tracing.ts)
+ * and never outlive the request's deadline (valkey-deadline.ts).
  */
 export const valkeyProvider: FactoryProvider<Valkey> = {
   provide: VALKEY_CLIENT,
@@ -32,7 +34,8 @@ export const valkeyProvider: FactoryProvider<Valkey> = {
   useFactory: (config: ConfigService): Valkey => {
     const built = buildValkeyConfig(config);
     const opts = toClientOptions(built) as RedisOptions;
-    return traceValkeyClient(new Valkey(opts));
+    // Spans (valkey-tracing.ts), then the request budget (valkey-deadline.ts).
+    return guardValkeyClient(traceValkeyClient(new Valkey(opts)));
   },
 };
 

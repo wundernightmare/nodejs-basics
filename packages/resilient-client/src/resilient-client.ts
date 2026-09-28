@@ -8,6 +8,12 @@ import { CachedBodyReadable } from "./resilient-client.cache.js";
 import type { CacheConfig, CachedEntry } from "./resilient-client.cache.js";
 import { OutboundError } from "./resilient-client.errors.js";
 
+/** The abort AbortSignal.timeout() causes (undici rejects with its reason, a TimeoutError). */
+function isTimeoutAbort(err: unknown): boolean {
+  const e = err as { name?: unknown; cause?: { name?: unknown } } | null;
+  return e?.name === "TimeoutError" || e?.cause?.name === "TimeoutError";
+}
+
 // ─── Logger interface ─────────────────────────────────────────────────────────
 
 /** Minimal logger interface compatible with pino, console, and no-ops. */
@@ -159,6 +165,15 @@ export interface ResilientClientConfig {
    */
   getRequestId?: () => string | undefined;
   /**
+   * Optional getter for the caller's remaining budget in ms (the request
+   * deadline). In the apps: `remainingMs` from @base/common. Each attempt then
+   * gets at most that long (an AbortSignal — the request is really cancelled),
+   * sends it on as `x-request-timeout-ms` so the next service can budget too,
+   * and a spent budget fails fast with OutboundError.deadlineExceeded — never
+   * retried. Default: no deadline.
+   */
+  getRemainingMs?: () => number | undefined;
+  /**
    * TLS options forwarded to undici's `Client`/`Pool` `connect` callback.
    * Used when the base URL is `https://…` and the operator needs to override
    * CA bundle, disable hostname verification for dev-only self-signed certs,
@@ -239,6 +254,12 @@ class AdaptiveConcurrencyLimiter {
         this.#decrease();
       }
     }
+    this.#drainWaiters();
+  }
+
+  /** Give a slot back without an observation (the attempt never went out). */
+  cancel(): void {
+    this.#inFlight--;
     this.#drainWaiters();
   }
 
@@ -480,16 +501,33 @@ export class ResilientClient {
 
   async #executeWithRetry(opts: Dispatcher.RequestOptions): Promise<Dispatcher.ResponseData> {
     for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
+      // The caller's budget (getRemainingMs): spent → fail fast, not retried.
+      const budget = this.config.getRemainingMs?.();
+      if (budget !== undefined && budget <= 0) throw OutboundError.deadlineExceeded(this.baseUrl);
+      const deadlineAt = budget === undefined ? undefined : Date.now() + budget;
+
       await this.#adaptiveLimiter?.acquire();
       const rttStart = Date.now();
+      // What is left after waiting for a slot.
+      const left = deadlineAt === undefined ? undefined : deadlineAt - rttStart;
+      if (left !== undefined && left <= 0) {
+        this.#adaptiveLimiter?.cancel();
+        throw OutboundError.deadlineExceeded(this.baseUrl);
+      }
 
       let response: Dispatcher.ResponseData | undefined;
       let dispatchErr: unknown;
 
       try {
-        response = await this.#dispatcher.request(opts);
+        response = await this.#dispatcher.request(
+          left === undefined ? opts : this.#withBudget(opts, left),
+        );
       } catch (e) {
         dispatchErr = e;
+      }
+      if (left !== undefined && dispatchErr !== undefined && isTimeoutAbort(dispatchErr)) {
+        this.#adaptiveLimiter?.release(Date.now() - rttStart, true);
+        throw OutboundError.deadlineExceeded(this.baseUrl);
       }
 
       const rtt = Date.now() - rttStart;
@@ -677,6 +715,19 @@ export class ResilientClient {
   }
 
   // ─── Header helpers ──────────────────────────────────────────────────────
+
+  /** One attempt within the caller's budget: cancelled when it runs out, and told downstream. */
+  #withBudget(options: Dispatcher.RequestOptions, leftMs: number): Dispatcher.RequestOptions {
+    const headers = this.#normalizeHeaders(options.headers);
+    headers["x-request-timeout-ms"] = String(Math.max(1, Math.floor(leftMs)));
+    const timeout = AbortSignal.timeout(Math.ceil(leftMs));
+    const own = options.signal as AbortSignal | undefined;
+    return {
+      ...options,
+      headers,
+      signal: own === undefined ? timeout : AbortSignal.any([own, timeout]),
+    };
+  }
 
   #forwardRequestId(options: Dispatcher.RequestOptions): Dispatcher.RequestOptions {
     const requestId = this.config.getRequestId?.();

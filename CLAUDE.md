@@ -132,6 +132,13 @@ high-signal, easy-to-miss bits.
   scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
+- **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
+  (registerRequestContext; `x-request-timeout-ms` can shorten it). Outbound
+  calls honour it: Postgres (guardPgPool — ROLLBACK always passes; UoW sets
+  `SET LOCAL statement_timeout`), Valkey (guardValkeyClient), HTTP
+  (ResilientClient `getRemainingMs` → AbortSignal + header). Spent →
+  `DeadlineExceededError` → 504. New dependency client → apply the budget the
+  same way (`callBudgetMs` / `remainingMs` from @base/common).
 - **Events go through the outbox**: `OutboxWriter.add()` inside
   `uow.runInTransaction` (same transaction as the write), `OutboxRelay`
   publishes (SKIP LOCKED, at least once — consumers must be idempotent). Do

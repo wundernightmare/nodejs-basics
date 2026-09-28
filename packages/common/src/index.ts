@@ -16,6 +16,14 @@ export {
   withTenant,
 } from "./utils/request-context.js";
 export {
+  callBudgetMs,
+  DeadlineExceededError,
+  parseTimeoutMs,
+  remainingMs,
+  REQUEST_TIMEOUT_HEADER,
+  withDeadline,
+} from "./utils/deadline.js";
+export {
   generateErrorId,
   generateId,
   generateRequestId,

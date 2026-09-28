@@ -35,7 +35,8 @@ export interface paths {
         get: operations["TasksOps_list"];
         put?: never;
         /**
-         * @description Create a task. Publishes a `task.created` event to Kafka best-effort.
+         * @description Create a task. Its `task.created` event is written in the same
+         *     transaction (outbox) and reaches Kafka shortly after.
          *     409: the Idempotency-Key is in flight or was used for a different request.
          */
         post: operations["TasksOps_create"];
@@ -294,6 +295,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description A problem response with the given status and content type. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     TasksOps_create: {
@@ -340,6 +350,24 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description A problem response with the given status and content type. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A problem response with the given status and content type. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     TasksOps_get: {
@@ -364,6 +392,15 @@ export interface operations {
             };
             /** @description A problem response with the given status and content type. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A problem response with the given status and content type. */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -424,6 +461,24 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description A problem response with the given status and content type. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A problem response with the given status and content type. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     TasksOps_archive: {
@@ -470,6 +525,24 @@ export interface operations {
             };
             /** @description A problem response with the given status and content type. */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A problem response with the given status and content type. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A problem response with the given status and content type. */
+            504: {
                 headers: {
                     [name: string]: unknown;
                 };

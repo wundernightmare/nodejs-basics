@@ -6,6 +6,7 @@ import { SecretFileWatcher } from "@base/config";
 import { pinoLogger } from "@base/logger";
 import { DependencyCircuitBreaker } from "@base/resilience";
 
+import { guardPgPool } from "./pg-deadline.js";
 import { pgTarget, tracePgPool } from "./pg-tracing.js";
 import { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 
@@ -89,6 +90,8 @@ function buildPool(
   const pool = new PoolCtor(opts);
   // CLIENT spans for every query (pg-tracing.ts), tagged with this pool's target.
   tracePgPool(pool, { ...pgTarget(built.poolOptions), "db.client.connection.pool.name": label });
+  // The request budget (pg-deadline.ts); registered after tracing so it runs first.
+  guardPgPool(pool);
 
   // Each fresh connection — including a libpq-native reconnect after
   // a primary failover — receives the full session-init batch. Errors

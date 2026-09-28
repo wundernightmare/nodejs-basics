@@ -474,6 +474,9 @@ importers:
 
   packages/cache:
     dependencies:
+      '@base/common':
+        specifier: workspace:*
+        version: link:../common
       '@base/resilience':
         specifier: workspace:*
         version: link:../resilience

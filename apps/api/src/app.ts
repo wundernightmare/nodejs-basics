@@ -18,6 +18,7 @@ import { ZodValidationPipe } from "nestjs-zod";
 
 import {
   createDomainExceptionFilter,
+  DeadlineExceededError,
   genRequestId,
   HttpExceptionFilter,
   OptimisticLockConflictError,
@@ -39,6 +40,11 @@ import { TaskAlreadyArchivedError, TaskNotFoundError } from "./modules/tasks/dom
  */
 export const ERROR_MAP: ErrorMap = {
   OptimisticLockConflictError: { status: 409 },
+  // The request budget ran out in a dependency (HTTP_REQUEST_TIMEOUT_MS).
+  DeadlineExceededError: {
+    status: 504,
+    fallbackMessage: "The request ran out of time waiting for a dependency",
+  },
   TaskNotFoundError: { status: 404 },
   TaskAlreadyArchivedError: { status: 409 },
 };
@@ -46,13 +52,28 @@ export const ERROR_MAP: ErrorMap = {
 /** Classes the NestJS @Catch decorator binds the filter to. Add new errors here. */
 export const DOMAIN_ERRORS: Array<new (...args: never[]) => Error> = [
   OptimisticLockConflictError,
+  DeadlineExceededError,
   TaskNotFoundError,
   TaskAlreadyArchivedError,
 ];
 
 /** Build the app (not listening). Call `app.listen(...)` or `app.init()` on it. */
+/** A positive integer from the environment (ENV_REGISTRY supplies the defaults), else `fallback`. */
+function envInt(key: string, fallback: number): number {
+  const n = Number(process.env[key]);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
 export async function createApp(): Promise<NestFastifyApplication> {
+  // Limits of one request — see ENV_REGISTRY: a body over the limit is a 413
+  // problem; the request budget bounds both receiving the request (slow
+  // clients) and every Postgres / Valkey / HTTP call made while handling it
+  // (the deadline, registerRequestContext below), after which the answer is 504.
+  const bodyLimit = envInt("HTTP_BODY_LIMIT_BYTES", 1_048_576);
+  const requestTimeoutMs = envInt("HTTP_REQUEST_TIMEOUT_MS", 10_000);
   const adapter = new FastifyAdapter({
+    bodyLimit,
+    requestTimeout: requestTimeoutMs,
     disableRequestLogging: true, // we register our own access logs in registerHttpInstrumentation
     // Fastify 5 takes a pre-built logger via `loggerInstance`; the `logger`
     // option only accepts a config object (passing an instance there throws
@@ -79,10 +100,13 @@ export async function createApp(): Promise<NestFastifyApplication> {
 
   // Per-request context: echoes X-Request-Id and puts it in ALS (every log
   // line, every outbound ResilientClient call and every problem+json body
-  // carry it), and turns on debug logging for one request when X-Debug-Token
+  // carry it), starts the request's deadline, and turns on debug logging for one request when X-Debug-Token
   // matches DEBUG_TOKEN (response: X-Debug-Logging: on). DEBUG_TOKEN is read
   // here, after ConfigModule merged config.yaml into process.env.
-  registerRequestContext(adapter.getInstance(), { debugToken: process.env["DEBUG_TOKEN"] });
+  registerRequestContext(adapter.getInstance(), {
+    debugToken: process.env["DEBUG_TOKEN"],
+    requestTimeoutMs,
+  });
 
   registerHttpInstrumentation(adapter.getInstance());
 

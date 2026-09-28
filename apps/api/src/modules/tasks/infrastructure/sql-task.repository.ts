@@ -16,7 +16,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import { OptimisticLockConflictError } from "@base/common";
-import { PG_POOL, transactionStorage } from "@base/database";
+import { limitTransaction, PG_POOL, transactionStorage } from "@base/database";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskNotFoundError } from "../domain/task.errors.js";
@@ -67,6 +67,7 @@ export class SqlTaskRepository implements TaskRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await limitTransaction(client); // the request budget as statement_timeout
       const result = await fn(client);
       await client.query("COMMIT");
       return result;

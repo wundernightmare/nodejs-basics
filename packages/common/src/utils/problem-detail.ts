@@ -13,10 +13,12 @@ export const HTTP_STATUS_TITLES: Record<number, string> = {
   404: "Not Found",
   405: "Method Not Allowed",
   409: "Conflict",
+  413: "Content Too Large",
   422: "Unprocessable Entity",
   429: "Too Many Requests",
   500: "Internal Server Error",
   503: "Service Unavailable",
+  504: "Gateway Timeout",
 };
 
 /** RFC 9457 body: the standard members plus any extension members. */
