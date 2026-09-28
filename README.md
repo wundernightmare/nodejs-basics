@@ -11,6 +11,10 @@ apps/
                          a task.created event to Kafka on write. (+ distroless Dockerfile)
   worker/                Kafka consumer worker: drains tasks.events, enqueues a
                          BullMQ job, processes it. (+ distroless Dockerfile)
+  migrate/               Forward-only SQL migration runner: one self-contained
+                         bundle + migrations/, a 156 MB image with no node_modules.
+
+migrations/              The schema: 0001_create_tasks.sql, … (applied by apps/migrate).
 
 e2e/                     Playwright API e2e (health, tasks CRUD, Kafka→BullMQ flow).
 benchmarks/              k6 load test for the tasks API.
@@ -233,6 +237,31 @@ Wire in your AppModule:
 { provide: UNIT_OF_WORK, useClass: PrismaUnitOfWork }
 ```
 
+### Migrations
+
+The schema lives in `migrations/*.sql` — plain SQL, one file per change,
+`<version>_<name>.sql`, forward-only (a rollback is a new migration).
+`apps/migrate` applies what is pending, each file in a transaction with its
+row in `schema_migrations` (`-- migrate: no-transaction` on the first line
+for `CREATE INDEX CONCURRENTLY`), under an advisory lock so replicas and CI
+jobs can race safely, and refuses to run when an applied file was edited.
+
+```sh
+just deps                      # compose up + just migrate
+just migrate                   # after adding a file
+docker run --rm -e DATABASE_URL=… nodejs-basics-migrate:dev   # the image
+```
+
+Everything that needs a schema goes through it: `docker/stack.yml` (the api
+waits for the `migrate` service to exit 0 — how a Kubernetes Job / init
+container would run it), the integration layer (vitest `globalSetup`), the
+e2e spawn harness and `just schemathesis`. The apps never create tables.
+The image is small on purpose: Vite bundles the runner *with* `pg`
+(`nodeApp(…, { selfContained: true })`), so it is distroless Node + one
+`.js` + the SQL files, no `node_modules` (156 MB vs 722 MB for the api).
+An ORM's migrator (Prisma, Drizzle, Kysely) replaces it cleanly — keep the
+image and the compose / CI wiring, swap the command.
+
 ### Hexagonal layout per domain (recommended)
 
 ```
@@ -274,8 +303,6 @@ the pino mixin in `@base/logger`. Don't pass them explicitly.
 - **Auth (JWT, OAuth, MFA, PATs)** — strongly project-specific.
 - **AuthZ (OPA, Casbin, role matrices)** — project-specific.
 - **Tenant model** — your User/Tenant/Membership schema.
-- **OpenAPI generation** — `@nestjs/swagger` + `nestjs-zod`'s `createZodDto`
-  plug in cleanly; the example app omits this for simplicity.
 - **Prisma / Drizzle / Kysely** — `@base/database` exposes `PG_POOL`. Hand it
   to your ORM's adapter and you're done. See README's "Transactions" for the
   UnitOfWork pattern.
@@ -512,12 +539,13 @@ document agree on all of it. With it in place, hand-written
 "bad input → 4xx" tests are not needed — the schema and the generator own
 that class of case.
 
-One warning is expected and harmless: "schema validation mismatch" for
-`PATCH /tasks/{id}` and `POST /tasks/{id}/archive`. In the fuzzing phase their
-positive cases carry random well-formed ids (404) and their negative cases
-malformed bodies (400) — a ratio the heuristic reads as "mostly rejected"; the
-stateful phase, which reaches real ids through the links it infers, passes
-every scenario.
+`api/schemathesis.toml` makes every Schemathesis warning fail the run, except
+two on `/tasks/{id}…`, where they describe the contract rather than a gap:
+generated ids name no task (404) and generated versions are never the current
+one (409) — server-assigned ids and optimistic locking. The happy paths come
+from the stateful phase, which chains `POST /tasks` into those operations
+through the links it infers (all 9 covered). Pinning a seeded id instead would
+silence the warnings too, but it overrides those links and tests less.
 
 ### Property-based testing
 

@@ -426,6 +426,15 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     usedIn: ["database"],
   },
 
+  {
+    key: "MIGRATIONS_DIR",
+    required: false,
+    description:
+      "Directory of the *.sql migrations apps/migrate applies. Default: migrations/ at the repo root; " +
+      "/migrations in the migrate image.",
+    usedIn: ["apps/migrate"],
+  },
+
   // ─── Cache (Valkey/Redis) ─────────────────────────────────────────────────
 
   {

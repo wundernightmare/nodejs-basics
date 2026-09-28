@@ -44,6 +44,11 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
 fi
 [ -f "$entry" ] || { echo "schemathesis.sh: $entry missing — run 'pnpm build'" >&2; exit 2; }
 
+log "migrate"
+DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
+  node "$root/apps/migrate/dist/main.js" > "$root/.run/schemathesis-migrate.log" 2>&1 \
+  || { cat "$root/.run/schemathesis-migrate.log" >&2; exit 1; }
+
 log "start api on :$port (admin :$admin)"
 # cwd = the app dir (config.yaml lookup), same as the e2e spawn harness.
 (cd "$root/apps/api" && \

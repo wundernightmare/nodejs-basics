@@ -129,6 +129,14 @@ high-signal, easy-to-miss bits.
   scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
+- **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
+  checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
+  create tables from app code or edit an applied file — add a new one. The
+  integration project migrates in its `globalSetup`, the e2e spawn harness
+  and schemathesis.sh before starting the api, docker/stack.yml through the
+  one-shot `migrate` service. Its image is a self-contained bundle
+  (`nodeApp(dir, { selfContained: true })`: pg inlined, conditions without a
+  forced `import` so CJS require()s get CJS builds) + the SQL files.
 - **BullMQ connections** must NOT set `commandTimeout` (its blocking poll
   legitimately outlives any per-command timeout) — see `@base/cache`
   `toBullMqOptions`.

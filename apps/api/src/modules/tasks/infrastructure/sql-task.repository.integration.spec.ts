@@ -2,18 +2,17 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { OptimisticLockConflictError } from "@base/common";
-import type { AppLogger } from "@base/logger";
 import { integration, meta, testCase, unique } from "@base/testing";
 
 import { TaskStatus } from "../domain/task.entity.js";
 import { TaskNotFoundError } from "../domain/task.errors.js";
 import { SqlTaskRepository } from "./sql-task.repository.js";
-import { TasksSchemaBootstrap } from "./tasks-schema.bootstrap.js";
 
 /**
  * The tasks repository against a real Postgres (DATABASE_URL from `just deps`
- * or the CI service), wired the way the module wires it: the schema bootstrap
- * creates the table, the repository runs its own mini-transactions. Rows are
+ * or the CI service), wired the way the module wires it: the schema comes from
+ * migrations/*.sql (the integration project's globalSetup applies them), the
+ * repository runs its own mini-transactions. Rows are
  * isolated by unique ids in the shared `tasks` table — the same table the
  * running api uses, so nothing here assumes an empty database.
  */
@@ -33,8 +32,6 @@ describe.skipIf(infra.skip)("SqlTaskRepository (integration)", () => {
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: infra.url("postgres"), max: 3 });
-    const silent = { child: () => ({ info: () => undefined }) } as unknown as AppLogger;
-    await new TasksSchemaBootstrap(pool, silent).onApplicationBootstrap();
     repo = new SqlTaskRepository(pool);
   });
 
