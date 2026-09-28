@@ -11,7 +11,8 @@
 # requests for every operation, checking that no request yields a 5xx and that
 # every response — status, content type, headers, body — matches the contract.
 # This is the generative layer of the pyramid: it finds inputs no hand-written
-# test thought of. Results go to Allure (native reporter) under
+# test thought of. api/schemathesis.toml makes every Schemathesis warning fatal
+# (and says which two are expected, where). Results go to Allure (native reporter) under
 # ALLURE_RESULTS_DIR, next to every other layer.
 #
 # Schemathesis runs from its pinned image (SCHEMATHESIS_VERSION in mise.toml,
@@ -70,7 +71,7 @@ fi
 
 log "schemathesis run — $spec against :$port ($max_examples examples/operation)"
 if command -v schemathesis >/dev/null; then
-  schemathesis run "$root/$spec" --url "http://localhost:$port" \
+  schemathesis --config-file "$root/api/schemathesis.toml" run "$root/$spec" --url "http://localhost:$port" \
     --checks all --max-examples "$max_examples" --report allure --report-allure-path "$results" "${extra_args[@]}"
 else
   # host.docker.internal: Docker Desktop / OrbStack resolve it; Linux (and
@@ -89,6 +90,6 @@ else
   case "$secopts" in *name=selinux*) extra+=(--security-opt label=disable) ;; esac
   docker run --rm --add-host=host.docker.internal:host-gateway --user "$run_as" "${extra[@]}" \
     -v "$root/api:/api:ro" -v "$results:/results" "$image" \
-    run "/$spec" --url "http://host.docker.internal:$port" \
+    --config-file /api/schemathesis.toml run "/$spec" --url "http://host.docker.internal:$port" \
     --checks all --max-examples "$max_examples" --report allure --report-allure-path /results "${extra_args[@]}"
 fi
