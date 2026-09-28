@@ -64,10 +64,11 @@ minimumReleaseAge: 10080
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
 # The escape hatch when a release is needed before the window closes: a
-# time-boxed exclusion with the reason and the removal date — the same rule as
-# the CVE waivers in osv-scanner.toml / .grype.yaml. Example (the
-# @opentelemetry 2.11.0 / 0.222.0 releases of 2026-08-31 needed this until
-# 2026-09-07):
+# time-boxed exclusion with the reason and a `Remove after YYYY-MM-DD` line —
+# scripts/check-waivers.sh (`just sec`, CI sast, nightly) fails once that date
+# has passed. Example (the @opentelemetry 2.11.0 / 0.222.0 releases of
+# 2026-08-31 needed this for a week):
 #
 # minimumReleaseAgeExclude:
-#   - '@opentelemetry/core@2.11.0'   # CVE floor; remove after 2026-09-07
+#   # CVE floor, released 2026-08-31. Remove after <release date + 7 days>.
+#   - '@opentelemetry/core@2.11.0'

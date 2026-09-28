@@ -108,8 +108,12 @@ setup-sec:
     mise install semgrep gitleaks osv-scanner hadolint syft grype cosign
 
 # Run all source-side AppSec checks fail-fast
-sec: sec-secrets sec-sast sec-deps sec-iac
+sec: sec-waivers sec-secrets sec-sast sec-deps sec-iac
     @echo "AppSec source checks passed"
+
+# Waivers — fail on an expired `Remove after YYYY-MM-DD` (pnpm excludes, CVE ignores, oasdiff, …)
+sec-waivers:
+    scripts/check-waivers.sh
 
 # Secrets — gitleaks across the working tree + history
 sec-secrets:
