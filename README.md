@@ -535,6 +535,14 @@ from — and a TypeScript type in `@base/contracts` (`TaskCreatedEvent`, plus
 so the two sides cannot drift. Evolve an event additively: new fields
 optional, never remove or retype one.
 
+The same types give a **typed client**: `createTasksClient({ baseUrl })`
+(`@base/contracts`, openapi-fetch over the generated `paths`) — a path, a
+parameter or a body that is not in the contract does not compile, and each
+response is typed by its status. The e2e suite drives the api with it. Inside
+a service, give it `resilientFetch(new ResilientClient(baseUrl, {
+passthrough4xx: true, getRequestId, getRemainingMs: remainingMs }))` as its
+`fetch`: retries, breaker, the request id and the request budget come along.
+
 `just contracts` (`pnpm contracts`) regenerates all of it; the outputs are
 committed, so a reviewer sees the contract diff next to the code diff.
 `just contracts-check` (the `contracts` CI job) fails when the committed

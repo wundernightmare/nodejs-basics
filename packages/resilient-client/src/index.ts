@@ -18,6 +18,7 @@ export type {
 
 // Single-target client
 export { ResilientClient } from "./resilient-client.js";
+export { resilientFetch } from "./resilient-fetch.js";
 export type {
   Logger,
   RetryConfig,

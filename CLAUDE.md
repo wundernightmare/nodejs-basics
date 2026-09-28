@@ -69,7 +69,11 @@ high-signal, easy-to-miss bits.
   `@jsonSchema`) and `packages/contracts/src/{tasksapi,events}.gen.ts` are
   committed outputs (event types: api/scripts/event-types.mjs runs the JSON
   Schemas through openapi-typescript in a 3.1 wrapper — no second
-  generator). Producer and consumer use the same `TaskCreatedEvent`. Change
+  generator). Producer and consumer use the same `TaskCreatedEvent`.
+  `createTasksClient` (openapi-fetch over `paths`) is the typed client — e2e
+  uses it (Playwright resolves @base/* sources via NODE_OPTIONS
+  --conditions=source set in playwright.config.ts); in a service pass
+  `fetch: resilientFetch(resilientClient)` (passthrough4xx: true). Change
   the TypeSpec, run `just contracts`, commit the outputs; `just contracts-check` (CI `contracts` job) fails on stale outputs and
   on an oasdiff breaking change (waivers: `api/oasdiff-breaking.ignore`).
   `api/` (`@base/api-spec`) holds its own TypeScript 6 for openapi-typescript,
