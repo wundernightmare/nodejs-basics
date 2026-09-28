@@ -6,6 +6,8 @@ high-signal, easy-to-miss bits.
 
 ## Build & test
 
+- Fresh clone → `just bootstrap` (mise trust/install, corepack pnpm, frozen
+  install, config.yaml from the example, `just deps` = compose up + migrate).
 - pnpm workspace (`packages/*`, `apps/*`, `e2e`). Workspace-wide:
   `pnpm check` (typecheck + lint + format), `pnpm test`, `pnpm build`, or the
   `just` recipes (`just check` / `just dev` / `just deps`).

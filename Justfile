@@ -29,6 +29,17 @@ default:
 
 # ── Workspace ─────────────────────────────────────────────────────────────────
 
+# A fresh clone to a running `just dev`: toolchain (mise.toml), pnpm (packageManager),
+# dependencies + git hooks (lefthook installs itself), apps/api/config.yaml, deps + schema.
+# Idempotent — rerun it after a pull that moved pins.
+bootstrap:
+    mise trust --quiet && mise install
+    corepack enable && corepack install
+    pnpm install --frozen-lockfile
+    [ -f apps/api/config.yaml ] || cp apps/api/config.example.yaml apps/api/config.yaml
+    just deps
+    @echo "ready — just dev (api :3000, admin :9091) · just dev-worker · just test"
+
 # Install all workspace dependencies
 install:
     pnpm install
