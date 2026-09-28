@@ -1,5 +1,5 @@
 import { ConfigService } from "@nestjs/config";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { meta, testCase } from "@base/testing";
 
@@ -11,6 +11,16 @@ import {
 } from "./valkey-config.builder.js";
 
 const config = (env: Record<string, string>): ConfigService => new ConfigService(env);
+
+// ConfigService.get() reads process.env before its own values: an ambient
+// VALKEY_URL (e.g. `just deps` on other ports) would leak into these cases.
+const ambient = Object.entries(process.env).filter(([k]) => k.startsWith("VALKEY_"));
+beforeAll(() => {
+  for (const [k] of ambient) Reflect.deleteProperty(process.env, k);
+});
+afterAll(() => {
+  for (const [k, v] of ambient) process.env[k] = v;
+});
 
 describe("valkey config builder", () => {
   meta({
