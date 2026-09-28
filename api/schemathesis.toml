@@ -1,0 +1,25 @@
+# Schemathesis configuration for scripts/schemathesis.sh (`just schemathesis`).
+#
+# Any warning fails the run: a new one (an unsupported regex, an unresolvable
+# $ref, a schema the API rejects more often than it should) is a finding.
+warnings = { fail-on = true }
+
+# /tasks/{id}…: ids are server-assigned and every write carries the
+# optimistic-lock version, so generated ids legitimately get 404 and generated
+# versions 409 — that is the contract, not a mismatch. The happy paths are
+# covered by the stateful phase, which chains POST /tasks into GET / PATCH /
+# archive through the links it infers from the responses ("API Links: 9
+# covered / 9"). Pinning a seeded id here instead would override those links.
+[[operations]]
+include-path-regex = "^/tasks/\\{id\\}"
+warnings = { display = [
+  "missing_auth",
+  "base_url_mismatch",
+  "missing_deserializer",
+  "unused_openapi_auth",
+  "unsupported_regex",
+  "method_not_allowed",
+  "constants_extraction",
+  "unmatched_filter",
+  "unresolvable_reference",
+], fail-on = true }
