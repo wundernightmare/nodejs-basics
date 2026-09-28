@@ -172,8 +172,11 @@ high-signal, easy-to-miss bits.
   no-downgrade`, `allowBuilds` (pnpm 11+ fails the install on an unapproved
   build script) and `overrides` (CVE floors on transitive deps); `.npmrc`
   keeps `min-release-age=7` in step. A needed-now release goes into
-  `minimumReleaseAgeExclude` with a "remove after <date>" comment, like every
-  other waiver.
+  `minimumReleaseAgeExclude` with a `Remove after YYYY-MM-DD` line, like every
+  dated waiver: `scripts/check-waivers.sh` (`just sec`, CI `sast`, nightly
+  appsec run) fails once the date has passed. The docker workflow also runs
+  weekly with `pull: true`, so a stale or newly vulnerable base image turns
+  it red without a commit.
 - **Signing is local-only**: `just docker-sign` / `docker-verify` use cosign in
   key mode with `--tlog-upload=false` (`COSIGN_PRIVATE_KEY` from `.env`);
   CI builds, SBOMs (syft, 7-day artifact) and scans but does not push or sign.

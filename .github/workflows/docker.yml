@@ -5,6 +5,11 @@ on:
     branches: [master]
     tags: ["v*"]
   pull_request:
+  # Weekly on master: the base images (node:24-trixie, distroless) move under
+  # an unchanged Dockerfile, and grype's database grows daily. A red run here
+  # means "rebuild / bump the base", not "someone broke the build".
+  schedule:
+    - cron: "47 3 * * 1"
 
 # Read-only until the push step below is enabled — then add `packages: write`
 # to *that* job only (never at workflow level for pull requests).
@@ -65,6 +70,9 @@ jobs:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
           load: true
+          # Re-resolve the base tags every run — a cached base would hide a
+          # patched (or a newly vulnerable) upstream image.
+          pull: true
           tags: nodejs-basics-${{ matrix.app }}:ci
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}

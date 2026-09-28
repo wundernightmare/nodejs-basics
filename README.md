@@ -93,7 +93,7 @@ just cov-all                       # all three layers → one merged coverage nu
 just allure-report                 # one HTML report from every layer's allure-results/
 just bench-tasks smoke             # k6 load test (needs the stack up)
 just setup-sec                     # one-time: install the AppSec toolchain (mise)
-just sec                           # gitleaks + semgrep + osv-scanner + hadolint
+just sec                           # expired waivers + gitleaks + semgrep + osv-scanner + hadolint
 just docker-build api              # build an image; docker-scan-ci api → grype --fail-on high
 ```
 
@@ -583,11 +583,12 @@ versions from pinned container images (see "Pipelines" below).
 
 | Recipe             | Tool        | Config             | Covers                                        |
 |--------------------|-------------|--------------------|-----------------------------------------------|
+| `just sec-waivers` | sh + awk    | —                  | no `Remove after YYYY-MM-DD` date has passed  |
 | `just sec-secrets` | gitleaks    | `.gitleaks.toml`   | secrets in tree + history                     |
 | `just sec-sast`    | semgrep     | `.semgrepignore`   | `p/owasp-top-ten` + `p/typescript` packs      |
 | `just sec-deps`    | osv-scanner | `osv-scanner.toml` | OSV.dev advisories over `pnpm-lock.yaml`      |
 | `just sec-iac`     | hadolint    | `.hadolint.yaml`   | every `apps/*/Dockerfile`                     |
-| `just sec`         | —           | —                  | runs the four source-side checks fail-fast    |
+| `just sec`         | —           | —                  | all of the above, fail-fast                   |
 
 Container side (against a locally-built image):
 
@@ -613,10 +614,16 @@ release-time step.
 | `allowBuilds`              | the only postinstall scripts allowed to run (pnpm 11+ fails the install otherwise)      |
 | `overrides`                | caret floors: CVE fixes on transitive deps + one copy of cross-package types            |
 | `peerDependencyRules`      | peers declared older than what we run (Sentry / nestjs-zod vs NestJS 12), checked to work |
-| `minimumReleaseAgeExclude` | the escape hatch — time-boxed, with a "remove after <date>" comment                     |
+| `minimumReleaseAgeExclude` | the escape hatch — time-boxed, with a `Remove after YYYY-MM-DD` line                    |
 
 Waivers that cannot be pinned out go in `osv-scanner.toml` / `.grype.yaml`,
-each with the reason and a removal trigger.
+each with the reason and a removal trigger. A dated trigger is written
+`Remove after YYYY-MM-DD` anywhere in the repo, and `scripts/check-waivers.sh`
+(`just sec-waivers`, part of `just sec`; the CI `sast` job) fails once the date
+has passed (`TODAY=2026-12-01 scripts/check-waivers.sh` previews). Both the
+appsec workflow (nightly) and the docker workflow (weekly, base images
+re-pulled) also run on a schedule — advisories and expiry dates do not need a
+commit to arrive.
 
 ### Pipelines
 
@@ -672,7 +679,7 @@ block a change:
 | `just build-watch <app>` | rebuild an app bundle on change, no process |
 | `just test-watch[-integration]` | vitest watch, unit / integration project |
 | `just setup-sec`   | install the AppSec toolchain (mise)     |
-| `just sec`         | gitleaks + semgrep + osv-scanner + hadolint |
+| `just sec`         | expired waivers + gitleaks + semgrep + osv-scanner + hadolint |
 | `just docker-build <app>` | build `nodejs-basics-<app>:dev`  |
 | `just docker-scan[-ci] <app>` | syft SBOM + grype (`-ci`: fail on HIGH+) |
 | `just docker-sign\|verify <app> <tag>` | cosign key-mode sign / offline verify |

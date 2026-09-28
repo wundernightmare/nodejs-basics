@@ -395,6 +395,9 @@ sast:
     entrypoint: [""]
   before_script: []
   script:
+    # Expired `Remove after YYYY-MM-DD` waivers fail the job — schedule a
+    # nightly pipeline so they (and new advisories) surface without a commit.
+    - sh scripts/check-waivers.sh
     # `semgrep scan`, not `semgrep ci`: no call home to semgrep.dev, no metrics.
     - set -- ; for c in $SEMGREP_CONFIG; do set -- "$@" --config "$c"; done
     - semgrep scan "$@" --error --metrics=off

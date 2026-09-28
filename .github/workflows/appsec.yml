@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Nightly on master too: a new advisory against an unchanged lockfile, or a
+  # dated waiver running out, has no commit to trigger a run.
+  schedule:
+    - cron: "37 3 * * *"
 
 permissions:
   contents: read
@@ -70,6 +74,8 @@ jobs:
       SEMGREP_CONFIG: ${{ vars.SEMGREP_CONFIG || 'p/owasp-top-ten p/typescript' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Expired `Remove after YYYY-MM-DD` waivers fail the job (POSIX sh + awk).
+      - run: scripts/check-waivers.sh
       # `semgrep scan`, not `semgrep ci`: no call home to semgrep.dev, no metrics.
       - run: |
           set -- ; for c in $SEMGREP_CONFIG; do set -- "$@" --config "$c"; done
