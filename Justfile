@@ -18,7 +18,10 @@ OSV_SCANNER_FLAGS := env("OSV_SCANNER_FLAGS", "")
 # Proxy settings forwarded into every `docker build`. A value-less --build-arg
 # takes the variable from the environment and is skipped when unset (these are
 # Docker's predefined args, so the Dockerfiles need no ARG for them).
-DOCKER_BUILD_ARGS := "--build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY"
+# `--load`: with a buildx docker-container builder as the default, a plain
+# `docker build` leaves the result in the build cache only, and the scan /
+# sign / stack recipes would then pick up a stale local image.
+DOCKER_BUILD_ARGS := "--load --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY"
 
 # List available recipes
 default:

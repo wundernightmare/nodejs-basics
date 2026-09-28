@@ -14,7 +14,7 @@
 # changes.
 
 [tools]
-node = "24.20"
+node = "24.21"
 k6   = "2.2.0"
 
 # JRE for allure-commandline (`just allure-report`)
@@ -22,26 +22,26 @@ java = "temurin-25"
 
 # AppSec — pinned for reproducibility. Bump here, then re-run `just setup-sec`.
 # Each `just sec-*` recipe invokes its tool via `mise exec --`.
-semgrep     = "1.175.0"
+semgrep     = "1.177.0"
 gitleaks    = "8.30.1"
-osv-scanner = "2.5.1"
+osv-scanner = "2.6.0"
 hadolint    = "2.15.1"
 
 # Container CVE / SBOM — used by `just docker-scan` / `docker-scan-ci`.
-syft  = "1.51.1"
-grype = "0.118.0"
+syft  = "1.52.0"
+grype = "0.119.0"
 
 # Supply-chain signing — cosign in key-mode with `--tlog-upload=false`.
 cosign = "3.1.3"
 
 # Contracts — oasdiff diffs the OpenAPI document against master (`just contracts-check`).
-"ubi:oasdiff/oasdiff" = "1.31.0"
+"github:oasdiff/oasdiff" = "1.32.1"
 
 [env]
 # Schemathesis is not a mise tool but a pinned image (scripts/schemathesis.sh
 # runs docker.io/schemathesis/schemathesis:<version>); pinned here so
 # scripts/mise-pins.sh publishes it like every other version.
-SCHEMATHESIS_VERSION = "4.27.0"
+SCHEMATHESIS_VERSION = "4.27.5"
 # Load the (gitignored) .env so the mise shims see the same proxy / registry /
 # scanner-mirror settings `just` loads via `set dotenv-load`. Silently skipped
 # when the file is absent — an open-network clone needs no .env at all. Every

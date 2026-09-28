@@ -9,10 +9,10 @@
 #
 # Strategy
 # ────────
-#   1. builder: full workspace install (incl dev deps) → build every package →
-#      `pnpm deploy` a self-contained, prod-only bundle of @base/api (its dist
-#      plus the resolved workspace + npm deps, no dev tooling).
-#   2. runtime: distroless Node — just node + the bundle.
+#   1. builder: full workspace install (incl dev deps) → `pnpm build` (tsc for
+#      the packages, Vite for the app bundle dist/main.js).
+#   2. runtime: distroless Node (Debian 13) + the built workspace — the bundle
+#      imports its externals by path relative to dist/, so the tree ships whole.
 #
 # AppSec properties of the final image
 # ─────────────────────────────────────
@@ -34,40 +34,40 @@
 ARG NODE_VERSION=24
 
 # ── Stage 1 – builder ────────────────────────────────────────────────────────
-FROM node:${NODE_VERSION}-bookworm AS builder
+FROM node:${NODE_VERSION}-trixie AS builder
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
-# Pin pnpm to the version this lockfile was written with; corepack would
-# otherwise pull the latest major and reject the lockfile. Node 26 no longer
-# ships corepack, so install it first.
-RUN npm install -g corepack@latest \
-    && corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
-
 COPY . .
+# pnpm comes from `packageManager` in package.json (corepack reads it), so the
+# image, CI and local installs cannot drift. A current corepack first: the one
+# bundled with Node lags behind the npm registry's signing keys.
+RUN npm install -g corepack@latest && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 # Build every package + the app (workspace packages emit their dist in place).
 RUN pnpm build
-# Strip the dev-tool native binaries that ship via devDependencies. These are Go
-# binaries — tsgo (typecheck), oxlint's tsgolint, lefthook (git hooks) — never
-# invoked by the running service (the container runs `node dist/main.js`),
-# but grype flags their bundled, older Go stdlib. Removing the .pnpm packages
+# Strip the dev tools that ship via devDependencies: Go binaries — tsc
+# (TypeScript 7 is native), oxlint's tsgolint, lefthook (git hooks) — and
+# allure-commandline's Java jars. The running service (`node dist/main.js`)
+# never invokes them, but grype flags their bundled Go stdlib / jar deps. Removing the .pnpm packages
 # leaves every runtime dependency and the emitted dist untouched, so the image
 # still boots; it just no longer carries unreachable dev-tool CVEs.
 # (A full pnpm-workspace prod prune is unreliable in Docker — `pnpm prune --prod`
 # drops prod deps it can't see from the root manifest, and `pnpm install --prod`
 # is a no-op once the dev tree exists — so we target the offenders directly.)
 RUN rm -rf node_modules/.pnpm/@oxlint-tsgolint+linux-* \
+           node_modules/.pnpm/@typescript+typescript-linux-* \
            node_modules/.pnpm/lefthook-linux-* \
-           node_modules/.pnpm/lefthook-*
+           node_modules/.pnpm/lefthook-* \
+           node_modules/.pnpm/allure-commandline@*
 
 # ── Stage 2 – runtime ────────────────────────────────────────────────────────
 # distroless/nodejs ships node + glibc/libstdc++ — no shell, no package manager.
 # The whole built workspace ships so the api's @base/* symlinks resolve to their
 # in-place dist; the native @confluentinc/kafka-javascript addon (built on the
 # matching glibc) loads against distroless' libstdc++.
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-api" \
       org.opencontainers.image.description="Reference NestJS API over Postgres + Valkey + Kafka (nodejs-basics)" \

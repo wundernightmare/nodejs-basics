@@ -22,9 +22,10 @@ high-signal, easy-to-miss bits.
   Packages still emit `dist/` with tsc for their declarations and the
   `import` condition. No Nest CLI, no nest-cli.json.
 - **Watch mode**: `just dev` / `just dev-worker` = `scripts/dev.mjs`: `vite
-  build --watch` + `node --watch-path=dist dist/main.js` — a save anywhere in
-  the app or a bundled package rebuilds in ~70 ms and restarts the app through
-  its graceful shutdown; a broken save keeps the last good build running.
+  build --watch`, and on each finished build ("built in") the app is restarted
+  through its graceful shutdown (not `node --watch-path`, which restarts on a
+  half-written bundle) — a save anywhere in the app or a bundled package
+  rebuilds in ~70 ms; a broken save keeps the last good build running.
   `just test-watch` / `test-watch-integration` for vitest.
 - **Lint/format** are oxlint + oxfmt (Rust-based, fast). Each app/e2e package
   needs its own `.oxlintrc.json` extending the root — oxlint's `typeAware`
@@ -67,7 +68,9 @@ high-signal, easy-to-miss bits.
   `api/openapi3/tasks.openapi.yaml` and `packages/contracts/src/tasksapi.gen.ts`
   are committed outputs. Change the TypeSpec, run `just contracts`, commit all
   three; `just contracts-check` (CI `contracts` job) fails on stale outputs and
-  on an oasdiff breaking change (waivers: `api/oasdiff-breaking.ignore`). The
+  on an oasdiff breaking change (waivers: `api/oasdiff-breaking.ignore`).
+  `api/` (`@base/api-spec`) holds its own TypeScript 6 for openapi-typescript,
+  which prints through the compiler API TypeScript 7 no longer ships. The
   app's zod DTOs mirror the document (`.strict()` ↔ sealed schemas, NUL
   pattern, code-point lengths, UUID `Idempotency-Key`); every error is a
   problem+json `Problem`, 405 (+`Allow`) for a known path with another method.
@@ -80,7 +83,7 @@ high-signal, easy-to-miss bits.
   `@base/testing`) validates every response of the real app in-process.
 - AppSec: `just sec` (gitleaks + semgrep + osv-scanner + hadolint) +
   `just docker-scan-ci <app>` (grype `--fail-on high`). Transitive CVEs are
-  pinned out via `overrides` in `pnpm-workspace.yaml` (pnpm 11 no longer reads
+  pinned out via `overrides` in `pnpm-workspace.yaml` (pnpm 11+ no longer reads
   the `pnpm` field in package.json); waivers go in `osv-scanner.toml` /
   `.grype.yaml` / `minimumReleaseAgeExclude` with a documented removal trigger.
 
@@ -115,8 +118,9 @@ high-signal, easy-to-miss bits.
 - **BullMQ connections** must NOT set `commandTimeout` (its blocking poll
   legitimately outlives any per-command timeout) — see `@base/cache`
   `toBullMqOptions`.
-- **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs24-debian12`). The
-  build runs `pnpm build` (tsc for packages, Vite for the apps) and copies the
+- **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs24-debian13`;
+  builder `node:24-trixie`, the same glibc line for the native Kafka addon;
+  pnpm via `corepack install` from `packageManager`). The build runs `pnpm build` (tsc for packages, Vite for the apps) and copies the
   whole workspace — the app bundle imports its externals by path relative to
   dist/, so the tree must move as one; `.dockerignore` must exclude
   `*.tsbuildinfo` (stale incremental state makes tsc skip emitting `dist`), and
@@ -150,7 +154,7 @@ high-signal, easy-to-miss bits.
   job (`p/owasp-top-ten`) blocks both, in every workflow file.
 - **pnpm supply-chain policy** lives in `pnpm-workspace.yaml`:
   `minimumReleaseAge: 10080` (7 days), `blockExoticSubdeps`, `trustPolicy:
-  no-downgrade`, `allowBuilds` (pnpm 11 fails the install on an unapproved
+  no-downgrade`, `allowBuilds` (pnpm 11+ fails the install on an unapproved
   build script) and `overrides` (CVE floors on transitive deps); `.npmrc`
   keeps `min-release-age=7` in step. A needed-now release goes into
   `minimumReleaseAgeExclude` with a "remove after <date>" comment, like every

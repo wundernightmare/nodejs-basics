@@ -18,7 +18,7 @@ name: nodejs-basics-deps
 
 services:
   postgres:
-    image: postgres:18
+    image: ${DOCKER_HUB:-docker.io}/library/postgres:18
     container_name: nodejs-basics-postgres
     restart: unless-stopped
     environment:
@@ -44,7 +44,7 @@ services:
       retries: 5
 
   valkey:
-    image: valkey/valkey:9.0
+    image: ${DOCKER_HUB:-docker.io}/valkey/valkey:9.0
     container_name: nodejs-basics-valkey
     restart: unless-stopped
     command:
@@ -64,7 +64,7 @@ services:
       retries: 5
 
   redpanda:
-    image: redpandadata/redpanda:v26.1.1
+    image: ${DOCKER_HUB:-docker.io}/redpandadata/redpanda:v26.2.3
     container_name: nodejs-basics-redpanda
     restart: unless-stopped
     command:

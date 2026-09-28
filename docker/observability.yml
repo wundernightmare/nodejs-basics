@@ -1,4 +1,4 @@
-# Observability stack: Jaeger (traces), Prometheus + VictoriaMetrics (metrics).
+# Observability stack: OTel Collector → Jaeger v2 (traces), Prometheus (metrics).
 #
 # Attaches to the deps network as `external: true`. Bring `deps.yml` up first.
 #
@@ -14,12 +14,12 @@ name: nodejs-basics-obs
 
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.117.0
+    image: ${DOCKER_HUB:-docker.io}/otel/opentelemetry-collector-contrib:0.161.0
     container_name: nodejs-basics-otelcol
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
-      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro,z   # z: SELinux label (Fedora/RHEL), no-op elsewhere
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
@@ -27,19 +27,19 @@ services:
       - deps
 
   jaeger:
-    image: jaegertracing/all-in-one:1.62
+    # Jaeger v2 (the 1.x all-in-one image is end-of-life): its default
+    # all-in-one config takes OTLP on 4317/4318 inside the network, which is
+    # where the collector exports; only the UI is published.
+    image: ${DOCKER_HUB:-docker.io}/jaegertracing/jaeger:2.21.0
     container_name: nodejs-basics-jaeger
     restart: unless-stopped
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686" # UI
-      - "14250:14250" # gRPC ingest from collector
     networks:
       - deps
 
   prometheus:
-    image: prom/prometheus:v3.0.1
+    image: ${DOCKER_HUB:-docker.io}/prom/prometheus:v3.14.0
     container_name: nodejs-basics-prometheus
     restart: unless-stopped
     command:
@@ -48,7 +48,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - prometheus_data:/prometheus
     networks:
       - deps

@@ -17,27 +17,28 @@
 
 ARG NODE_VERSION=24
 
-FROM node:${NODE_VERSION}-bookworm AS builder
+FROM node:${NODE_VERSION}-trixie AS builder
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
-# Node 26 no longer ships corepack, so install it before pinning pnpm.
-RUN npm install -g corepack@latest \
-    && corepack enable && corepack prepare pnpm@11.25.0 --activate
 WORKDIR /repo
 COPY . .
+# pnpm from `packageManager` in package.json — see apps/api/Dockerfile.
+RUN npm install -g corepack@latest && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 RUN pnpm build
-# Strip the dev-tool native binaries that ship via devDependencies — Go binaries
-# (tsgo, oxlint's tsgolint, lefthook) never invoked by the running worker, but
-# grype flags their bundled Go stdlib. Every runtime dep + the emitted dist is
+# Strip the dev tools that ship via devDependencies — Go binaries (TypeScript
+# 7's tsc, oxlint's tsgolint, lefthook) and allure-commandline's jars — never
+# invoked by the running worker, but grype flags their bundled deps. Every runtime dep + the emitted dist is
 # untouched, so the image still boots. See apps/api/Dockerfile for why a full
 # pnpm-workspace prune is unreliable here.
 RUN rm -rf node_modules/.pnpm/@oxlint-tsgolint+linux-* \
+           node_modules/.pnpm/@typescript+typescript-linux-* \
            node_modules/.pnpm/lefthook-linux-* \
-           node_modules/.pnpm/lefthook-*
+           node_modules/.pnpm/lefthook-* \
+           node_modules/.pnpm/allure-commandline@*
 
-FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-worker" \
       org.opencontainers.image.description="Kafka consumer + BullMQ worker draining tasks.events (nodejs-basics)" \
