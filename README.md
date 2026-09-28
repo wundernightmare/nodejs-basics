@@ -47,11 +47,11 @@ packages/
 
 ## Quick start
 
+Needs [mise](https://mise.jdx.dev), [just](https://just.systems) and Docker (or
+Podman) — everything else is pinned in the repo.
+
 ```sh
-pnpm install
-pnpm lefthook install              # one-time git hooks setup
-just deps                          # postgres + valkey + redpanda
-cp apps/api/config.example.yaml apps/api/config.yaml
+just bootstrap                     # toolchain, pnpm, deps, hooks, config.yaml, deps + schema
 just dev                           # apps/api on :3000, admin :9091 — rebuilds + restarts on every save
 just dev-worker                    # apps/worker, admin :9093 (another terminal)
 ```
