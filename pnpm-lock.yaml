@@ -540,6 +540,10 @@ importers:
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
 
   packages/database:
     dependencies:

@@ -6,9 +6,22 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node"],
-    "noEmit": true
+    "types": [
+      "node"
+    ],
+    "noEmit": true,
+    "paths": {
+      "@base/contracts": [
+        "../packages/contracts/src/index.ts"
+      ]
+    }
   },
-  "include": ["**/*.ts"],
-  "exclude": ["node_modules", "playwright-report", "test-results"]
+  "include": [
+    "**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "playwright-report",
+    "test-results"
+  ]
 }

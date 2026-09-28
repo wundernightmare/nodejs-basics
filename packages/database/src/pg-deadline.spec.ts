@@ -12,6 +12,14 @@ function guardedClient(reply: unknown = { rows: [] }): { client: PoolClient; sen
   const client = {
     query(...args: unknown[]): unknown {
       sent.push(args[0]);
+      const cb = args.find((a) => typeof a === "function") as
+        | ((e: unknown, r: unknown) => void)
+        | undefined;
+      if (cb !== undefined) {
+        if (reply instanceof Error) cb(reply, undefined);
+        else cb(null, reply);
+        return undefined;
+      }
       return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
     },
   } as unknown as PoolClient;
@@ -50,6 +58,30 @@ describe("pg deadline", () => {
       expect(client.query("SELECT pg_sleep(9)")).rejects.toThrow(DeadlineExceededError),
     );
     await expect(client.query("SELECT pg_sleep(9)")).rejects.toBe(canceled);
+  });
+
+  it("applies the same rules to the callback form and to query config objects", async () => {
+    await testCase("NB-615", "pg's callback API and { text } configs are guarded too");
+    type Cb = (e: unknown, r?: unknown) => void;
+    const callbackQuery = (c: PoolClient, q: unknown): Promise<unknown> =>
+      new Promise((resolve) => {
+        (c.query as unknown as (q: unknown, cb: Cb) => void)(q, (e) => {
+          resolve(e);
+        });
+      });
+
+    const { client, sent } = guardedClient();
+    const spent = await withDeadline(0, () => callbackQuery(client, "SELECT 1"));
+    expect(spent).toBeInstanceOf(DeadlineExceededError);
+    await withDeadline(0, () => callbackQuery(client, { text: "ROLLBACK" }));
+    expect(sent).toEqual([{ text: "ROLLBACK" }]);
+
+    const canceled = Object.assign(new Error("canceled"), { code: "57014" });
+    const failing = guardedClient(canceled).client;
+    expect(await withDeadline(5_000, () => callbackQuery(failing, "SELECT 1"))).toBeInstanceOf(
+      DeadlineExceededError,
+    );
+    expect(await withDeadline(5_000, () => callbackQuery(client, "SELECT 2"))).toBeNull();
   });
 
   it("limits a transaction to the rest of the budget with SET LOCAL statement_timeout", async () => {
