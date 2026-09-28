@@ -649,3 +649,54 @@ describe("ResilientClient", () => {
     await localAgent.close();
   });
 });
+
+describe("ResilientClient — request deadline (getRemainingMs)", () => {
+  it("sends the remaining budget as x-request-timeout-ms", async () => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    const pool = agent.get(BASE) as MockPool;
+    let seen: string | undefined;
+    pool
+      .intercept({
+        path: "/q",
+        method: "GET",
+        headers: (h) => {
+          seen = h["x-request-timeout-ms"];
+          return true;
+        },
+      })
+      .reply(200, "ok");
+    const client = new ResilientClient(BASE, { getRemainingMs: () => 1_500, _dispatcher: pool });
+    expect((await client.request({ path: "/q", method: "GET" })).statusCode).toBe(200);
+    expect(Number(seen)).toBeGreaterThan(0);
+    expect(Number(seen)).toBeLessThanOrEqual(1_500);
+    await agent.close();
+  });
+
+  it("fails fast with deadline_exceeded when the budget is spent — nothing is sent, nothing retried", async () => {
+    const dispatcher = { request: vi.fn() };
+    const client = new ResilientClient(BASE, {
+      getRemainingMs: () => 0,
+      _dispatcher: dispatcher as never,
+    });
+    await expect(client.request({ path: "/q", method: "GET" })).rejects.toMatchObject({
+      errorType: "deadline_exceeded",
+      kind: "fatal",
+    });
+    expect(dispatcher.request).not.toHaveBeenCalled();
+  });
+
+  it("cancels an attempt that outlives the budget", async () => {
+    const agent = new MockAgent();
+    agent.disableNetConnect();
+    const pool = agent.get(BASE) as MockPool;
+    pool.intercept({ path: "/slow", method: "GET" }).reply(200, "late").delay(2_000);
+    const client = new ResilientClient(BASE, { getRemainingMs: () => 50, _dispatcher: pool });
+    const started = Date.now();
+    await expect(client.request({ path: "/slow", method: "GET" })).rejects.toMatchObject({
+      errorType: "deadline_exceeded",
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await agent.close();
+  });
+});

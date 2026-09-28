@@ -240,6 +240,26 @@ Wire in your AppModule:
 { provide: UNIT_OF_WORK, useClass: PrismaUnitOfWork }
 ```
 
+### Limits and deadlines
+
+Every api request has a budget, `HTTP_REQUEST_TIMEOUT_MS` (10 s): receiving
+the request is bounded by it, and so is every dependency call made while
+handling it — the deadline lives in AsyncLocalStorage (`@base/common`
+`withDeadline` / `remainingMs` / `callBudgetMs`) and each client takes what
+is left of it:
+
+| Dependency | How the budget applies |
+|---|---|
+| Postgres | nothing is sent once it is spent (a `ROLLBACK` always is); a unit of work sets `SET LOCAL statement_timeout` to the rest, so the **server** cancels a statement that would outlive the request |
+| Valkey | rejected unsent once spent; the request stops waiting when it runs out |
+| HTTP (`resilient-client`, `getRemainingMs`) | each attempt is aborted at the deadline and sends `x-request-timeout-ms` downstream; spent → `deadline_exceeded`, never retried |
+
+A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
+caller can ask for less with `x-request-timeout-ms` (never more), which is
+also how a budget crosses services. Bodies over `HTTP_BODY_LIMIT_BYTES`
+(1 MiB) are a **413** problem. Both statuses are in the contract. Rate
+limiting is left to the gateway / ingress in front of the service.
+
 ### Outbox
 
 An event that must not be lost is written in the same transaction as the

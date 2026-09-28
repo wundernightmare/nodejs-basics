@@ -27,6 +27,7 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "@base/common": "workspace:*",
     "@base/resilience": "workspace:*",
     "@base/resilient-client": "workspace:*",
     "@opentelemetry/api": "1.9.1",

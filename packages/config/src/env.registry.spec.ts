@@ -47,6 +47,7 @@ const LITERAL_READS = [
   /\bconfig\.get(?:OrThrow)?(?:<[^>]*>)?\(\s*"([A-Z][A-Z0-9_]+)"/gu,
   /\bprocess\.env\[\s*"([A-Z][A-Z0-9_]+)"\s*\]/gu,
   /\bprocess\.env\.([A-Z][A-Z0-9_]+)\b/gu,
+  /\benvInt\(\s*"([A-Z][A-Z0-9_]+)"/gu,
 ];
 
 /** `buildRetryPolicy(config, "DATABASE")` reads DATABASE_RETRY_*; the suffixes come from the builders. */

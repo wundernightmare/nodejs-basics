@@ -151,10 +151,16 @@ model IdempotencyKey {
   idempotencyKey?: string;
 }
 
+// Limits every operation shares (apps/api app.ts): a body over
+// HTTP_BODY_LIMIT_BYTES is a 413, a request whose budget
+// (HTTP_REQUEST_TIMEOUT_MS, or a shorter x-request-timeout-ms) runs out in a
+// dependency a 504.
+
 @route("/tasks")
 interface TasksOps {
   /**
-   * Create a task. Publishes a `task.created` event to Kafka best-effort.
+   * Create a task. Its `task.created` event is written in the same
+   * transaction (outbox) and reaches Kafka shortly after.
    * 409: the Idempotency-Key is in flight or was used for a different request.
    */
   @post
@@ -166,7 +172,9 @@ interface TasksOps {
         @body task: Task;
       }
     | ProblemResponse<400>
-    | ProblemResponse<409>;
+    | ProblemResponse<409>
+    | ProblemResponse<413>
+    | ProblemResponse<504>;
 
   /**
    * List tasks, newest first, one page at a time. The query is closed like
@@ -178,11 +186,11 @@ interface TasksOps {
     @query @minValue(0) offset?: int32 = 0,
     /** Page size; the server default (TASK_LIST_PAGE_SIZE, 50) when absent. */
     @query @minValue(1) @maxValue(1000) limit?: int32,
-  ): TaskListPage | ProblemResponse<400>;
+  ): TaskListPage | ProblemResponse<400> | ProblemResponse<504>;
 
   /** Fetch one task. */
   @get
-  get(@path id: TaskId): Task | ProblemResponse<404>;
+  get(@path id: TaskId): Task | ProblemResponse<404> | ProblemResponse<504>;
 
   /** Change title and/or description with optimistic locking. */
   @patch(#{ implicitOptionality: false })
@@ -190,7 +198,9 @@ interface TasksOps {
     | Task
     | ProblemResponse<400>
     | ProblemResponse<404>
-    | ProblemResponse<409>;
+    | ProblemResponse<409>
+    | ProblemResponse<413>
+    | ProblemResponse<504>;
 
   /** Archive a task (terminal: archiving an archived task is a 409 problem). */
   @post
@@ -199,5 +209,7 @@ interface TasksOps {
     | Task
     | ProblemResponse<400>
     | ProblemResponse<404>
-    | ProblemResponse<409>;
+    | ProblemResponse<409>
+    | ProblemResponse<413>
+    | ProblemResponse<504>;
 }

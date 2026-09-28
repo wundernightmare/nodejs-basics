@@ -56,6 +56,17 @@ export class OutboundError extends Error {
     );
   }
 
+  /** The caller's budget (getRemainingMs) ran out — fatal: a retry cannot fit either. */
+  static deadlineExceeded(target: string): OutboundError {
+    return new OutboundError(
+      "fatal",
+      "deadline_exceeded",
+      `Deadline exceeded: ${target}`,
+      undefined,
+      target,
+    );
+  }
+
   static retriesExhausted(target: string, lastStatus: number): OutboundError {
     return new OutboundError(
       "transient",

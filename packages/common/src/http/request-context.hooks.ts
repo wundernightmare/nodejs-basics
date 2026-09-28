@@ -22,6 +22,7 @@ import type { IncomingMessage } from "node:http";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { parseTimeoutMs, REQUEST_TIMEOUT_HEADER, withDeadline } from "../utils/deadline.js";
 import { generateRequestId } from "../utils/nanoid.js";
 import {
   DEBUG_LOGGING_HEADER,
@@ -56,6 +57,13 @@ export interface RequestContextOptions {
    * request. Empty/undefined disables the feature (no header is inspected).
    */
   debugToken?: string;
+  /**
+   * The budget of one request in ms (HTTP_REQUEST_TIMEOUT_MS): every outbound
+   * call made while handling it gets at most what is left (utils/deadline.ts).
+   * A caller's `x-request-timeout-ms` can shorten it, never extend it.
+   * Unset → no deadline.
+   */
+  requestTimeoutMs?: number;
 }
 
 export function registerRequestContext(
@@ -63,24 +71,32 @@ export function registerRequestContext(
   options: RequestContextOptions = {},
 ): void {
   const debugToken = options.debugToken ?? "";
+  const budget = options.requestTimeoutMs;
 
   fastify.addHook("onRequest", (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
     void reply.header(REQUEST_ID_HEADER, req.id);
-    requestIdStorage.run(req.id, () => {
-      if (debugToken === "") {
-        done();
-        return;
-      }
-      const raw = req.headers[DEBUG_TOKEN_HEADER];
-      const got = Array.isArray(raw) ? raw[0] : raw;
-      if (!secretEquals(got, debugToken)) {
-        done();
-        return;
-      }
-      void reply.header(DEBUG_LOGGING_HEADER, "on");
-      debugLoggingStorage.run(true, () => {
-        done();
+    const asked = parseTimeoutMs(req.headers[REQUEST_TIMEOUT_HEADER]);
+    const timeoutMs =
+      budget === undefined ? asked : asked === undefined ? budget : Math.min(asked, budget);
+    const run = (): void => {
+      requestIdStorage.run(req.id, () => {
+        if (debugToken === "") {
+          done();
+          return;
+        }
+        const raw = req.headers[DEBUG_TOKEN_HEADER];
+        const got = Array.isArray(raw) ? raw[0] : raw;
+        if (!secretEquals(got, debugToken)) {
+          done();
+          return;
+        }
+        void reply.header(DEBUG_LOGGING_HEADER, "on");
+        debugLoggingStorage.run(true, () => {
+          done();
+        });
       });
-    });
+    };
+    if (timeoutMs === undefined) run();
+    else withDeadline(timeoutMs, run);
   });
 }
