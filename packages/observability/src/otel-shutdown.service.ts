@@ -34,9 +34,11 @@ export class OtelShutdownService implements OnApplicationShutdown {
     this.logger.info({ "process.signal": signal ?? null }, "Flushing telemetry on shutdown");
 
     const { tracerProvider, meterProvider, stopPyroscope } = this.handle;
+    // `finally`: a provider is shut down even when its flush fails (collector
+    // unreachable) — the flush error is still reported below.
     const results = await Promise.allSettled([
-      withShutdownTimeout(tracerProvider.forceFlush().then(() => tracerProvider.shutdown())),
-      withShutdownTimeout(meterProvider.forceFlush().then(() => meterProvider.shutdown())),
+      withShutdownTimeout(tracerProvider.forceFlush().finally(() => tracerProvider.shutdown())),
+      withShutdownTimeout(meterProvider.forceFlush().finally(() => meterProvider.shutdown())),
       withShutdownTimeout(stopPyroscope()),
     ]);
 

@@ -52,6 +52,7 @@
     "fastify": "5.x"
   },
   "devDependencies": {
+    "@base/testing": "workspace:*",
     "@types/pg": "8.23.1"
   }
 }
