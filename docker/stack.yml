@@ -26,6 +26,9 @@ services:
       DATABASE_URL: postgresql://app:app@postgres:5432/app
       VALKEY_URL: redis://valkey:6379
       KAFKA_BROKERS: redpanda:29092
+      # Traces go to the collector of `just obs` (same network); when it is not
+      # running the exporter drops them quietly.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       # Runtime-debugging tokens, passed through from the host env; unset by
       # default = admin mutations open (auth=off), X-Debug-Token disabled.
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
@@ -51,6 +54,7 @@ services:
       KAFKA_BROKERS: redpanda:29092
       # Catch events produced before the worker joined the group (demo/e2e).
       KAFKA_CONSUMER_AUTO_OFFSET_RESET: earliest
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       DEBUG_TOKEN: ${DEBUG_TOKEN:-}
     ports:

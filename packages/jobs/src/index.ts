@@ -1,6 +1,7 @@
 export { setupBullBoard } from "./bull-board.setup.js";
 export { createBullMQConnection } from "./bullmq-connection.factory.js";
 export { BullMQMetricsService } from "./bullmq-metrics.service.js";
+export { addTraced, traceJob } from "./job-tracing.js";
 export {
   BULLMQ_CONNECTION,
   bullmqQueueToken,

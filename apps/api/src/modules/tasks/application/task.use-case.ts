@@ -83,10 +83,11 @@ export class TaskUseCase {
       createdAt: task.createdAt.toISOString(),
     };
     // The request id travels as a record header so the worker's log lines for
-    // this event correlate with the API request that produced it.
+    // this event correlate with the API request that produced it; send() adds
+    // the trace context next to it, so the worker's spans join this trace.
     const requestId = getRequestId();
     try {
-      await this.kafka.producer.send({
+      await this.kafka.send({
         topic: TASK_EVENTS_TOPIC,
         messages: [
           {

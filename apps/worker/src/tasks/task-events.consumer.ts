@@ -15,8 +15,8 @@ import { ConfigService } from "@nestjs/config";
 import { metrics } from "@opentelemetry/api";
 import { type Queue } from "bullmq";
 
-import { bullmqQueueToken } from "@base/jobs";
-import { buildConsumerConfig, kafkaLogger } from "@base/kafka";
+import { addTraced, bullmqQueueToken } from "@base/jobs";
+import { buildConsumerConfig, kafkaLogger, traceKafkaMessage } from "@base/kafka";
 import {
   AppLogger,
   ecsError,
@@ -86,18 +86,19 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       await this.consumer.connect();
       await this.consumer.subscribe({ topics: [TASK_EVENTS_TOPIC] });
       await this.consumer.run({
-        eachMessage: async ({ message }) => {
+        eachMessage: async ({ topic, partition, message }) => {
           // Correlate with the producing API request (x-request-id header) or
           // mint an id, so every log line of this message carries one. An
-          // `x-debug-logging` header marks one message for debug logging.
+          // `x-debug-logging` header marks one message for debug logging. The
+          // `process` span continues the producer's trace (traceparent header).
           const requestId = headerString(message.headers?.["x-request-id"]);
           const run = (): Promise<void> =>
             withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
               this.handle(message.value),
             );
-          await (message.headers?.["x-debug-logging"] !== undefined
-            ? withDebugLogging(run)
-            : run());
+          await traceKafkaMessage({ topic, partition, message, group: GROUP_ID }, () =>
+            message.headers?.["x-debug-logging"] !== undefined ? withDebugLogging(run) : run(),
+          );
         },
       });
       this.logger.info(
@@ -139,7 +140,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     }
     this.consumed.add(1);
     // Hand off to the job system; jobId = task id makes redelivery idempotent.
-    await this.queue.add("process-task", event, { jobId: event.id });
+    // addTraced stores the trace context with the job for the processor.
+    await addTraced(this.queue, "process-task", event, { jobId: event.id });
     this.logger.info({ "task.id": event.id }, "task.created consumed → enqueued");
   }
 

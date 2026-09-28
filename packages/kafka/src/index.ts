@@ -7,4 +7,5 @@ export {
 export { kafkaLogger } from "./kafka-log-creator.js";
 export { registerKafkaMetrics, type KafkaMetricsHandle } from "./kafka-metrics.js";
 export { KafkaModule } from "./kafka.module.js";
+export { sendTraced, traceKafkaMessage, type KafkaMessageContext } from "./kafka-tracing.js";
 export { KAFKA_PRODUCER, KafkaProducerService } from "./kafka.provider.js";

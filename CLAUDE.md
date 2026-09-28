@@ -102,8 +102,20 @@ high-signal, easy-to-miss bits.
 ## Conventions & gotchas
 
 - **Telemetry first**: `apps/api/src/main.ts` imports `./instrumentation.js`
-  before anything else so OpenTelemetry registers before NestJS loads. Same in
-  `apps/worker`.
+  before anything else, and that file's first import `./service-name.js` sets
+  the app's `OTEL_SERVICE_NAME` default. Same in `apps/worker`.
+- **No patching instrumentations**: in the Vite bundle every import is loaded
+  before instrumentation.ts runs, so `@opentelemetry/instrumentation-pg` /
+  `-nestjs-core` / `-aws-sdk` / `-ioredis`… silently do nothing (checked in
+  Jaeger). Spans come from `@fastify/otel`, `UndiciInstrumentation`
+  (diagnostics_channel) and explicit wrappers in the packages: `tracePgPool`
+  (@base/database), `traceValkeyClient` (@base/cache),
+  `KafkaProducerService.send` + `traceKafkaMessage` (@base/kafka, traceparent
+  in record headers), `addTraced` + `traceJob` (@base/jobs, carrier in
+  `opts.telemetry.metadata`). Use `kafka.send()`, never `kafka.producer.send()`.
+  `setupTelemetry` must keep the AsyncLocalStorage context manager — without
+  it every span is a root and logs lose `trace.id`. Test spans with
+  `captureSpans()` from @base/testing.
 - **Fastify 5**: pass a pre-built logger via `loggerInstance`, not `logger`
   (the latter only accepts a config object).
 - **DI scope**: a provider declared only in `AppModule.providers` is NOT visible
@@ -112,16 +124,19 @@ high-signal, easy-to-miss bits.
 - **Data services**: `apps/api` (Postgres + Valkey + Kafka) and `apps/worker`
   (Kafka consumer → BullMQ) need the backing services. `just deps` (or
   `just stack-up` for the whole thing in containers). The broker is **Redpanda**
-  (Kafka API). The host admin server defaults to port 9090 — on Fedora that
-  clashes with Cockpit, so the stack maps the api admin to host 9091 and the
-  worker to 9093.
+  (Kafka API). Admin servers listen on 9090 in a container; on the host the
+  api uses 9091 and the worker 9093 — `start:dev` passes `--admin-port` to
+  scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
+  (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
+  scrapes `host.docker.internal:9091/9093` in both modes.
 - **BullMQ connections** must NOT set `commandTimeout` (its blocking poll
   legitimately outlives any per-command timeout) — see `@base/cache`
   `toBullMqOptions`.
 - **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs24-debian13`;
   builder `node:24-trixie`, the same glibc line for the native Kafka addon;
-  pnpm via `corepack install` from `packageManager`). The build runs `pnpm build` (tsc for packages, Vite for the apps) and copies the
-  whole workspace — the app bundle imports its externals by path relative to
+  pnpm via `corepack install` from `packageManager`). The build runs
+  `pnpm build` (tsc for packages, Vite for the apps) and copies the whole
+  workspace — the app bundle imports its externals by path relative to
   dist/, so the tree must move as one; `.dockerignore` must exclude
   `*.tsbuildinfo` (stale incremental state makes tsc skip emitting `dist`), and
   each `@base/*` package needs `files: ["dist"]`. `CMD ["dist/main.js"]`.
