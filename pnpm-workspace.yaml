@@ -4,29 +4,43 @@ packages:
   - 'api'
   - 'e2e'
 
-# pnpm 11 no longer reads the `pnpm` field in package.json — overrides and
+# pnpm (11+) no longer reads the `pnpm` field in package.json — overrides and
 # build-script approvals live here now (see https://pnpm.io/settings).
 
-# Transitive CVEs pinned out (see CLAUDE.md "AppSec"). Each entry forces a
-# floor on a dependency we don't declare directly; waivers that can't be
-# pinned out go in osv-scanner.toml / .grype.yaml instead.
+# Overrides are floors, written as caret ranges: `pnpm update` still moves them
+# inside the major, and the release-age window still applies. Two kinds:
+# - one copy of a package whose types cross package boundaries (duplicate
+#   fastify / zod / OTel copies make structurally identical types unassignable);
+# - transitive CVEs pinned out (see CLAUDE.md "AppSec"); waivers that can't be
+#   pinned out go in osv-scanner.toml / .grype.yaml instead.
+# Drop an entry once `pnpm why -r <name>` shows nothing, or the dependents
+# already require the floor.
 overrides:
-  fastify: 5.12.3
-  '@types/pg': 8.23.1
-  zod: 4.5.4
-  protobufjs: 8.8.0
-  uuid: 14.0.2
-  fast-uri: 4.1.3
-  fast-xml-builder: 1.3.1
-  brace-expansion: 5.0.9
-  '@opentelemetry/exporter-prometheus': 0.222.0
-  '@opentelemetry/core': 2.11.0
-  browserslist: 4.28.7            # GHSA (2 HIGH) via @nestjs/cli → webpack; osv-scanner clean at 4.28.7
-  baseline-browser-mapping: 2.11.21 # same chain; first fixed release older than the 7-day window
-  js-yaml: 4.3.2                  # GHSA-2883-xcg3-v3hh via openapi-typescript → @redocly/openapi-core
-  qs: 6.16.0                      # GHSA-4mjr-xmp4-gh2g / x5fp-wj9c-mxmx / q8mj-m7cp-5q26 via @stryker-mutator/core → typed-rest-client
+  fastify: ^5.12.5
+  zod: ^4.6.5
+  '@types/pg': ^8.23.1
+  '@opentelemetry/core': ^2.11.0
+  '@opentelemetry/exporter-prometheus': ^0.222.0
+  protobufjs: ^8.8.0              # via @grpc/proto-loader → OTLP gRPC exporter
+  fast-uri: ^4.1.3                # via ajv → fastify / Nest
+  brace-expansion: ^5.0.9         # via minimatch
+  browserslist: ^4.28.7           # GHSA (2 HIGH) via @stryker-mutator → @babel/core
+  baseline-browser-mapping: ^2.11.21 # same chain
+  js-yaml: ^4.3.2                 # GHSA-2883-xcg3-v3hh via openapi-typescript → @redocly/openapi-core
+  qs: ^6.16.0                     # GHSA-4mjr-xmp4-gh2g / x5fp-wj9c-mxmx / q8mj-m7cp-5q26 via @stryker-mutator/core → typed-rest-client
 
-# pnpm 11 turns an ignored build script into a hard install failure.
+# Peers declared older than what we run, checked to work (drop an entry once
+# the package widens its range): @sentry/nestjs and nestjs-zod predate NestJS
+# 12 — without the rule pnpm auto-installs a second @nestjs/core 11 for Sentry,
+# whose SentryGlobalFilter then extends the wrong BaseExceptionFilter.
+peerDependencyRules:
+  allowedVersions:
+    '@sentry/nestjs>@nestjs/core': '12'
+    '@sentry/nestjs>@nestjs/common': '12'
+    'nestjs-zod>@nestjs/common': '12'
+    'openapi-typescript>typescript': '6'   # api/ holds TypeScript 6 for it (see api/package.json)
+
+# pnpm (11+) turns an ignored build script into a hard install failure.
 allowBuilds:
   '@confluentinc/kafka-javascript': true
   '@datadog/pprof': true
@@ -49,18 +63,6 @@ allowBuilds:
 minimumReleaseAge: 10080
 blockExoticSubdeps: true
 trustPolicy: no-downgrade
-minimumReleaseAgeExclude:
-  # allure 3.12.1 (2026-09-09) is the first allure-js release with npm
-  # provenance; trustPolicy rejects the older, unattested 3.12.0 as a downgrade
-  # and minimumReleaseAge rejects 3.12.1 as too new — the same waiver the Go
-  # sibling carries. Remove after 2026-09-17.
-  - 'allure-vitest@3.12.1'
-  - 'allure-playwright@3.12.1'
-  - 'allure-js-commons@3.12.1'
-  # @typespec 1.16.0 (2026-09-09, with its 0.79.x helper packages) fixes
-  # GHSA-2q42-4q24-7rgv (openapi3 emitter path escape; every earlier release is
-  # affected). Remove after 2026-09-17.
-  - '@typespec/*'
 # The escape hatch when a release is needed before the window closes: a
 # time-boxed exclusion with the reason and the removal date — the same rule as
 # the CVE waivers in osv-scanner.toml / .grype.yaml. Example (the

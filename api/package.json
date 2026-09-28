@@ -3,15 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "HTTP contracts in TypeSpec \u2014 the source the OpenAPI document (api/openapi3) and the TS types (@base/contracts) are generated from",
+  "description": "HTTP contracts in TypeSpec — the source the OpenAPI document (api/openapi3) and the TS types (@base/contracts) are generated from. Holds its own TypeScript 6: openapi-typescript prints the types through the TypeScript compiler API, which TypeScript 7 (native) no longer ships; the rest of the workspace typechecks with 7.",
   "scripts": {
     "compile": "tsp compile tsp/main.tsp",
+    "types": "openapi-typescript openapi3/tasks.openapi.yaml -o ../packages/contracts/src/tasksapi.gen.ts",
+    "generate": "pnpm compile && pnpm types",
     "clean": "rm -rf openapi3"
   },
   "devDependencies": {
     "@typespec/compiler": "1.16.0",
     "@typespec/http": "1.16.0",
     "@typespec/openapi": "1.16.0",
-    "@typespec/openapi3": "1.16.0"
+    "@typespec/openapi3": "1.16.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "6.0.3"
   }
 }

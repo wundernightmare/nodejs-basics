@@ -271,21 +271,24 @@ the pino mixin in `@base/logger`. Don't pass them explicitly.
 
 ## Local dependencies (`docker/deps.yml`)
 
-| Service     | Image                          | Port |
-|-------------|--------------------------------|------|
-| Postgres 18 | `postgres:18`                  | 5432 |
-| Valkey 9    | `valkey/valkey:9.0`            | 6379 |
-| Redpanda    | `redpandadata/redpanda:v26.1.1`| 9092 |
+| Service     | Image                           | Port |
+|-------------|---------------------------------|------|
+| Postgres 18 | `postgres:18`                   | 5432 |
+| Valkey 9    | `valkey/valkey:9.0`             | 6379 |
+| Redpanda    | `redpandadata/redpanda:v26.2.3` | 9092 |
 
 Default credentials: `app` / `app` for postgres. **Change before deploying.**
 
 ## Observability stack (`docker/observability.yml`)
 
-| Service     | Image                                          | Port  |
-|-------------|------------------------------------------------|-------|
-| Jaeger      | `jaegertracing/all-in-one:1.62`                | 16686 |
-| Prometheus  | `prom/prometheus:v3.0.1`                       | 9090  |
-| OTel Collector | `otel/opentelemetry-collector-contrib:0.117.0` | 4317  |
+| Service        | Image                                          | Port  |
+|----------------|------------------------------------------------|-------|
+| Jaeger v2      | `jaegertracing/jaeger:2.21.0`                  | 16686 |
+| Prometheus     | `prom/prometheus:v3.14.0`                      | 9090  |
+| OTel Collector | `otel/opentelemetry-collector-contrib:0.161.0` | 4317  |
+
+Images are pulled through `${DOCKER_HUB}` (default `docker.io`, see
+`.env.example`), like everything else in the repo.
 
 Bring up only when you want traces/metrics locally. The API exports without
 it — Prometheus is just unscraped, traces are dropped.
@@ -561,8 +564,9 @@ release-time step.
 | `minimumReleaseAge: 10080` | a version published < 7 days ago does not resolve (`.npmrc` `min-release-age=7` for npm) |
 | `blockExoticSubdeps`       | transitive deps come from the registry only — no git / tarball URLs                     |
 | `trustPolicy: no-downgrade`| a dependency update cannot silently relax these settings                                |
-| `allowBuilds`              | the only postinstall scripts allowed to run (pnpm 11 fails the install otherwise)       |
-| `overrides`                | CVE floors on transitive deps we don't declare directly                                 |
+| `allowBuilds`              | the only postinstall scripts allowed to run (pnpm 11+ fails the install otherwise)      |
+| `overrides`                | caret floors: CVE fixes on transitive deps + one copy of cross-package types            |
+| `peerDependencyRules`      | peers declared older than what we run (Sentry / nestjs-zod vs NestJS 12), checked to work |
 | `minimumReleaseAgeExclude` | the escape hatch — time-boxed, with a "remove after <date>" comment                     |
 
 Waivers that cannot be pinned out go in `osv-scanner.toml` / `.grype.yaml`,

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only \u2014 never import from runtime code.",
+  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only — never import from runtime code.",
   "files": [
     "dist"
   ],
@@ -29,9 +29,9 @@
   "dependencies": {
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "allure-js-commons": "3.12.1",
+    "allure-js-commons": "3.12.2",
     "pino": "10.3.1",
-    "yaml": "2.9.0"
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "vitest": "4.1.11"
