@@ -31,6 +31,7 @@
     "@base/config": "workspace:*",
     "@base/logger": "workspace:*",
     "@base/resilience": "workspace:*",
+    "@opentelemetry/api": "1.9.1",
     "pg": "8.23.0"
   },
   "peerDependencies": {

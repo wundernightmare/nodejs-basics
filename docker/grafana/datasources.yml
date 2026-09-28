@@ -1,0 +1,21 @@
+# Grafana datasources for the local observability stack. Both are reachable by
+# container name on the deps network. Jaeger spans link to the logs by
+# trace.id (every app log line carries it) — logs stay in the terminal here;
+# point `tracesToLogsV2` at Loki / Elasticsearch when a project ships them.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: false

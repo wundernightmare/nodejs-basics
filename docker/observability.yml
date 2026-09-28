@@ -1,4 +1,5 @@
-# Observability stack: OTel Collector → Jaeger v2 (traces), Prometheus (metrics).
+# Observability stack: OTel Collector → Jaeger v2 (traces), Prometheus (metrics),
+# Grafana (one provisioned dashboard over both).
 #
 # Attaches to the deps network as `external: true`. Bring `deps.yml` up first.
 #
@@ -8,7 +9,8 @@
 #
 # UIs:
 #   Jaeger      http://localhost:16686
-#   Prometheus  http://localhost:9090
+#   Prometheus  http://localhost:9090   (scrapes the apps' admin ports 9091 / 9093)
+#   Grafana     http://localhost:3001   (anonymous viewer; admin / admin)
 
 name: nodejs-basics-obs
 
@@ -50,6 +52,33 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro,z
       - prometheus_data:/prometheus
+    # The scrape targets are the apps' host ports (prometheus.yml); Docker on
+    # Linux only resolves host.docker.internal with this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - deps
+
+  grafana:
+    image: ${DOCKER_HUB:-docker.io}/grafana/grafana:12.4.11
+    container_name: nodejs-basics-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/nodejs-basics.json
+    volumes:
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro,z
+      - ./grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro,z
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro,z
+    ports:
+      - "3001:3000" # the api owns host 3000
+    depends_on: [prometheus, jaeger]
     networks:
       - deps
 

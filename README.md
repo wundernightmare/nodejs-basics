@@ -45,23 +45,28 @@ pnpm install
 pnpm lefthook install              # one-time git hooks setup
 just deps                          # postgres + valkey + redpanda
 cp apps/api/config.example.yaml apps/api/config.yaml
-just dev                           # apps/api on :3000, admin :9090 — rebuilds + restarts on every save
+just dev                           # apps/api on :3000, admin :9091 — rebuilds + restarts on every save
+just dev-worker                    # apps/worker, admin :9093 (another terminal)
 ```
 
 Then:
 
 - `curl http://localhost:3000` — main API
-- `curl http://localhost:9090/metrics` — Prometheus metrics
-- `curl http://localhost:9090/readyz` — readiness probe
-- `curl http://localhost:9090/version` — service, version, revision, start time / uptime (`/admin/info` is an alias)
-- `curl http://localhost:9090/admin/config` — the effective config, secrets redacted
-- `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9090/admin/log-level?level=debug&ttl=30m'` — change
+- `curl http://localhost:9091/metrics` — Prometheus metrics
+- `curl http://localhost:9091/readyz` — readiness probe
+- `curl http://localhost:9091/version` — service, version, revision, start time / uptime (`/admin/info` is an alias)
+- `curl http://localhost:9091/admin/config` — the effective config, secrets redacted
+- `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9091/admin/log-level?level=debug&ttl=30m'` — change
   log level live
+
+The admin ports are the ones `just stack-up` publishes too (9091 api, 9093
+worker; `ADMIN_PORT` overrides), so both apps run side by side, 9090 stays free
+(Prometheus; Cockpit on Fedora), and Prometheus finds them either way.
 
 Optional observability stack:
 
 ```sh
-just obs                           # Jaeger :16686, Prometheus :9090
+just obs                           # Jaeger :16686, Prometheus :9090, Grafana :3001
 ```
 
 ### The whole thing in containers (api + worker)
@@ -74,7 +79,7 @@ just stack-down
 ```
 
 The distroless images build the whole pnpm workspace and ship it on
-`gcr.io/distroless/nodejs22` (non-root). The native
+`gcr.io/distroless/nodejs24-debian13` (non-root). The native
 `@confluentinc/kafka-javascript` addon links only libstdc++/glibc (librdkafka is
 bundled), which the distroless base provides.
 
@@ -165,9 +170,10 @@ are the only files that need bespoke wiring per project.
 ### Telemetry must be first
 
 `apps/api/src/instrumentation.ts` calls `setupTelemetry()` and is imported as
-the very first line of `main.ts`. Library instrumentations (Fastify, NestJS,
-Undici, AWS SDK) self-register on construction; if NestJS loads first, those
-hooks miss the auto-instrumentation. Don't move it.
+the very first line of `main.ts`; its own first import (`service-name.ts`)
+sets the app's default `OTEL_SERVICE_NAME` (`nodejs-basics-api` /
+`nodejs-basics-worker`) before any module reads it. Don't move either. Which
+instrumentations work in the bundle: see "How spans are made" below.
 
 ### Config priority
 
@@ -285,13 +291,48 @@ Default credentials: `app` / `app` for postgres. **Change before deploying.**
 |----------------|------------------------------------------------|-------|
 | Jaeger v2      | `jaegertracing/jaeger:2.21.0`                  | 16686 |
 | Prometheus     | `prom/prometheus:v3.14.0`                      | 9090  |
+| Grafana        | `grafana/grafana:12.4.11`                      | 3001  |
 | OTel Collector | `otel/opentelemetry-collector-contrib:0.161.0` | 4317  |
 
 Images are pulled through `${DOCKER_HUB}` (default `docker.io`, see
 `.env.example`), like everything else in the repo.
 
-Bring up only when you want traces/metrics locally. The API exports without
+Bring up only when you want traces/metrics locally. The apps export without
 it — Prometheus is just unscraped, traces are dropped.
+
+- **Metrics**: Prometheus scrapes the admin `/metrics` of the api (host 9091)
+  and the worker (host 9093) — the same ports under `just dev` and
+  `just stack-up`. Grafana opens on the provisioned `nodejs-basics` dashboard
+  (`docker/grafana/dashboards/`): RED for the api (rate, 5xx / 4xx ratio,
+  p50/p95/p99), worker throughput and backlog, event loop, heap, pg pool,
+  Valkey.
+- **Traces**: one trace per request, across both apps —
+  `POST /tasks` → Valkey (idempotency) → Postgres (`BEGIN` / `INSERT` /
+  `COMMIT`) → `send tasks.events` → worker `process tasks.events` →
+  `send task-events` → `process task-events`. Every log line carries the
+  `trace.id` of the span it was written in.
+
+### How spans are made
+
+The apps ship as one Vite bundle, and every module it imports is loaded
+before `instrumentation.ts` runs — so OTel instrumentations that patch a
+module when it is first loaded (`instrumentation-pg`, `-nestjs-core`,
+`-aws-sdk`, `-ioredis`, …) never fire. What does work, and what the repo uses:
+
+| Source | How |
+|---|---|
+| inbound HTTP | `@fastify/otel` plugin (`apps/api/src/instrumentation.ts`), span `{method} {route}` |
+| outbound HTTP | `UndiciInstrumentation` (diagnostics_channel, no patching) |
+| Postgres | `@base/database` `tracePgPool` — wraps the pool it builds |
+| Valkey | `@base/cache` `traceValkeyClient` — wraps the shared client |
+| Kafka | `@base/kafka` `KafkaProducerService.send` / `traceKafkaMessage` — `traceparent` in the record headers |
+| BullMQ | `@base/jobs` `addTraced` / `traceJob` — context in the job's `opts.telemetry.metadata` |
+
+DB / cache spans are only made under an active span (no root trace per
+readiness probe); query text is the parameterised statement and Valkey
+arguments are never recorded. Adding a client of your own: wrap it the same
+way, or use an instrumentation that does not rely on patching. Tests assert on
+spans with `captureSpans()` from `@base/testing`.
 
 ## Tests
 
@@ -621,7 +662,7 @@ block a change:
 | `pnpm check`       | typecheck + lint + format:check         |
 | `pnpm clean`       | drop dist/coverage                      |
 | `just deps`        | docker compose up postgres/valkey/kafka |
-| `just obs`         | docker compose up Jaeger/Prometheus     |
+| `just obs`         | docker compose up Jaeger/Prometheus/Grafana |
 | `just dev` / `dev-worker` | vite build --watch + restart after each build |
 | `just build-watch <app>` | rebuild an app bundle on change, no process |
 | `just test-watch[-integration]` | vitest watch, unit / integration project |

@@ -14,14 +14,17 @@
  *  - Sentry (optional, no-op if SENTRY_DSN unset)
  *  - Prometheus metrics exporter (server is started by AdminServerService)
  *  - OTLP gRPC trace exporter (OTEL_EXPORTER_OTLP_ENDPOINT, default :4317)
+ *  - AsyncLocalStorage context manager (span context across awaits)
  *  - W3C trace + baggage propagators
- *  - Auto-instrumentation: caller-supplied (Fastify, NestJS, Undici, AWS, ...)
+ *  - Library instrumentations: caller-supplied — only ones that do not patch
+ *    modules on load work in the Vite bundle (see apps/api/src/instrumentation.ts)
  *  - Default Node.js process metrics
  *  - Pyroscope continuous profiling (optional, gated on PYROSCOPE_SERVER_ADDRESS)
  */
 import { hostname } from "node:os";
 
-import { metrics, propagation, trace } from "@opentelemetry/api";
+import { context, metrics, propagation, trace } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
   CompositePropagator,
   W3CBaggagePropagator,
@@ -98,6 +101,13 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
     spanProcessors: [new BatchSpanProcessor(traceExporter)],
   });
   trace.setGlobalTracerProvider(tracerProvider);
+
+  // ─── Context manager ──────────────────────────────────────────────────────
+  // Without one `context.active()` is always empty: every span becomes a root
+  // and nothing propagates (NodeTracerProvider.register() would set it; the
+  // BasicTracerProvider above does not). @fastify/otel parents its own spans
+  // explicitly, which is why its request trees looked fine without it.
+  context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 
   // ─── W3C propagation ──────────────────────────────────────────────────────
   propagation.setGlobalPropagator(

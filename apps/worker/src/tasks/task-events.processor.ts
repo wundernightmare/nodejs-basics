@@ -13,7 +13,7 @@ import {
 import { metrics } from "@opentelemetry/api";
 import { type ConnectionOptions, type Job, Worker } from "bullmq";
 
-import { BULLMQ_CONNECTION } from "@base/jobs";
+import { BULLMQ_CONNECTION, traceJob } from "@base/jobs";
 import { AppLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
@@ -54,14 +54,16 @@ export class TaskEventsProcessor implements OnApplicationBootstrap, OnApplicatio
   onApplicationBootstrap(): void {
     this.worker = new Worker(
       QUEUE_NAME,
-      async (job: Job): Promise<void> => {
-        this.processed.add(1);
-        this.logger.info(
-          { "task.id": String(job.data.id), "job.id": job.id },
-          "Task job processed",
-        );
-        await Promise.resolve();
-      },
+      // traceJob: a `process` span parented on the Kafka consumer's span.
+      (job: Job): Promise<void> =>
+        traceJob(job, async () => {
+          this.processed.add(1);
+          this.logger.info(
+            { "task.id": String(job.data.id), "job.id": job.id },
+            "Task job processed",
+          );
+          await Promise.resolve();
+        }),
       { connection: this.connection },
     );
     this.logger.info({ "bullmq.queue": QUEUE_NAME }, "BullMQ worker started");

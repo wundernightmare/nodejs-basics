@@ -6,6 +6,7 @@
  * - `meta` / `testCase` / `severity`: Allure + TestOps identity (labels, ids, links)
  * - `integration` / `unique`: the integration-layer switch (skip locally, fail on CI)
  * - `captureLogs`: a real pino logger writing into memory
+ * - `captureSpans`: the real tracing SDK with an in-memory exporter
  * - `metricValue`: read a sample out of Prometheus text
  * - `propertyRuns`: the fast-check budget of a property spec (FC_NUM_RUNS)
  */
@@ -22,4 +23,5 @@ export { captureLogs, type LogCapture } from "./logs.js";
 export { meta, severity, Severity, testCase, type Meta } from "./meta.js";
 export { metricValue } from "./metrics.js";
 export { propertyRuns } from "./property.js";
+export { captureSpans, type SpanCapture } from "./spans.js";
 export { integration, unique, type Integration, type Service } from "./services.js";

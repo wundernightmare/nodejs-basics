@@ -7,6 +7,7 @@ import { AppLogger, ecsError } from "@base/logger";
 import { buildKafkaClientConfig, buildProducerConfig } from "./kafka-config.builder.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
 import { registerKafkaMetrics, type KafkaMetricsHandle } from "./kafka-metrics.js";
+import { sendTraced } from "./kafka-tracing.js";
 
 export const KAFKA_PRODUCER = Symbol("KAFKA_PRODUCER");
 
@@ -49,6 +50,15 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
       role: "producer",
       client_id: process.env["OTEL_SERVICE_NAME"] ?? "app",
     });
+  }
+
+  /**
+   * `producer.send` inside a PRODUCER span, with the trace context injected
+   * into the record headers — use this rather than `producer.send` so the
+   * consumer's span continues the caller's trace.
+   */
+  send(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
+    return sendTraced(this.producer, record);
   }
 
   async onApplicationBootstrap(): Promise<void> {

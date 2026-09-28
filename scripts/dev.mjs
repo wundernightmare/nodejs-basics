@@ -17,13 +17,24 @@
  *     syntax/type error shows up as a Vite error while the last good build
  *     keeps running.
  * Ctrl-C stops both.
+ *
+ * `--admin-port=<n>` sets ADMIN_PORT for the app unless the environment
+ * already does: the apps' `start:dev` scripts pass the host ports the
+ * docker stack publishes (api 9091, worker 9093), so the api and the worker
+ * run side by side, stay off 9090 (Cockpit on Fedora; Prometheus) and are
+ * scraped by the local Prometheus the same way whether they run here or in
+ * `just stack-up`.
  */
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
 const appDir = process.cwd();
 const entry = resolve(appDir, "dist/main.js");
-const extraNodeArgs = process.argv.slice(2); // e.g. --inspect, --inspect-brk=9229
+const ADMIN_PORT_FLAG = "--admin-port=";
+const adminPort = process.argv.find((a) => a.startsWith(ADMIN_PORT_FLAG))?.slice(ADMIN_PORT_FLAG.length);
+if (adminPort !== undefined && (process.env.ADMIN_PORT ?? "") === "") process.env.ADMIN_PORT = adminPort;
+// Everything else goes to node, e.g. --inspect, --inspect-brk=9229.
+const extraNodeArgs = process.argv.slice(2).filter((a) => !a.startsWith(ADMIN_PORT_FLAG));
 
 const vite = spawn("pnpm", ["exec", "vite", "build", "--watch", "--logLevel", "info"], {
   cwd: appDir,

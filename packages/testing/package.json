@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, Prometheus text parsing. Test-only — never import from runtime code.",
+  "description": "Test harness shared by every vitest suite: Allure/TestOps metadata, integration-service gating, log capture, span capture, Prometheus text parsing. Test-only — never import from runtime code.",
   "files": [
     "dist"
   ],
@@ -27,6 +27,10 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/context-async-hooks": "2.11.0",
+    "@opentelemetry/core": "2.11.0",
+    "@opentelemetry/sdk-trace-base": "2.11.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "allure-js-commons": "3.12.2",
