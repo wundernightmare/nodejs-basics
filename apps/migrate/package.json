@@ -1,0 +1,32 @@
+{
+  "name": "@base/migrate",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Forward-only SQL migrations (migrations/*.sql at the repo root) — a self-contained bundle and a small image, run before the apps start.",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "start": "node --enable-source-maps dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "oxlint src vite.config.ts",
+    "lint:fix": "oxlint --fix src vite.config.ts",
+    "format": "oxfmt \"src/**/*.ts\" vite.config.ts",
+    "format:check": "oxfmt --check \"src/**/*.ts\" vite.config.ts",
+    "test": "vitest --passWithNoTests",
+    "test:run": "vitest run --passWithNoTests",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@base/testing": "workspace:*",
+    "@types/node": "26.6.2",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2"
+  }
+}

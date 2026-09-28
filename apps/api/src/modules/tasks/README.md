@@ -15,7 +15,7 @@ application/
 
 infrastructure/
   sql-task.repository.ts     pg-based, withTx + db() helpers, optimistic lock
-  tasks-schema.bootstrap.ts  CREATE TABLE IF NOT EXISTS — replace with migrations
+                             (the table: migrations/0001_create_tasks.sql)
 
 http/
   tasks.dto.ts               createZodDto from nestjs-zod
@@ -43,7 +43,6 @@ http  →  application  →  domain  ↑  infrastructure
 |---|---|---|
 | `useClass` for port → impl | `tasks.module.ts` (TASK_REPOSITORY) | The use case knows the port; only the module decides which adapter |
 | `useFactory` for config-derived values | `tasks.module.ts` (TASK_LIST_PAGE_SIZE) | Compute once at boot from ConfigService; consumers inject the value |
-| Lifecycle hook (`OnApplicationBootstrap`) | `tasks-schema.bootstrap.ts` | One-shot side effect at startup |
 
 ## Transaction sandwich
 
@@ -97,7 +96,7 @@ Send a stale `expectedVersion` — you get `409 Conflict` as
 
 ## What to delete when you adapt this
 
-- `tasks-schema.bootstrap.ts` — replace with proper migrations.
+- `migrations/0001_create_tasks.sql` — or keep it and add yours after it.
 - The `queryFindById` shortcut at the bottom of `tasks.controller.ts` —
   push that into TaskQueryService as a real `findById` method.
 - The whole module — start over with your domain.

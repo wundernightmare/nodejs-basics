@@ -43,9 +43,15 @@ clean:
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
 
-# Start deps: PostgreSQL :5432, Valkey :6379
+# Start deps (PostgreSQL :5432, Valkey :6379, Redpanda :9092) and migrate the database
 deps:
-    docker compose -f {{DEPS}} up -d
+    docker compose -f {{DEPS}} up -d --wait
+    just migrate
+
+# Apply migrations/*.sql to DATABASE_URL (default: the `just deps` Postgres)
+migrate:
+    pnpm --filter @base/migrate build >/dev/null
+    node apps/migrate/dist/main.js
 
 # Start observability stack
 obs:

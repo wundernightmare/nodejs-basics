@@ -14,7 +14,7 @@
  * admin :9093 (the host ports docker/stack.yml publishes), so the specs need
  * no change between the two modes.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,15 +58,26 @@ const SERVICES: ServiceSpec[] = [
   },
 ];
 
-/** Spawn api + worker from dist/ and persist pids for teardown. */
+const MIGRATE = path.join(ROOT, "apps/migrate/dist/main.js");
+
+/** Migrate the database (apps/migrate), spawn api + worker from dist/, persist pids for teardown. */
 export function startServices(): void {
-  const missing = SERVICES.filter((s) => !fs.existsSync(s.entry)).map((s) => s.name);
+  const missing = [...SERVICES, { name: "migrate", entry: MIGRATE }]
+    .filter((s) => !fs.existsSync(s.entry))
+    .map((s) => s.name);
   if (missing.length > 0) {
     throw new Error(
       `missing built entrypoints for ${missing.join(", ")} — run \`pnpm build\` first`,
     );
   }
   fs.mkdirSync(LOG_DIR, { recursive: true });
+  // The schema first, as a deployment does it (docker/stack.yml: api waits for migrate).
+  const migrated = spawnSync(process.execPath, [MIGRATE], {
+    env: { ...process.env, DATABASE_URL: deps.DATABASE_URL },
+    encoding: "utf8",
+  });
+  if (migrated.status !== 0)
+    throw new Error(`migrate failed:\n${migrated.stderr}${migrated.stdout}`);
   const children: ChildProcess[] = [];
   for (const svc of SERVICES) {
     const log = fs.openSync(path.join(LOG_DIR, `${svc.name}.log`), "w");

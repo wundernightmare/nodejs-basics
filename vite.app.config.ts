@@ -52,9 +52,32 @@ function workspaceExternals(root: string): Plugin {
   };
 }
 
-export function nodeApp(appDir: string): UserConfig {
+export interface NodeAppOptions {
+  /**
+   * Bundle every dependency into dist/main.js too, so the image needs no
+   * node_modules at all — for small tools (apps/migrate: pg + SQL files).
+   * Not for the services: native addons and OpenTelemetry need real modules.
+   */
+  selfContained?: boolean;
+}
+
+/** Optional peers the bundled drivers probe for at runtime (pg → pg-native). */
+const OPTIONAL_NATIVE = new Set(["pg-native"]);
+
+export function nodeApp(appDir: string, options: NodeAppOptions = {}): UserConfig {
   const root = path.resolve(appDir, "..", "..");
   const pkgs = path.join(root, "packages") + path.sep;
+  const external = options.selfContained
+    ? (id: string): boolean => isBuiltin(id) || OPTIONAL_NATIVE.has(id)
+    : (id: string, importer: string | undefined): boolean =>
+        isBuiltin(id) ||
+        (isBare(id) && !id.startsWith("@base/") && !(importer?.startsWith(pkgs) ?? false));
+  // A self-contained bundle inlines CommonJS drivers whose own require()s must
+  // get the CommonJS build (pg → pg-pool): leave import / require to the kind
+  // of each import instead of forcing "import".
+  const conditions = options.selfContained
+    ? ["node", "default"]
+    : ["source", "node", "import", "default"];
   return {
     // Resolve the way Node will at runtime — exports conditions node / import /
     // default (plus `source` for the workspace packages) and the `main` field,
@@ -62,16 +85,16 @@ export function nodeApp(appDir: string): UserConfig {
     // builds with extension-less imports Node cannot load, e.g. @aws-sdk's
     // dist-es). This keeps the paths workspaceExternals emits identical to
     // what a bare import of the same package resolves to: one module instance.
-    resolve: { conditions: ["source", "node", "import", "default"], mainFields: ["main"] },
+    resolve: { conditions, mainFields: ["main"] },
     ssr: {
       target: "node",
       // Vite's own SSR externalisation would answer for bare imports before
       // workspaceExternals gets to see them; switch it off and decide below.
       noExternal: true,
-      resolve: { conditions: ["source", "node", "import", "default"], mainFields: ["main"] },
+      resolve: { conditions, mainFields: ["main"] },
     },
     plugins: [
-      workspaceExternals(root),
+      ...(options.selfContained ? [] : [workspaceExternals(root)]),
       swc.vite({
         tsconfigFile: false,
         jsc: {
@@ -97,9 +120,7 @@ export function nodeApp(appDir: string): UserConfig {
         // external and bare; only `@base/*` is bundled (from src, `source`
         // condition). Imports the bundled packages make are handled by
         // workspaceExternals above.
-        external: (id, importer) =>
-          isBuiltin(id) ||
-          (isBare(id) && !id.startsWith("@base/") && !(importer?.startsWith(pkgs) ?? false)),
+        external,
         // Emit those resolved paths relative to dist/, so the bundle is tied to
         // the workspace tree it was built in, not to its absolute location.
         makeAbsoluteExternalsRelative: true,

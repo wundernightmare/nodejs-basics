@@ -84,6 +84,8 @@ export default defineConfig({
                   "apps/*/src/**/*.integration.spec.ts",
                 ],
                 // Real services on fixed ports: one file at a time.
+                // Migrate the test database first (apps/migrate, migrations/*.sql).
+                globalSetup: ["apps/migrate/src/migrate.global-setup.ts"],
                 fileParallelism: false,
                 testTimeout: 30_000,
                 hookTimeout: 60_000,

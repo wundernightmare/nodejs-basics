@@ -444,7 +444,7 @@ docker-build-scan:
     GRYPE_DB_VALIDATE_AGE: "false"
   parallel:
     matrix:
-      - APP: [api, worker]
+      - APP: [api, worker, migrate]
   script:
     # Proxy settings go in as build args (value-less form: taken from the job
     # environment, skipped when unset). The dind daemon picks up HTTP_PROXY /

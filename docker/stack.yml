@@ -13,7 +13,25 @@
 name: nodejs-basics-stack
 
 services:
+  # One-shot: brings the schema up to date, then exits 0 — the api starts only
+  # after it (depends_on … service_completed_successfully), like a Kubernetes
+  # Job / init container would run it.
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/migrate/Dockerfile
+    image: nodejs-basics-migrate:dev
+    container_name: nodejs-basics-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://app:app@postgres:5432/app
+    networks:
+      - deps
+
   api:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     build:
       context: ..
       dockerfile: apps/api/Dockerfile

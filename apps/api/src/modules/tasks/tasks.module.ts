@@ -4,7 +4,9 @@
  * Provider patterns demonstrated:
  *   - useClass: bind a port (TASK_REPOSITORY) to its concrete implementation
  *   - useFactory: build a value from ConfigService (TASK_LIST_PAGE_SIZE)
- *   - lifecycle hook (TasksSchemaBootstrap) — runs DDL on bootstrap
+ *
+ * The schema is not the module's business: migrations/*.sql, applied by
+ * apps/migrate before the app starts.
  */
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -13,7 +15,6 @@ import { TaskQueryService } from "./application/task.query.service.js";
 import { TaskUseCase } from "./application/task.use-case.js";
 import { TASK_REPOSITORY } from "./domain/task.repository.port.js";
 import { SqlTaskRepository } from "./infrastructure/sql-task.repository.js";
-import { TasksSchemaBootstrap } from "./infrastructure/tasks-schema.bootstrap.js";
 import { TasksController } from "./http/tasks.controller.js";
 import { TASK_LIST_PAGE_SIZE } from "./tasks.tokens.js";
 
@@ -22,7 +23,6 @@ import { TASK_LIST_PAGE_SIZE } from "./tasks.tokens.js";
   providers: [
     TaskUseCase,
     TaskQueryService,
-    TasksSchemaBootstrap,
 
     // Bind port → implementation. Use cases inject by TASK_REPOSITORY token.
     { provide: TASK_REPOSITORY, useClass: SqlTaskRepository },
