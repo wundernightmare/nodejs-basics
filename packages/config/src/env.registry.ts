@@ -857,6 +857,28 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     usedIn: ["kafka"],
   },
 
+  // ─── Outbox ────────────────────────────────────────────────────────────────
+
+  {
+    key: "OUTBOX_POLL_INTERVAL_MS",
+    yaml: "outbox.poll_interval_ms",
+    required: false,
+    default: "200",
+    description:
+      "How often OutboxRelay looks for unpublished outbox rows (at once again while a full batch " +
+      "comes back; backoff up to 30 s on failure). The latency of an event, at worst.",
+    usedIn: ["outbox"],
+  },
+
+  {
+    key: "OUTBOX_BATCH_SIZE",
+    yaml: "outbox.batch_size",
+    required: false,
+    default: "100",
+    description: "Outbox rows one relay pass takes (FOR UPDATE SKIP LOCKED) and publishes.",
+    usedIn: ["outbox"],
+  },
+
   // ─── OpenTelemetry ─────────────────────────────────────────────────────────
 
   {

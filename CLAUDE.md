@@ -132,6 +132,11 @@ high-signal, easy-to-miss bits.
   scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
+- **Events go through the outbox**: `OutboxWriter.add()` inside
+  `uow.runInTransaction` (same transaction as the write), `OutboxRelay`
+  publishes (SKIP LOCKED, at least once — consumers must be idempotent). Do
+  not call `kafka.send()` from a request path for an event that must not be
+  lost. The relay keeps the request's trace (context stored per row).
 - **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
   checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
   create tables from app code or edit an applied file — add a new one. The

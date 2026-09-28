@@ -291,6 +291,9 @@ importers:
       '@base/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@base/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@base/resilience':
         specifier: workspace:*
         version: link:../../packages/resilience
@@ -723,6 +726,40 @@ importers:
       iovalkey:
         specifier: 0.4.0
         version: 0.4.0(supports-color@10.2.2)
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
+
+  packages/outbox:
+    dependencies:
+      '@base/common':
+        specifier: workspace:*
+        version: link:../common
+      '@base/database':
+        specifier: workspace:*
+        version: link:../database
+      '@base/kafka':
+        specifier: workspace:*
+        version: link:../kafka
+      '@base/logger':
+        specifier: workspace:*
+        version: link:../logger
+      '@nestjs/common':
+        specifier: 12.x
+        version: 12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@10.2.2)
+      '@nestjs/config':
+        specifier: 12.x
+        version: 12.0.0(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@10.2.2))(rxjs@7.8.2)
+      '@opentelemetry/api':
+        specifier: 1.9.1
+        version: 1.9.1
       pg:
         specifier: 8.23.0
         version: 8.23.0
