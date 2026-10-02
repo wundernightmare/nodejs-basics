@@ -2,7 +2,7 @@
  * Shared pino logger configured for:
  *  - ECS (Elastic Common Schema) log format
  *  - OpenTelemetry trace/span context injection via mixin
- *  - Request context (actor.id, tenant.id, http.request.id) injection via mixin
+ *  - Request context (http.request.id) injection via mixin
  *  - ECS-compatible Fastify request/response serializers
  *  - A runtime-adjustable level (`logLevel`, see log-level.ts) and per-request
  *    debug logging (withDebugLogging() in @base/common)
@@ -23,7 +23,7 @@
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
 
-import { identityStorage, isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
+import { isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
 
 import {
   DEFAULT_LOG_LEVEL_MAX_TTL_MS,
@@ -62,13 +62,8 @@ function contextMixin(): Record<string, string> {
     fields["transaction.id"] = ctx.traceId;
   }
 
-  // Per-request identity context
   const requestId = requestIdStorage.getStore();
   if (requestId !== null && requestId !== undefined) fields["http.request.id"] = requestId;
-
-  const identity = identityStorage.getStore();
-  if (identity?.actor !== undefined) fields["actor.id"] = identity.actor;
-  if (identity?.tenant !== undefined) fields["tenant.id"] = identity.tenant;
 
   return fields;
 }

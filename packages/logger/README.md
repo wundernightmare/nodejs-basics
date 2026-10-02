@@ -22,7 +22,7 @@ Always use the merge-object form — never interpolate values into the message:
 this.logger.info({ "user.id": userId }, "Invite sent");
 ```
 
-`trace.id`, `span.id`, `http.request.id`, `actor.id`, `tenant.id` are injected by
+`trace.id`, `span.id`, `http.request.id` are injected by
 the mixin from the active span / ALS — don't pass them explicitly.
 
 ## Levels: base, runtime, per-request

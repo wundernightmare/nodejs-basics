@@ -84,17 +84,6 @@ export function createDomainExceptionFilter(
           ? (mapping.fallbackMessage ?? "Internal server error")
           : exception.message;
 
-      // RFC 9110 §10.2.3: tell the client when a 429/503 is worth retrying.
-      const retryAfter = (exception as { retryAfterSeconds?: unknown }).retryAfterSeconds;
-      if (
-        (mapping.status === 429 || mapping.status === 503) &&
-        typeof retryAfter === "number" &&
-        Number.isFinite(retryAfter) &&
-        retryAfter > 0
-      ) {
-        void reply.header("Retry-After", String(Math.ceil(retryAfter)));
-      }
-
       void reply
         .status(mapping.status)
         .header("Content-Type", PROBLEM_CONTENT_TYPE)

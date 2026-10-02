@@ -14,13 +14,9 @@
  *     TenantSlugConflictError: { status: 409 },
  *   };
  *   app.useGlobalFilters(new DomainExceptionFilter(ERROR_MAP, [TenantNotFoundError, ...]));
- *
- * An error that is worth retrying later (mapped to 429 or 503) sets
- * `retryAfterSeconds`; the filter sends it as `Retry-After`.
  */
 export abstract class DomainError extends Error {
   abstract readonly _tag: string;
-  readonly retryAfterSeconds?: number;
 
   constructor(message: string) {
     super(message);
