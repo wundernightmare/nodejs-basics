@@ -36,6 +36,7 @@ const CONSUMER = {
       partitions: {
         "0": { consumer_lag: 7, fetchq_size: 1_000 },
         "1": { consumer_lag: -1, fetchq_size: 24 },
+        "2": { consumer_lag: 3, fetchq_size: 0 },
         "-1": { consumer_lag: -1, fetchq_size: 0 },
       },
     },
@@ -102,19 +103,38 @@ describe("kafkaClientMetrics", () => {
     ]);
   });
 
-  it("consumer: lag per known partition, prefetched bytes, rebalances; no fetch-poll rtt", async () => {
+  it("consumer: lag max/sum over known partitions, prefetched bytes, rebalances; no fetch-poll rtt", async () => {
     await testCase("NB-920", "consumer metrics from librdkafka statistics");
     const m = fakeMeter();
     kafkaClientMetrics("consumer").statsCb(wrap(CONSUMER));
     const out = m.collect();
-    expect(out).toContain(
-      'kafka.client.consumer.lag 7 {"messaging.destination.name":"tasks.events","messaging.destination.partition.id":"0"}',
-    );
-    expect(out.filter((l) => l.startsWith("kafka.client.consumer.lag"))).toHaveLength(1);
+    expect(out).toContain("kafka.client.consumer.lag.max 7");
+    expect(out).toContain("kafka.client.consumer.lag.sum 10");
     expect(out).toContain("kafka.client.consumer.fetch_queue.size 1024");
     expect(out).toContain("kafka.client.consumer.rebalances 2");
     expect(out).toContain("kafka.client.messages.received 2498");
     expect(out.some((l) => l.startsWith("kafka.client.broker.rtt"))).toBe(false);
+  });
+
+  it("exports the same number of series for 500 topics as for one — no topic/partition labels", async () => {
+    await testCase("NB-923", "kafka client metrics have fixed cardinality");
+    const m = fakeMeter();
+    const one = kafkaClientMetrics("consumer");
+    one.statsCb(wrap(CONSUMER));
+    const single = m.collect();
+    one.dispose();
+
+    const topics: Record<string, { partitions: Record<string, { consumer_lag: number }> }> = {};
+    for (let i = 0; i < 500; i++) {
+      const partitions: Record<string, { consumer_lag: number }> = {};
+      for (let p = 0; p < 12; p++) partitions[String(p)] = { consumer_lag: i + p };
+      topics[`topic-${i}`] = { partitions };
+    }
+    kafkaClientMetrics("consumer").statsCb(wrap({ ...CONSUMER, topics }));
+    const many = m.collect();
+    expect(many).toHaveLength(single.length);
+    expect(many.join("\n")).not.toMatch(/topic-|partition/u);
+    expect(many).toContain("kafka.client.consumer.lag.max 510");
   });
 
   it("stops observing a stale snapshot and after dispose", async () => {

@@ -399,7 +399,9 @@ it — Prometheus is just unscraped, traces are dropped.
   `kafkaClientMetrics`), only what an application acts on: brokers up,
   request errors, the producer's local queue against its bound
   (`kafka_client_producer_queue_size` / `_limit`), messages sent / received,
-  consumer lag per partition, prefetched bytes, rebalances.
+  consumer lag (max and sum), prefetched bytes, rebalances. No series has a
+  topic or partition label: ~10 series per client whether it uses one topic
+  or hundreds — per-partition lag is the broker side's job.
 - **Traces**: one trace per request, across both apps —
   `POST /tasks` → Valkey (idempotency) → Postgres (`BEGIN` / `INSERT` /
   `COMMIT`) → `send tasks.events` → worker `process tasks.events` →

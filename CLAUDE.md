@@ -168,6 +168,8 @@ high-signal, easy-to-miss bits.
   clients) then `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES`. A new client
   passes `stats_cb: kafkaClientMetrics(role).statsCb` — the kafkajs-compat
   clients have no event surface, statistics are the only metrics source.
+  Never add a topic/partition label to a kafka.client.* metric — a client on
+  hundreds of topics would explode Prometheus; aggregate (lag max/sum).
 - **Request identity**: guards call `setActor()` / `setTenant()` (@base/common)
   — they mutate the per-request object the onRequest hook entered; never
   `enterWith()` from a guard (it does not reach the handler).
