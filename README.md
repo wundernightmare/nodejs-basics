@@ -33,8 +33,10 @@ packages/
                          transaction context. (No ORM — bring your own.)
   cache                  Valkey/Redis client with config builder shared with
                          BullMQ, OTel client metrics.
-  kafka                  Confluent Kafka producer + librdkafka SASL/TLS config
-                         builder + OTel client metrics.
+  kafka                  Confluent Kafka producer (reconnecting, one error
+                         type: KafkaSendError) + KafkaConsumerRunner (commit,
+                         pause/backoff, tracing — you write handle()) +
+                         librdkafka config builder + OTel client metrics.
   outbox                 Transactional outbox: OutboxWriter (inside the UoW
                          transaction) + OutboxRelay (→ Kafka, at least once).
   jobs                   BullMQ NestJS module: configurable named queues,
