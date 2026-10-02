@@ -8,19 +8,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 export const requestIdStorage = new AsyncLocalStorage<string>();
 
-/**
- * Stores the authenticated userId for the current async request context.
- * Set by an auth guard after successful token verification.
- * Falls back to "system" when no actor is set (background jobs, system operations).
- */
-export const actorStorage = new AsyncLocalStorage<string>();
+/** Who the current request acts as — filled in once auth has run. */
+export interface RequestIdentity {
+  /** The authenticated principal (user id, client id). */
+  actor?: string;
+  /** The tenant the request is scoped to, on multi-tenant routes. */
+  tenant?: string;
+}
 
 /**
- * Stores the active tenantId for the current async request context.
- * Set by a tenant middleware after tenant resolution.
- * Undefined on routes outside a tenant context.
+ * One mutable identity object per request, entered by the onRequest hook.
+ *
+ * Mutable on purpose: an auth guard runs *inside* the request and cannot wrap
+ * the handler in `storage.run()`, and `enterWith()` from a guard does not
+ * reach the handler (Nest awaits the guard in its own async frame; on Node 24
+ * the value set there is gone by the time the handler runs). Writing a field
+ * of the object the hook entered is visible to everything after it.
  */
-export const tenantStorage = new AsyncLocalStorage<string>();
+export const identityStorage = new AsyncLocalStorage<RequestIdentity>();
 
 /**
  * Marks the current async context as "debug this unit of work": every log
@@ -40,16 +45,40 @@ export const DEBUG_LOGGING_HEADER = "x-debug-logging";
 const MAX_REQUEST_ID_LEN = 128;
 
 /**
- * Runs fn with the given actorId in context — use this to override the actor
- * for a specific scope (e.g. invite-accept flows where the newly-created
- * userId acts on its own behalf without going through the auth guard).
+ * Record the authenticated actor for the rest of the request — call it from
+ * an auth guard. Returns false outside a request (nothing to write to).
+ */
+export function setActor(actorId: string): boolean {
+  const identity = identityStorage.getStore();
+  if (identity === undefined) return false;
+  identity.actor = actorId;
+  return true;
+}
+
+/** Record the request's tenant (tenant resolution guard/middleware). See setActor. */
+export function setTenant(tenantId: string): boolean {
+  const identity = identityStorage.getStore();
+  if (identity === undefined) return false;
+  identity.tenant = tenantId;
+  return true;
+}
+
+/** The current identity (read-only copy), empty outside a request. */
+export function getIdentity(): Readonly<RequestIdentity> {
+  return { ...identityStorage.getStore() };
+}
+
+/**
+ * Runs fn as another actor — a scope that acts on someone's behalf without
+ * going through the guard (a job, a system action). The outer identity is
+ * left untouched.
  */
 export function withActor<T>(actorId: string, fn: () => T): T {
-  return actorStorage.run(actorId, fn);
+  return identityStorage.run({ ...identityStorage.getStore(), actor: actorId }, fn);
 }
 
 export function withTenant<T>(tenantId: string, fn: () => T): T {
-  return tenantStorage.run(tenantId, fn);
+  return identityStorage.run({ ...identityStorage.getStore(), tenant: tenantId }, fn);
 }
 
 export function withRequestId<T>(requestId: string, fn: () => T): T {
