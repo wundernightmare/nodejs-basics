@@ -13,4 +13,4 @@ export {
 } from "./kafka-metrics.js";
 export { KafkaModule } from "./kafka.module.js";
 export { sendTraced, traceKafkaMessage, type KafkaMessageContext } from "./kafka-tracing.js";
-export { KAFKA_PRODUCER, KafkaProducerService } from "./kafka.provider.js";
+export { KafkaNotConnectedError, KafkaProducerService } from "./kafka.provider.js";

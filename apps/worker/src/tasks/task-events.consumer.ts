@@ -32,6 +32,7 @@ import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
 import {
   buildConsumerConfig,
+  buildKafkaClientConfig,
   kafkaClientMetrics,
   kafkaLogger,
   traceKafkaMessage,
@@ -47,7 +48,6 @@ import {
 import { ReadinessService } from "@base/observability";
 
 const GROUP_ID = "tasks-worker";
-const CONNECT_TIMEOUT_MS = 5_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const PROCESS_RETRY_BASE_MS = 1_000;
@@ -57,12 +57,16 @@ const PROCESS_RETRY_MAX_MS = 60_000;
 export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplicationShutdown {
   private consumer: KafkaJS.Consumer | undefined;
   private stopped = false;
+  private connected = false;
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelayMs = RECONNECT_BASE_MS;
-  private processFailures = 0;
+  // Consecutive failures per partition ("topic:partition"): with partitions
+  // handled concurrently, one partition's backoff must not shape another's.
+  private readonly processFailures = new Map<string, number>();
   // One metrics handle for the logical consumer; every reconnect attempt's
   // client reports into it (librdkafka statistics → kafka.client.*).
   private readonly clientMetrics = kafkaClientMetrics("consumer");
+  private readonly partitionsConcurrently: number;
   private readonly logger: ReturnType<AppLogger["child"]>;
   // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
   // and that is what dashboards expect); OTel semconv would spell it
@@ -80,6 +84,9 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
+    const concurrently = Number(config.get<string>("KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY"));
+    this.partitionsConcurrently =
+      Number.isInteger(concurrently) && concurrently > 0 ? concurrently : 1;
     // Critical: a worker that cannot consume is not ready. assignment() throws
     // unless the consumer is connected, which is exactly the cheap check we want.
     readiness.register({
@@ -105,34 +112,47 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
    */
   private async connectWithRetry(): Promise<void> {
     if (this.stopped) return;
+    // The Kafka instance (and the admin client ensureTopic makes from it)
+    // takes the shared client config only — consumer properties there make
+    // librdkafka warn "is a consumer property" on every connect.
     const rdkafka = buildConsumerConfig(this.config, GROUP_ID, "worker");
     const kafka = new KafkaJS.Kafka({
-      ...rdkafka,
+      ...buildKafkaClientConfig(this.config, "worker"),
       kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
     });
     const consumer = kafka.consumer({ ...rdkafka, stats_cb: this.clientMetrics.statsCb });
     this.consumer = consumer;
 
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`Kafka connect timed out after ${CONNECT_TIMEOUT_MS} ms`));
-      }, CONNECT_TIMEOUT_MS);
-    });
     try {
       // Ensure the topic exists before consuming/producing — the shared
       // producer runs with allowAutoTopicCreation:false, so nothing else
       // creates it. Idempotent: an already-existing topic is fine.
-      await Promise.race([this.ensureTopic(kafka).then(() => consumer.connect()), timeout]);
+      await this.ensureTopic(kafka);
+      // Not raced against a timer: a connect in flight (it waits up to 30 s
+      // for metadata) must settle before the client can be dropped — a
+      // disconnect() under it makes the late "ready" throw from an event
+      // handler and takes the process down. A rejected connect leaves the
+      // client disconnected; the next attempt uses a fresh one.
+      await consumer.connect();
+      if (this.stopped) {
+        await consumer.disconnect().catch(() => {});
+        return;
+      }
       await consumer.subscribe({ topics: [TASK_EVENTS_TOPIC] });
-      await consumer.run({ eachMessage: (payload) => this.handleMessage(payload) });
+      await consumer.run({
+        // Partitions handled in parallel; order within a partition (and so
+        // per key) still holds. 1 = strictly one message at a time.
+        partitionsConsumedConcurrently: this.partitionsConcurrently,
+        eachMessage: (payload) => this.handleMessage(payload),
+      });
+      this.connected = true;
       this.reconnectDelayMs = RECONNECT_BASE_MS;
       this.logger.info(
         { "kafka.topic": TASK_EVENTS_TOPIC, "kafka.group": GROUP_ID },
         "Kafka consumer running",
       );
     } catch (err) {
-      await consumer.disconnect().catch(() => undefined);
+      await consumer.disconnect().catch(() => {});
       if (this.stopped) return;
       const delay = this.reconnectDelayMs;
       this.reconnectDelayMs = Math.min(delay * 2, RECONNECT_MAX_MS);
@@ -141,8 +161,6 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
         "Kafka consumer failed to start — retrying",
       );
       this.reconnectTimer = setTimeout(() => void this.connectWithRetry(), delay);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -165,11 +183,9 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     } catch (err) {
       // Not committed: pause this partition so the redelivery is spaced out,
       // then throw so the layer seeks back to this exact offset.
-      const delay = Math.min(
-        PROCESS_RETRY_BASE_MS * 2 ** this.processFailures,
-        PROCESS_RETRY_MAX_MS,
-      );
-      this.processFailures += 1;
+      const failures = this.processFailures.get(`${topic}:${partition}`) ?? 0;
+      const delay = Math.min(PROCESS_RETRY_BASE_MS * 2 ** failures, PROCESS_RETRY_MAX_MS);
+      this.processFailures.set(`${topic}:${partition}`, failures + 1);
       this.logger.warn(
         {
           ...ecsError(err as Error),
@@ -191,7 +207,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       }, delay).unref();
       throw err;
     }
-    this.processFailures = 0;
+    this.processFailures.delete(`${topic}:${partition}`);
     await this.commit(topic, partition, message.offset);
   }
 
@@ -257,7 +273,9 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
     try {
-      await this.consumer?.disconnect();
+      // Only a running consumer is disconnected: one still connecting is left
+      // to its metadata timeout (see connectWithRetry) — Nest ends the process.
+      if (this.connected) await this.consumer?.disconnect();
     } catch (err) {
       this.logger.warn({ ...ecsError(err as Error) }, "Kafka consumer disconnect failed");
     } finally {

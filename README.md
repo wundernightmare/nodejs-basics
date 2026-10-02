@@ -402,6 +402,10 @@ it — Prometheus is just unscraped, traces are dropped.
   consumer lag (max and sum), prefetched bytes, rebalances. No series has a
   topic or partition label: ~10 series per client whether it uses one topic
   or hundreds — per-partition lag is the broker side's job.
+- **librdkafka logs** are pino/ECS lines (`log.logger: kafka:*`,
+  `kafka.log.facility`, `kafka.client.name`); identical lines are folded
+  for 60 s (`kafka.log.suppressed` on the next one), so a broker outage logs
+  a line a minute per client instead of ~20 a second.
 - **Traces**: one trace per request, across both apps —
   `POST /tasks` → Valkey (idempotency) → Postgres (`BEGIN` / `INSERT` /
   `COMMIT`) → `send tasks.events` → worker `process tasks.events` →
