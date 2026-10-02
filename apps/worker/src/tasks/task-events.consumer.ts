@@ -52,6 +52,23 @@ const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const PROCESS_RETRY_BASE_MS = 1_000;
 const PROCESS_RETRY_MAX_MS = 60_000;
+// A full job queue is re-checked sooner: it drains on its own, and a long
+// pause would leave the worker idle after it has.
+const BACKPRESSURE_RETRY_MAX_MS = 5_000;
+// How stale the job-queue depth may be before it is read again.
+const QUEUE_DEPTH_TTL_MS = 1_000;
+
+/**
+ * The job queue is above WORKER_QUEUE_MAX_WAITING: back-pressure, not a
+ * failure. The partition is paused like for any failed hand-off, so the
+ * backlog stays in Kafka (built for it) instead of filling Valkey.
+ */
+export class JobQueueFullError extends Error {
+  constructor(readonly waiting: number) {
+    super(`job queue holds ${waiting} waiting jobs`);
+    this.name = "JobQueueFullError";
+  }
+}
 
 @Injectable()
 export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -67,6 +84,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   // client reports into it (librdkafka statistics → kafka.client.*).
   private readonly clientMetrics = kafkaClientMetrics("consumer");
   private readonly partitionsConcurrently: number;
+  private readonly maxWaiting: number;
+  private queueDepth: { waiting: number; at: number } | undefined;
   private readonly logger: ReturnType<AppLogger["child"]>;
   // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
   // and that is what dashboards expect); OTel semconv would spell it
@@ -87,6 +106,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     const concurrently = Number(config.get<string>("KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY"));
     this.partitionsConcurrently =
       Number.isInteger(concurrently) && concurrently > 0 ? concurrently : 1;
+    const maxWaiting = Number(config.get<string>("WORKER_QUEUE_MAX_WAITING"));
+    this.maxWaiting = Number.isInteger(maxWaiting) && maxWaiting > 0 ? maxWaiting : 10_000;
     // Critical: a worker that cannot consume is not ready. assignment() throws
     // unless the consumer is connected, which is exactly the cheap check we want.
     readiness.register({
@@ -184,17 +205,24 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       // Not committed: pause this partition so the redelivery is spaced out,
       // then throw so the layer seeks back to this exact offset.
       const failures = this.processFailures.get(`${topic}:${partition}`) ?? 0;
-      const delay = Math.min(PROCESS_RETRY_BASE_MS * 2 ** failures, PROCESS_RETRY_MAX_MS);
+      const cap =
+        err instanceof JobQueueFullError ? BACKPRESSURE_RETRY_MAX_MS : PROCESS_RETRY_MAX_MS;
+      const delay = Math.min(PROCESS_RETRY_BASE_MS * 2 ** failures, cap);
       this.processFailures.set(`${topic}:${partition}`, failures + 1);
-      this.logger.warn(
-        {
-          ...ecsError(err as Error),
-          "kafka.topic": topic,
-          "kafka.offset": message.offset,
-          "retry.delay_ms": delay,
-        },
-        "Failed to handle event — partition paused, offset not committed",
-      );
+      const fields = {
+        ...ecsError(err),
+        "kafka.topic": topic,
+        "kafka.offset": message.offset,
+        "retry.delay_ms": delay,
+      };
+      if (err instanceof JobQueueFullError) {
+        this.logger.info(
+          { ...fields, "bullmq.waiting": err.waiting },
+          "Job queue full — partition paused, the backlog stays in Kafka",
+        );
+      } else {
+        this.logger.warn(fields, "Failed to handle event — partition paused, offset not committed");
+      }
       const resume = payload.pause();
       setTimeout(() => {
         // The consumer may have disconnected meanwhile — resume() then throws,
@@ -233,6 +261,21 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     }
   }
 
+  /**
+   * Throws JobQueueFullError while the job queue is at WORKER_QUEUE_MAX_WAITING.
+   * The depth is read at most once a second — not one Valkey round trip per
+   * message — and counts this consumer's own enqueues in between.
+   */
+  private async ensureQueueRoom(): Promise<void> {
+    const now = Date.now();
+    if (this.queueDepth === undefined || now - this.queueDepth.at > QUEUE_DEPTH_TTL_MS) {
+      this.queueDepth = { waiting: await this.queue.getWaitingCount(), at: now };
+    }
+    if (this.queueDepth.waiting >= this.maxWaiting) {
+      throw new JobQueueFullError(this.queueDepth.waiting);
+    }
+  }
+
   private async ensureTopic(kafka: KafkaJS.Kafka): Promise<void> {
     const admin = kafka.admin();
     try {
@@ -262,10 +305,14 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     if (typeof decoded !== "object" || decoded === null) return;
     const event = decoded as TaskCreatedEvent;
     if (event.type !== "task.created") return;
+    await this.ensureQueueRoom();
     this.consumed.add(1);
     // Hand off to the job system; jobId = task id makes redelivery idempotent.
     // addTraced stores the trace context with the job for the processor.
     await addTraced(this.queue, "process-task", event, { jobId: event.id });
+    // Count our own enqueue into the cached depth: a burst inside one cache
+    // window would otherwise all pass on a stale "0".
+    if (this.queueDepth !== undefined) this.queueDepth.waiting++;
     this.logger.info({ "task.id": event.id }, "task.created consumed → enqueued");
   }
 

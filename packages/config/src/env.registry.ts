@@ -915,6 +915,16 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
+    key: "WORKER_QUEUE_MAX_WAITING",
+    yaml: "worker.queue_max_waiting",
+    required: false,
+    description:
+      "Waiting jobs in the worker's BullMQ queue above which the Kafka consumer pauses its " +
+      "partitions (back-pressure: the backlog stays in Kafka, not in Valkey). Default 10000.",
+    usedIn: ["apps/worker"],
+  },
+
+  {
     key: "KAFKA_SOCKET_KEEPALIVE",
     yaml: "kafka.socket_keepalive",
     required: false,
@@ -994,9 +1004,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     required: false,
     default: "10",
     description:
-      "Failed sends after which an outbox row is no longer published (a poison row: it failed " +
-      "while others in its batch went out). It stays in the table with last_error — the " +
-      "outbox.dead gauge counts them.",
+      "Failed sends after which an outbox row is no longer published. Only non-retryable " +
+      "failures count (KAFKA_SEND_ERRORS: too large, invalid, unknown topic, no access) — an " +
+      "outage or back-pressure never does. The row stays with last_error; outbox.dead counts them.",
     usedIn: ["outbox"],
   },
 
