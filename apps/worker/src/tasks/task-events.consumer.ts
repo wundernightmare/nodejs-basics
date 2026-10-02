@@ -133,8 +133,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
    */
   private async connectWithRetry(): Promise<void> {
     if (this.stopped) return;
-    // The Kafka instance (and the admin client ensureTopic makes from it)
-    // takes the shared client config only — consumer properties there make
+    // The Kafka instance takes the shared client config only — consumer properties there make
     // librdkafka warn "is a consumer property" on every connect.
     const rdkafka = buildConsumerConfig(this.config, GROUP_ID, "worker");
     const kafka = new KafkaJS.Kafka({
@@ -145,10 +144,6 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     this.consumer = consumer;
 
     try {
-      // Ensure the topic exists before consuming/producing — the shared
-      // producer runs with allowAutoTopicCreation:false, so nothing else
-      // creates it. Idempotent: an already-existing topic is fine.
-      await this.ensureTopic(kafka);
       // Not raced against a timer: a connect in flight (it waits up to 30 s
       // for metadata) must settle before the client can be dropped — a
       // disconnect() under it makes the late "ready" throw from an event
@@ -273,23 +268,6 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     }
     if (this.queueDepth.waiting >= this.maxWaiting) {
       throw new JobQueueFullError(this.queueDepth.waiting);
-    }
-  }
-
-  private async ensureTopic(kafka: KafkaJS.Kafka): Promise<void> {
-    const admin = kafka.admin();
-    try {
-      await admin.connect();
-      await admin.createTopics({ topics: [{ topic: TASK_EVENTS_TOPIC, numPartitions: 1 }] });
-      this.logger.info({ "kafka.topic": TASK_EVENTS_TOPIC }, "Ensured Kafka topic exists");
-    } catch (err) {
-      // TOPIC_ALREADY_EXISTS (and races with another instance) are expected.
-      this.logger.info(
-        { ...ecsError(err as Error), "kafka.topic": TASK_EVENTS_TOPIC },
-        "Topic create skipped (already exists?)",
-      );
-    } finally {
-      await admin.disconnect();
     }
   }
 

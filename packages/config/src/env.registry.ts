@@ -691,19 +691,6 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
-    key: "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS",
-    yaml: "kafka.consumer.allow_auto_create_topics",
-    required: false,
-    default: "true",
-    description:
-      "librdkafka allow.auto.create.topics for consumers: a subscribe creates a " +
-      "missing topic (the broker's auto-create must be on, as in docker/deps.yml), so a " +
-      "worker that starts before the first producer gets its assignment at once. " +
-      "Set false where topics are provisioned.",
-    usedIn: ["kafka", "apps/worker"],
-  },
-
-  {
     key: "KAFKA_SASL_PASSWORD_FILE",
     yaml: "kafka.sasl.password_file",
     required: false,
@@ -858,14 +845,6 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
-    key: "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES",
-    yaml: "kafka.producer.queue_max_messages",
-    required: false,
-    description: "Producer queue.buffering.max.messages. Default 100000.",
-    usedIn: ["kafka"],
-  },
-
-  {
     key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
     yaml: "kafka.producer.extra_properties",
     required: false,
@@ -873,25 +852,6 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
       "JSON object of librdkafka properties for the producer only, applied after " +
       "KAFKA_EXTRA_PROPERTIES.",
     usedIn: ["kafka"],
-  },
-
-  {
-    key: "KAFKA_CONSUMER_QUEUED_MIN_MESSAGES",
-    yaml: "kafka.consumer.queued_min_messages",
-    required: false,
-    description:
-      "Consumer queued.min.messages (prefetch per partition). Default 1000 (librdkafka: 100000).",
-    usedIn: ["kafka", "apps/worker"],
-  },
-
-  {
-    key: "KAFKA_CONSUMER_QUEUED_MAX_KBYTES",
-    yaml: "kafka.consumer.queued_max_kbytes",
-    required: false,
-    description:
-      "Consumer queued.max.messages.kbytes — prefetch memory bound. Default 4096 (librdkafka: " +
-      "65536) so a deep backlog cannot OOM the pod.",
-    usedIn: ["kafka", "apps/worker"],
   },
 
   {
@@ -922,14 +882,6 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
       "Waiting jobs in the worker's BullMQ queue above which the Kafka consumer pauses its " +
       "partitions (back-pressure: the backlog stays in Kafka, not in Valkey). Default 10000.",
     usedIn: ["apps/worker"],
-  },
-
-  {
-    key: "KAFKA_SOCKET_KEEPALIVE",
-    yaml: "kafka.socket_keepalive",
-    required: false,
-    description: "socket.keepalive.enable (true|false). Default true.",
-    usedIn: ["kafka"],
   },
 
   {
@@ -1004,9 +956,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     required: false,
     default: "10",
     description:
-      "Failed sends after which an outbox row is no longer published. Only non-retryable " +
-      "failures count (KAFKA_SEND_ERRORS: too large, invalid, unknown topic, no access) — an " +
-      "outage or back-pressure never does. The row stays with last_error; outbox.dead counts them.",
+      "Failed sends after which an outbox row is no longer published. Only a rejected record " +
+      "counts (KAFKA_SEND_ERRORS: too large, invalid) — an outage, back-pressure or a missing " +
+      "topic never does. The row stays with last_error; outbox.dead counts them.",
     usedIn: ["outbox"],
   },
 

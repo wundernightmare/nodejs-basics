@@ -17,16 +17,14 @@
  *
  * Before an error reaches you, two layers already retried:
  *   - librdkafka retries broker-side failures (leader moves, timeouts,
- *     lost connections) until `message.timeout.ms` (30 s) — a `timeout` or
- *     `unavailable` you see means that budget is spent;
+ *     lost connections) until `message.timeout.ms` (30 s) — an `unavailable`
+ *     you see means that budget is spent;
  *   - send() itself waits out short local back-pressure (`queue_full`,
  *     `not_connected`) for up to `waitMs` (default 5 s, never past the
  *     request's deadline) — pass `{ waitMs: 0 }` to fail fast.
  *
- * `retryable: false` means the same record will fail the same way: an
- * outbox-style caller should stop retrying it and alert ("poison" record).
- * An unrecognised error is retryable on purpose — keeping an event is
- * recoverable, giving up on one by mistake is not.
+ * `retryable: false` (kind `rejected`) means the same record will fail the
+ * same way: an outbox-style caller stops retrying it and alerts ("poison").
  */
 
 /** librdkafka error codes send() distinguishes (lib/error.js `codes`). */
@@ -65,40 +63,32 @@ export interface KafkaSendErrorSpec {
   retryable: boolean;
   /** librdkafka codes of this kind. */
   codes: readonly number[];
-  /** What happened, and what a caller should do. */
-  description: string;
 }
 
 /**
- * The registry. Keys are the `kind` of a {@link KafkaSendError}.
+ * The registry. Keys are the `kind` of a {@link KafkaSendError}. Only
+ * `rejected` is not retryable: everything else is the broker, the network or
+ * the deployment, and an event kept for later is never lost.
  */
 export const KAFKA_SEND_ERRORS = {
-  /** The producer is (re)connecting. send() waits for it up to `waitMs`. Retry later. */
-  not_connected: {
-    retryable: true,
-    codes: [],
-    description: "The producer is not connected yet (or is reconnecting). Retry later.",
-  },
+  /** The producer is (re)connecting; send() waits for it up to `waitMs`. */
+  not_connected: { retryable: true, codes: [] },
   /**
    * The local send queue is full (queue.buffering.max.kbytes, 64 MiB): the
-   * broker is slower than the app. send() waits for room up to `waitMs`.
-   * Retry later — this is back-pressure, not a broken record.
+   * broker is slower than the app. Back-pressure — send() waits up to
+   * `waitMs` for a single-message record.
    */
-  queue_full: {
-    retryable: true,
-    codes: [ERR.LOCAL_QUEUE_FULL],
-    description: "The local send queue is full — back-pressure. Retry later, slower.",
-  },
-  /** Not delivered within message.timeout.ms; librdkafka already retried. Retry later. */
-  timeout: {
-    retryable: true,
-    codes: [ERR.LOCAL_MSG_TIMED_OUT, ERR.LOCAL_TIMED_OUT, ERR.REQUEST_TIMED_OUT],
-    description: "Not acknowledged within message.timeout.ms (30 s). Retry later.",
-  },
-  /** Brokers, leaders or replicas unavailable; librdkafka already retried. Retry later. */
+  queue_full: { retryable: true, codes: [ERR.LOCAL_QUEUE_FULL] },
+  /**
+   * Brokers, leaders or replicas unavailable, or not acknowledged within
+   * message.timeout.ms (30 s) — librdkafka already retried all of it.
+   */
   unavailable: {
     retryable: true,
     codes: [
+      ERR.LOCAL_MSG_TIMED_OUT,
+      ERR.LOCAL_TIMED_OUT,
+      ERR.REQUEST_TIMED_OUT,
       ERR.LOCAL_TRANSPORT,
       ERR.LOCAL_ALL_BROKERS_DOWN,
       ERR.LEADER_NOT_AVAILABLE,
@@ -109,59 +99,44 @@ export const KAFKA_SEND_ERRORS = {
       ERR.KAFKA_STORAGE_ERROR,
       ERR.THROTTLING_QUOTA_EXCEEDED,
     ],
-    description: "Brokers or partition leaders unavailable. Retry later.",
   },
   /**
-   * The producer hit a fatal error and is being replaced (idempotence state
-   * broken). The record was not written. Retry later — the new producer will.
+   * The topic does not exist (and the broker does not auto-create it) or the
+   * credentials / ACLs refuse the write: the deployment, not the record. It
+   * goes through once an operator provisions the topic or the access.
    */
-  fatal: {
+  not_provisioned: {
     retryable: true,
-    codes: [ERR.LOCAL_FATAL],
-    description: "The producer failed fatally and is being replaced. Retry later.",
-  },
-  /** Larger than message.max.bytes (1 MB) — on the client or the broker. Not retryable. */
-  message_too_large: {
-    retryable: false,
-    codes: [ERR.MSG_SIZE_TOO_LARGE, ERR.RECORD_LIST_TOO_LARGE],
-    description: "The record exceeds message.max.bytes. Shrink or split it.",
-  },
-  /** The broker rejected the record (corrupt, invalid, policy). Not retryable. */
-  invalid_record: {
-    retryable: false,
-    codes: [ERR.INVALID_MSG, ERR.INVALID_RECORD, ERR.POLICY_VIOLATION, ERR.LOCAL_BAD_MSG],
-    description: "The broker rejected the record as invalid. Fix the record.",
-  },
-  /**
-   * The topic (or partition) does not exist and is not auto-created. Not
-   * retryable as such — create the topic, then resend.
-   */
-  unknown_topic: {
-    retryable: false,
     codes: [
       ERR.UNKNOWN_TOPIC_OR_PART,
-      ERR.TOPIC_EXCEPTION,
       ERR.LOCAL_UNKNOWN_TOPIC,
       ERR.LOCAL_UNKNOWN_PARTITION,
-    ],
-    description: "The topic does not exist (or its name is invalid). Create it, then resend.",
-  },
-  /** ACLs or credentials refuse the write. Not retryable — an operator fixes access. */
-  unauthorized: {
-    retryable: false,
-    codes: [
       ERR.TOPIC_AUTHORIZATION_FAILED,
       ERR.CLUSTER_AUTHORIZATION_FAILED,
       ERR.LOCAL_AUTHENTICATION,
     ],
-    description: "Not authorised to write to the topic. Fix the ACL / credentials.",
   },
-  /** Anything not listed above. Retryable, so an event is kept rather than lost. */
-  unknown: {
-    retryable: true,
-    codes: [],
-    description: "Unrecognised failure — kept retryable so no event is dropped.",
+  /** The producer failed fatally (idempotence state) and is being replaced. */
+  fatal: { retryable: true, codes: [ERR.LOCAL_FATAL] },
+  /**
+   * The record itself: larger than message.max.bytes, invalid, refused by a
+   * broker policy, or an invalid topic name. Resending the same record fails
+   * the same way — fix, split or park it.
+   */
+  rejected: {
+    retryable: false,
+    codes: [
+      ERR.MSG_SIZE_TOO_LARGE,
+      ERR.RECORD_LIST_TOO_LARGE,
+      ERR.INVALID_MSG,
+      ERR.INVALID_RECORD,
+      ERR.POLICY_VIOLATION,
+      ERR.LOCAL_BAD_MSG,
+      ERR.TOPIC_EXCEPTION,
+    ],
   },
+  /** Anything not listed: retryable, so an event is kept rather than lost. */
+  unknown: { retryable: true, codes: [] },
 } as const satisfies Record<string, KafkaSendErrorSpec>;
 
 export type KafkaSendErrorKind = keyof typeof KAFKA_SEND_ERRORS;

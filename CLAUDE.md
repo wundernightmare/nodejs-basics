@@ -165,7 +165,8 @@ high-signal, easy-to-miss bits.
 - **Kafka client config** (`@base/kafka` builders): lz4, producer queue
   bounded to 64 MiB (`KAFKA_PRODUCER_QUEUE_MAX_KBYTES`; librdkafka's default
   is 1 GiB — full → QUEUE_FULL, the outbox retries), consumer prefetch 4 MiB,
-  keepalive on. Any librdkafka property: `KAFKA_EXTRA_PROPERTIES` (all
+  keepalive on. Topics are the broker's call (dev auto-creates, a provisioned
+  cluster refuses — `not_provisioned` is retryable). Any librdkafka property: `KAFKA_EXTRA_PROPERTIES` (all
   clients) then `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES`. A new client
   passes `stats_cb: kafkaClientMetrics(role).statsCb` — the kafkajs-compat
   clients have no event surface, statistics are the only metrics source.

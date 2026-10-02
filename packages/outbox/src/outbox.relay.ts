@@ -7,11 +7,10 @@
  * without two of them sending the same row. Sent rows are deleted; a failed
  * send is judged by the @base/kafka error registry (KAFKA_SEND_ERRORS):
  *
- *   - retryable (broker down, queue full, timeout, reconnecting, unknown): the
- *     row stays as it is and goes out on a later pass — never counted, so a
- *     long outage or sustained back-pressure cannot dead-letter good events;
- *   - not retryable (too large, invalid, unknown topic, no access): a poison
- *     row — `attempts + 1` and `last_error`; after OUTBOX_MAX_ATTEMPTS it is
+ *   - retryable (broker down, queue full, reconnecting, topic not provisioned
+ *     yet, unknown): the row stays as it is and goes out on a later pass —
+ *     never counted, so no outage or back-pressure can dead-letter an event;
+ *   - not retryable (`rejected`: too large, invalid): a poison row — `attempts + 1` and `last_error`; after OUTBOX_MAX_ATTEMPTS it is
  *     left in the table for an operator (the `outbox.dead` gauge) instead of
  *     being retried forever.
  *

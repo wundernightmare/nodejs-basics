@@ -69,11 +69,6 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     this.clientMetrics = kafkaClientMetrics("producer");
   }
 
-  /** Whether send() can deliver right now. */
-  isConnected(): boolean {
-    return this.connected;
-  }
-
   /**
    * Send `record` inside a PRODUCER span, with the trace context injected into
    * the record headers so the consumer's span continues the caller's trace.
@@ -162,7 +157,6 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     return kafka.producer({
       ...buildProducerConfig(this.config),
       stats_cb: this.clientMetrics.statsCb,
-      kafkaJS: { allowAutoTopicCreation: false },
     });
   }
 

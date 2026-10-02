@@ -185,7 +185,7 @@ export function buildKafkaClientConfig(
   // TCP keepalive on: cloud load balancers and NAT gateways drop idle
   // connections silently, and a producer that only finds out on its next
   // send pays a full request timeout first.
-  out["socket.keepalive.enable"] = readBool(config, "KAFKA_SOCKET_KEEPALIVE") ?? true;
+  out["socket.keepalive.enable"] = true;
 
   // librdkafka statistics (JSON every N ms) feed the client metrics — see
   // kafka-metrics.ts. 0 turns them off.
@@ -217,8 +217,6 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
     // memory goes. 64 MiB bounds it; a full queue fails send() with
     // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
     "queue.buffering.max.kbytes": readNumber(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES") ?? 65_536,
-    "queue.buffering.max.messages":
-      readNumber(config, "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES") ?? 100_000,
   };
   // Re-apply the escape hatches so they win over role flags too: the shared
   // one, then the producer-only one.
@@ -247,12 +245,11 @@ export function buildConsumerConfig(
     ...base,
     "group.id": groupId,
     "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET") ?? "latest",
-    // A consumer that subscribes before the producer's first message would
-    // otherwise sit on an empty assignment until the next metadata refresh
-    // (5 min by default): with the broker's auto-create on (docker/deps.yml),
-    // subscribing creates the topic. Off in environments where topics are
-    // provisioned (KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS=false).
-    "allow.auto.create.topics": readBool(config, "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS") ?? true,
+    // Topics are the broker's call: a dev broker auto-creates them
+    // (docker/deps.yml), a provisioned cluster refuses — so the client may
+    // always ask. Without it a consumer that subscribes before the first
+    // message sits on an empty assignment until the next metadata refresh.
+    "allow.auto.create.topics": true,
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
     "session.timeout.ms": readNumber(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
     "max.poll.interval.ms": readNumber(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
@@ -260,9 +257,9 @@ export function buildConsumerConfig(
     // throughput (100k messages, up to 64 MiB per partition): a consumer that
     // handles one message at a time and wakes up to a deep backlog pulls
     // hundreds of MB in faster than it drains them and is OOM-killed before
-    // its first commit — a crash loop.
-    "queued.min.messages": readNumber(config, "KAFKA_CONSUMER_QUEUED_MIN_MESSAGES") ?? 1_000,
-    "queued.max.messages.kbytes": readNumber(config, "KAFKA_CONSUMER_QUEUED_MAX_KBYTES") ?? 4_096,
+    // its first commit — a crash loop. Tune via KAFKA_CONSUMER_EXTRA_PROPERTIES.
+    "queued.min.messages": 1_000,
+    "queued.max.messages.kbytes": 4_096,
   };
   return {
     ...out,

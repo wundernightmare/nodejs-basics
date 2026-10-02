@@ -9,34 +9,22 @@
  *   kafka.producer({ ...buildProducerConfig(config), stats_cb: m.statsCb });
  *   …on shutdown: m.dispose();
  *
- * Only what the application can act on — librdkafka reports hundreds of
- * fields, most of them broker internals better read from the broker:
+ * Only what an alert is built on — librdkafka reports hundreds of fields:
  *
  *   both      kafka.client.brokers.up                 gauge    brokers in state UP
- *             kafka.client.request.errors             counter  {error.type: timeout|transmit|receive}
- *   producer  kafka.client.producer.queue.messages    gauge    messages waiting in the local queue
- *             kafka.client.producer.queue.size        gauge    bytes in it …
- *             kafka.client.producer.queue.size.limit  gauge    … and its bound (queue.buffering.max.kbytes)
- *             kafka.client.messages.sent              counter  messages delivered to brokers
- *             kafka.client.broker.rtt                 gauge    p99 request round trip per broker
+ *             kafka.client.request.errors             counter  timeouts + transmit/receive errors
+ *   producer  kafka.client.producer.queue.size        gauge    bytes in the local send queue …
+ *             kafka.client.producer.queue.size.limit  gauge    … and its bound: full → QUEUE_FULL
  *   consumer  kafka.client.consumer.lag.max           gauge    worst assigned partition
  *             kafka.client.consumer.lag.sum           gauge    total over assigned partitions
- *             kafka.client.consumer.fetch_queue.size  gauge    prefetched bytes (queued.max.messages.kbytes bound)
  *             kafka.client.consumer.rebalances        counter
- *             kafka.client.messages.received          counter  messages fetched from brokers
  *
- * Cardinality is fixed: no series carries a topic or partition label, so a
- * client on hundreds of topics exports the same ~10 series as one on a
- * single topic (per-partition lag belongs to the broker side — Redpanda's
- * consumer-group metrics, kminion, Burrow — exported once, not per pod).
- * The statistics JSON itself still lists every topic and partition: ~2.4 MB
- * and ~5 ms of JSON.parse for 300 topics × 12 partitions, per interval —
- * raise KAFKA_STATISTICS_INTERVAL_MS for thousands of topics.
- *
- * A consumer's broker rtt is left out on purpose: it includes the fetch long
- * poll (fetch.wait.max.ms), so it measures the poll, not the network.
- * Every series carries `kafka.client.role`; a snapshot older than `maxAgeMs`
- * (the client stopped reporting — disconnected) is not observed.
+ * Cardinality is fixed — no topic or partition label (per-partition lag is
+ * the broker side's job: exported once, not per pod). The statistics JSON
+ * still lists every topic and partition (~2.4 MB / ~5 ms to parse at 300
+ * topics × 12 partitions): raise KAFKA_STATISTICS_INTERVAL_MS for thousands.
+ * A snapshot older than `maxAgeMs` (the client stopped reporting) is not
+ * observed.
  */
 import {
   type Attributes,
@@ -55,33 +43,19 @@ export interface KafkaClientMetrics {
 }
 
 /** The subset of librdkafka's statistics JSON read here (STATISTICS.md). */
-export interface RdKafkaStats {
-  msg_cnt?: number;
+interface RdKafkaStats {
   msg_size?: number;
   msg_size_max?: number;
-  txmsgs?: number;
-  rxmsgs?: number;
   brokers?: Record<
     string,
-    {
-      nodeid?: number;
-      nodename?: string;
-      state?: string;
-      req_timeouts?: number;
-      txerrs?: number;
-      rxerrs?: number;
-      rtt?: { p99?: number };
-    }
+    { nodeid?: number; state?: string; req_timeouts?: number; txerrs?: number; rxerrs?: number }
   >;
-  topics?: Record<
-    string,
-    { partitions?: Record<string, { consumer_lag?: number; fetchq_size?: number }> }
-  >;
+  topics?: Record<string, { partitions?: Record<string, { consumer_lag?: number }> }>;
   cgrp?: { rebalance_cnt?: number };
 }
 
 /** librdkafka hands the statistics over as `{ message: "<json>" }` (or the bare JSON). */
-export function parseStats(event: unknown): RdKafkaStats | undefined {
+function parseStats(event: unknown): RdKafkaStats | undefined {
   const raw =
     typeof event === "string"
       ? event
@@ -112,29 +86,14 @@ export function kafkaClientMetrics(
     description: "Request timeouts and transmit/receive errors, summed over brokers.",
     unit: "{error}",
   });
-  const instruments: Observable[] = [brokersUp, requestErrors];
-
-  const queueMessages = meter.createObservableGauge("kafka.client.producer.queue.messages", {
-    description: "Messages waiting in the producer's local queue (not yet acknowledged).",
-    unit: "{message}",
-  });
   const queueSize = meter.createObservableGauge("kafka.client.producer.queue.size", {
-    description: "Bytes in the producer's local queue.",
+    description: "Bytes in the producer's local send queue.",
     unit: "By",
   });
   const queueLimit = meter.createObservableGauge("kafka.client.producer.queue.size.limit", {
     description: "The local queue's bound (queue.buffering.max.kbytes); full → QUEUE_FULL.",
     unit: "By",
   });
-  const sent = meter.createObservableCounter("kafka.client.messages.sent", {
-    description: "Messages the producer delivered to brokers.",
-    unit: "{message}",
-  });
-  const rtt = meter.createObservableGauge("kafka.client.broker.rtt", {
-    description: "p99 request round-trip time per broker (producer).",
-    unit: "ms",
-  });
-
   const lagMax = meter.createObservableGauge("kafka.client.consumer.lag.max", {
     description: "Largest lag (messages behind the partition end) over the assigned partitions.",
     unit: "{message}",
@@ -143,20 +102,14 @@ export function kafkaClientMetrics(
     description: "Total lag over the assigned partitions.",
     unit: "{message}",
   });
-  const fetchQueue = meter.createObservableGauge("kafka.client.consumer.fetch_queue.size", {
-    description: "Bytes prefetched and not yet handed to the application.",
-    unit: "By",
-  });
   const rebalances = meter.createObservableCounter("kafka.client.consumer.rebalances", {
     description: "Consumer group rebalances this client went through.",
     unit: "{rebalance}",
   });
-  const received = meter.createObservableCounter("kafka.client.messages.received", {
-    description: "Messages the consumer fetched from brokers.",
-    unit: "{message}",
-  });
-  if (role === "producer") instruments.push(queueMessages, queueSize, queueLimit, sent, rtt);
-  else instruments.push(lagMax, lagSum, fetchQueue, rebalances, received);
+  const instruments: Observable[] =
+    role === "producer"
+      ? [brokersUp, requestErrors, queueSize, queueLimit]
+      : [brokersUp, requestErrors, lagMax, lagSum, rebalances];
 
   let latest: RdKafkaStats | undefined;
   let receivedAt = 0;
@@ -167,48 +120,21 @@ export function kafkaClientMetrics(
     // Real brokers only: bootstrap and coordinator entries have nodeid -1.
     const brokers = Object.values(s.brokers ?? {}).filter((b) => (b.nodeid ?? -1) >= 0);
     result.observe(brokersUp, brokers.filter((b) => b.state === "UP").length, base);
-    const sum = (pick: (b: (typeof brokers)[number]) => number | undefined): number =>
-      brokers.reduce((n, b) => n + (pick(b) ?? 0), 0);
-    result.observe(
-      requestErrors,
-      sum((b) => b.req_timeouts),
-      {
-        ...base,
-        "error.type": "timeout",
-      },
+    const errors = brokers.reduce(
+      (n, b) => n + (b.req_timeouts ?? 0) + (b.txerrs ?? 0) + (b.rxerrs ?? 0),
+      0,
     );
-    result.observe(
-      requestErrors,
-      sum((b) => b.txerrs),
-      { ...base, "error.type": "transmit" },
-    );
-    result.observe(
-      requestErrors,
-      sum((b) => b.rxerrs),
-      { ...base, "error.type": "receive" },
-    );
+    result.observe(requestErrors, errors, base);
 
     if (role === "producer") {
-      result.observe(queueMessages, s.msg_cnt ?? 0, base);
       result.observe(queueSize, s.msg_size ?? 0, base);
       if (s.msg_size_max !== undefined) result.observe(queueLimit, s.msg_size_max, base);
-      result.observe(sent, s.txmsgs ?? 0, base);
-      for (const b of brokers) {
-        // librdkafka reports microseconds; 0 until a request completed.
-        const p99 = b.rtt?.p99 ?? 0;
-        if (p99 > 0) {
-          result.observe(rtt, p99 / 1000, { ...base, "kafka.broker.id": String(b.nodeid) });
-        }
-      }
       return;
     }
-
-    let fetched = 0;
     let maxLag = 0;
     let sumLag = 0;
     for (const t of Object.values(s.topics ?? {})) {
       for (const [partition, p] of Object.entries(t.partitions ?? {})) {
-        fetched += p.fetchq_size ?? 0;
         // -1: the internal UA partition, or a lag not known yet.
         const partitionLag = p.consumer_lag ?? -1;
         if (partition === "-1" || partitionLag < 0) continue;
@@ -218,9 +144,7 @@ export function kafkaClientMetrics(
     }
     result.observe(lagMax, maxLag, base);
     result.observe(lagSum, sumLag, base);
-    result.observe(fetchQueue, fetched, base);
     result.observe(rebalances, s.cgrp?.rebalance_cnt ?? 0, base);
-    result.observe(received, s.rxmsgs ?? 0, base);
   };
   meter.addBatchObservableCallback(observe, instruments);
 
