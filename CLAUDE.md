@@ -152,9 +152,10 @@ high-signal, easy-to-miss bits.
   `uow.runInTransaction` (same transaction as the write), `OutboxRelay`
   publishes (SKIP LOCKED, at least once — consumers must be idempotent). Do
   not call `kafka.send()` from a request path for an event that must not be
-  lost. The relay keeps the request's trace (context stored per row). A row
-  that fails while others go out counts `attempts`; at `OUTBOX_MAX_ATTEMPTS`
-  it stays in the table (`outbox.dead` gauge) instead of blocking the batch.
+  lost. The relay keeps the request's trace (context stored per row). Only a
+  non-retryable `KafkaSendError` counts `attempts`; at `OUTBOX_MAX_ATTEMPTS`
+  the row stays in the table (`outbox.dead` gauge). Retryable failures (outage,
+  queue full) never count — never dead-letter an event for back-pressure.
 - **Kafka consumers commit explicitly**: `enable.auto.commit=false` and the
   kafkajs-compat layer only *stores* offsets — call `consumer.commitOffsets()`
   after a handled message, or a restart (`auto.offset.reset: latest`) skips
@@ -173,14 +174,21 @@ high-signal, easy-to-miss bits.
 - **Kafka connection lifecycle**: `KafkaProducerService` connects in the
   background and retries with backoff (a kafkajs-compat client whose
   connect() failed is dead — make a fresh one), replaces a producer on a
-  fatal error, and `send()` throws `KafkaNotConnectedError` until connected
-  (the outbox retries). Shutdown never awaits a pending connect (it waits on
+  fatal error. `send()` throws only `KafkaSendError` (`kafka-errors.ts`:
+  the `KAFKA_SEND_ERRORS` registry — kind, retryable, what to do); it waits out
+  `not_connected` and single-message `queue_full` for `waitMs` (5 s, capped by
+  the request deadline; a batch is never resent — the client may have
+  enqueued part of it). New failure modes go into the registry, not into
+  callers. Shutdown never awaits a pending connect (it waits on
   a 30 s metadata request). The `Kafka` instance gets the shared client
   config only — role properties there log CONFWARN on every connect.
 - **librdkafka logs** go through `kafkaLogger`: `fac`/`name` →
   `kafka.log.facility`/`kafka.client.name`, repeats folded for 60 s
   (`kafka.log.suppressed`). Level is INFO regardless of the runtime level;
   debug a client with `KAFKA_EXTRA_PROPERTIES='{"debug":"broker,protocol"}'`.
+- **Consumer back-pressure**: the worker pauses a partition (same path as a
+  failed hand-off) while BullMQ holds `WORKER_QUEUE_MAX_WAITING` jobs — keep
+  backlogs in Kafka, not in Valkey.
 - **Consumer parallelism**: `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` (default
   1) — partitions in parallel, order within a partition kept; backoff state is
   per partition. For many topics consider

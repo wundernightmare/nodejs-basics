@@ -4,18 +4,19 @@
  * Every OUTBOX_POLL_INTERVAL_MS (sooner while there is a backlog) one
  * transaction takes up to OUTBOX_BATCH_SIZE rows with FOR UPDATE SKIP LOCKED,
  * sends them and deletes them. SKIP LOCKED lets every replica run a relay
- * without two of them sending the same row. When every send of a batch fails
- * (the broker is down) the batch rolls back untouched and goes out on a later
- * tick (backoff up to 30 s).
+ * without two of them sending the same row. Sent rows are deleted; a failed
+ * send is judged by the @base/kafka error registry (KAFKA_SEND_ERRORS):
  *
- * Poison rows: when only some sends fail, the broker is up and those rows are
- * the problem (oversized, a topic that does not exist). The good rows are
- * deleted, the failed ones get `attempts + 1` and `last_error`; after
- * OUTBOX_MAX_ATTEMPTS a row is left in the table for an operator (the
- * `outbox.dead` gauge) instead of blocking the batch forever. A row that is
- * retried gives up its order relative to later rows of its key. A batch made
- * only of poison rows looks like a broker outage and is not counted — it is
- * counted once a good row shares its batch.
+ *   - retryable (broker down, queue full, timeout, reconnecting, unknown): the
+ *     row stays as it is and goes out on a later pass — never counted, so a
+ *     long outage or sustained back-pressure cannot dead-letter good events;
+ *   - not retryable (too large, invalid, unknown topic, no access): a poison
+ *     row — `attempts + 1` and `last_error`; after OUTBOX_MAX_ATTEMPTS it is
+ *     left in the table for an operator (the `outbox.dead` gauge) instead of
+ *     being retried forever.
+ *
+ * Any failure backs the relay off (up to 30 s). A row that is retried gives
+ * up its order relative to later rows of its key.
  *
  * At least once, not exactly once: a crash between the broker's ack and the
  * COMMIT sends the batch again — consumers are idempotent (the worker's BullMQ
@@ -37,7 +38,7 @@ import { context, metrics, propagation, ROOT_CONTEXT } from "@opentelemetry/api"
 import type { Pool } from "pg";
 
 import { PG_POOL } from "@base/database";
-import { KafkaProducerService } from "@base/kafka";
+import { KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 
 interface OutboxRow {
@@ -68,7 +69,8 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
   private running: Promise<void> = Promise.resolve();
   private stopping = false;
   private failures = 0;
-  private poisoned = false; // the last pass had rows that failed while others went out
+  // The last pass had rows that failed while it still made progress.
+  private partial = false;
 
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
@@ -148,46 +150,56 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
       const results = await Promise.allSettled(
         rows.map((row) =>
           context.with(propagation.extract(ROOT_CONTEXT, row.headers), () =>
-            this.kafka.send({
-              topic: row.topic,
-              messages: [
-                { key: row.key, value: JSON.stringify(row.payload), headers: row.headers },
-              ],
-            }),
+            this.kafka.send(
+              {
+                topic: row.topic,
+                messages: [
+                  { key: row.key, value: JSON.stringify(row.payload), headers: row.headers },
+                ],
+              },
+              // No waiting inside send(): the relay has its own backoff.
+              { waitMs: 0 },
+            ),
           ),
         ),
       );
       const sent = rows.filter((_, i) => results[i]?.status === "fulfilled");
       const failed = rows.flatMap((row, i) => {
         const r = results[i];
-        if (r?.status !== "rejected") return [];
-        return [{ row, error: r.reason instanceof Error ? r.reason : new Error(String(r.reason)) }];
+        return r?.status === "rejected" ? [{ row, error: toKafkaSendError(r.reason) }] : [];
       });
-      // Nothing went out: the broker, not the rows — leave them as they are.
+      const poison = failed.filter((f) => !f.error.retryable);
+      // Nothing went out and nothing is the rows' fault: an outage — leave
+      // the batch as it is (the rollback below) and back off.
       const first = failed[0];
-      if (first !== undefined && sent.length === 0) throw first.error;
+      if (first !== undefined && sent.length === 0 && poison.length === 0) throw first.error;
 
       if (sent.length > 0) {
         await client.query("DELETE FROM outbox WHERE id = ANY($1::bigint[])", [
           sent.map((r) => r.id),
         ]);
       }
-      for (const { row, error } of failed) {
+      for (const { row, error } of poison) {
         await client.query(
           "UPDATE outbox SET attempts = attempts + 1, last_error = $2 WHERE id = $1",
           [row.id, error.message.slice(0, 1000)],
         );
       }
       await client.query("COMMIT");
-      this.poisoned = first !== undefined;
+      this.partial = first !== undefined;
       if (first !== undefined) {
+        const worst = poison[0] ?? first;
         this.logger.warn(
           {
-            ...ecsError(first.error),
+            ...ecsError(worst.error),
+            "error.code": worst.error.kind,
             "outbox.failed": failed.length,
+            "outbox.poison": poison.length,
             "outbox.sent": sent.length,
           },
-          "Outbox rows failed to publish — retried until OUTBOX_MAX_ATTEMPTS",
+          poison.length > 0
+            ? "Outbox rows rejected by Kafka — counted towards OUTBOX_MAX_ATTEMPTS"
+            : "Outbox rows not published yet — kept for a later pass",
         );
       }
       return sent.length;
@@ -213,7 +225,7 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     let delay = this.intervalMs;
     try {
       const sent = await this.relayOnce();
-      if (this.poisoned) {
+      if (this.partial) {
         // Space out the retries of the failed rows, as for a failed pass.
         this.failures++;
         delay = Math.min(this.intervalMs * 2 ** this.failures, MAX_BACKOFF_MS);

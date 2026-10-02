@@ -277,11 +277,13 @@ await uow.runInTransaction(async () => {
 transaction client, with the request's trace context and request id.
 `OutboxRelay` (every `OUTBOX_POLL_INTERVAL_MS`, 200 ms) takes up to
 `OUTBOX_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED` — every replica can run one —
-sends them and deletes them in that transaction; when every send fails (the
-broker is down) the batch is left for the next pass (backoff to 30 s). A row
-that fails while others go out is a poison row: it gets `attempts`/`last_error`
-(migrations/0003) and after `OUTBOX_MAX_ATTEMPTS` (10) stays in the table
-instead of blocking the batch. Delivery is at least once, so consumers
+sends them and deletes them in that transaction. A failed send is judged by
+the `@base/kafka` error registry (`KAFKA_SEND_ERRORS`): a retryable one
+(broker down, queue full, timeout) leaves the row for a later pass (backoff
+to 30 s) and is never counted; a non-retryable one (too large, invalid,
+unknown topic, no access) makes it a poison row — `attempts`/`last_error`
+(migrations/0003), and after `OUTBOX_MAX_ATTEMPTS` (10) it stays in the
+table instead of being retried forever. Delivery is at least once, so consumers
 are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
 each record in the trace of the request that wrote it, so the trace still
 reads request → Kafka → worker. Alert on `outbox_pending` (Grafana: "Outbox
@@ -402,6 +404,13 @@ it — Prometheus is just unscraped, traces are dropped.
   consumer lag (max and sum), prefetched bytes, rebalances. No series has a
   topic or partition label: ~10 series per client whether it uses one topic
   or hundreds — per-partition lag is the broker side's job.
+- **Back-pressure**: `KafkaProducerService.send()` fails only with a
+  `KafkaSendError` — `kind` + `retryable` from the `KAFKA_SEND_ERRORS`
+  registry (JSDoc lists each kind and what to do). It waits out a full local
+  queue or a reconnect for up to 5 s itself, so a caller that "just sends"
+  needs no retry code. The worker pauses its partitions while the BullMQ queue
+  holds `WORKER_QUEUE_MAX_WAITING` (10 000) jobs, so a slow processor leaves
+  the backlog in Kafka instead of filling Valkey.
 - **librdkafka logs** are pino/ECS lines (`log.logger: kafka:*`,
   `kafka.log.facility`, `kafka.client.name`); identical lines are folded
   for 60 s (`kafka.log.suppressed` on the next one), so a broker outage logs

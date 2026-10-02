@@ -7,7 +7,7 @@ import { AppLogger, pinoLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 import { meta, testCase } from "@base/testing";
 
-import { TaskEventsConsumer } from "./task-events.consumer.js";
+import { JobQueueFullError, TaskEventsConsumer } from "./task-events.consumer.js";
 
 const appLogger = new AppLogger(pinoLogger.child({}, { level: "silent" }));
 
@@ -15,12 +15,14 @@ interface Harness {
   consumer: TaskEventsConsumer;
   add: ReturnType<typeof vi.fn>;
   commitOffsets: ReturnType<typeof vi.fn>;
+  waiting: ReturnType<typeof vi.fn>;
 }
 
-function harness(add = vi.fn(async () => ({}))): Harness {
-  const queue = { name: "task-events", add } as unknown as Queue;
+function harness(add = vi.fn(async () => ({})), env: Record<string, string> = {}): Harness {
+  const waiting = vi.fn(() => Promise.resolve(0));
+  const queue = { name: "task-events", add, getWaitingCount: waiting } as unknown as Queue;
   const consumer = new TaskEventsConsumer(
-    new ConfigService({}),
+    new ConfigService(env),
     queue,
     appLogger,
     new ReadinessService([], appLogger),
@@ -28,7 +30,7 @@ function harness(add = vi.fn(async () => ({}))): Harness {
   const commitOffsets = vi.fn(async () => undefined);
   // The connected consumer is created in connectWithRetry; stand in for it.
   Object.assign(consumer, { consumer: { commitOffsets } });
-  return { consumer, add, commitOffsets };
+  return { consumer, add, commitOffsets, waiting };
 }
 
 function payload(
@@ -154,6 +156,49 @@ describe("TaskEventsConsumer.handleMessage", () => {
     expect(p0b).not.toHaveBeenCalled(); // partition 0: second failure → 2 s
     vi.advanceTimersByTime(1_000);
     expect(p0b).toHaveBeenCalledOnce();
+  });
+
+  it("pauses the partition while the job queue is full, reading its depth at most once a second", async () => {
+    await testCase("NB-940", "a full job queue pushes back on Kafka");
+    const h = harness(undefined, { WORKER_QUEUE_MAX_WAITING: "100" });
+    h.waiting.mockResolvedValue(100);
+    const resume = vi.fn();
+    const p = payload(created, resume);
+    await expect(h.consumer.handleMessage(p)).rejects.toBeInstanceOf(JobQueueFullError);
+    await expect(h.consumer.handleMessage(payload(created))).rejects.toBeInstanceOf(
+      JobQueueFullError,
+    );
+    expect(h.waiting).toHaveBeenCalledOnce(); // cached
+    expect(h.add).not.toHaveBeenCalled();
+    expect(h.commitOffsets).not.toHaveBeenCalled();
+    expect(p.pause).toHaveBeenCalledOnce();
+
+    // Back-pressure backs off to 5 s at most, not the 60 s of a failure.
+    for (let i = 0; i < 6; i++) {
+      // oxlint-disable-next-line no-await-in-loop -- consecutive failures on one partition
+      await expect(h.consumer.handleMessage(payload(created))).rejects.toThrow();
+    }
+    const late = vi.fn();
+    await expect(h.consumer.handleMessage(payload(created, late))).rejects.toThrow();
+    vi.advanceTimersByTime(5_000);
+    expect(late).toHaveBeenCalledOnce();
+
+    h.waiting.mockResolvedValue(99);
+    vi.advanceTimersByTime(1_001);
+    await h.consumer.handleMessage(payload(created));
+    expect(h.add).toHaveBeenCalledOnce();
+  });
+
+  it("a burst inside one cache window cannot overshoot the limit", async () => {
+    await testCase("NB-941", "job queue limit holds under a burst");
+    const h = harness(undefined, { WORKER_QUEUE_MAX_WAITING: "2" });
+    await h.consumer.handleMessage(payload(created));
+    await h.consumer.handleMessage(payload(created));
+    await expect(h.consumer.handleMessage(payload(created))).rejects.toBeInstanceOf(
+      JobQueueFullError,
+    );
+    expect(h.add).toHaveBeenCalledTimes(2);
+    expect(h.waiting).toHaveBeenCalledOnce();
   });
 
   it("a failed commit is logged, not thrown", async () => {

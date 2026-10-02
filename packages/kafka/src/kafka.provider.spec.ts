@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { meta, testCase } from "@base/testing";
 
-import { KafkaNotConnectedError, KafkaProducerService } from "./kafka.provider.js";
+import { KafkaSendError } from "./kafka-errors.js";
+import { KafkaProducerService } from "./kafka.provider.js";
 
 const appLogger = new AppLogger(pinoLogger.child({}, { level: "silent" }));
 
@@ -52,7 +53,10 @@ describe("KafkaProducerService", () => {
     const svc = new TestService([refused, refused, () => fake()]);
     svc.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(0);
-    await expect(svc.send(record)).rejects.toBeInstanceOf(KafkaNotConnectedError);
+    await expect(svc.send(record, { waitMs: 0 })).rejects.toMatchObject({
+      kind: "not_connected",
+      retryable: true,
+    });
 
     await vi.advanceTimersByTimeAsync(1_000); // 2nd attempt after 1 s
     expect(svc.made).toHaveLength(2);
@@ -71,7 +75,7 @@ describe("KafkaProducerService", () => {
     svc.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(0);
 
-    await expect(svc.send(record)).rejects.toThrow("fenced");
+    await expect(svc.send(record, { waitMs: 0 })).rejects.toMatchObject({ kind: "fatal" });
     await vi.advanceTimersByTimeAsync(0);
     expect(broken.disconnect).toHaveBeenCalled();
     expect(svc.made).toHaveLength(2);
@@ -85,7 +89,7 @@ describe("KafkaProducerService", () => {
     const svc = new TestService([() => p]);
     svc.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(0);
-    await expect(svc.send(record)).rejects.toThrow("timed out");
+    await expect(svc.send(record)).rejects.toMatchObject({ kind: "unknown", retryable: true });
     expect(svc.made).toHaveLength(1);
   });
 
@@ -109,6 +113,48 @@ describe("KafkaProducerService", () => {
     await vi.advanceTimersByTimeAsync(0);
     await svc.onApplicationShutdown();
     expect(p.disconnect).toHaveBeenCalledOnce();
-    await expect(svc.send(record)).rejects.toBeInstanceOf(KafkaNotConnectedError);
+    await expect(svc.send(record, { waitMs: 0 })).rejects.toBeInstanceOf(KafkaSendError);
+  });
+
+  it("waits out a connect within waitMs instead of failing", async () => {
+    await testCase("NB-933", "send waits for the producer to connect");
+    const svc = new TestService([refused, () => fake()]);
+    svc.onApplicationBootstrap();
+    await vi.advanceTimersByTimeAsync(0);
+    const sent = svc.send(record); // default waitMs 5 s; reconnect lands after 1 s
+    await vi.advanceTimersByTimeAsync(2_000); // backoff steps 50+100+200+400+800 ms
+    await expect(sent).resolves.toEqual([]);
+  });
+
+  it("waits out queue_full for a single message, fails a batch at once", async () => {
+    await testCase("NB-934", "queue_full back-pressure policy");
+    const p = fake();
+    const full = Object.assign(new Error("Local: Queue full"), { code: -184 });
+    p.send.mockRejectedValueOnce(full).mockRejectedValueOnce(full);
+    const svc = new TestService([() => p]);
+    svc.onApplicationBootstrap();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const single = svc.send(record);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(single).resolves.toEqual([]);
+    expect(p.send).toHaveBeenCalledTimes(3);
+
+    p.send.mockRejectedValueOnce(full);
+    const batch = { topic: "t", messages: [{ value: "a" }, { value: "b" }] };
+    await expect(svc.send(batch)).rejects.toMatchObject({ kind: "queue_full", retryable: true });
+  });
+
+  it("gives up on queue_full after waitMs", async () => {
+    await testCase("NB-935", "send waits no longer than waitMs");
+    const p = fake();
+    p.send.mockRejectedValue(Object.assign(new Error("Local: Queue full"), { code: -184 }));
+    const svc = new TestService([() => p]);
+    svc.onApplicationBootstrap();
+    await vi.advanceTimersByTimeAsync(0);
+    const sent = svc.send(record, { waitMs: 300 });
+    const outcome = expect(sent).rejects.toMatchObject({ kind: "queue_full" });
+    await vi.advanceTimersByTimeAsync(400);
+    await outcome;
   });
 });

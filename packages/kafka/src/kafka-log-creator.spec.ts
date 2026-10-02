@@ -24,7 +24,13 @@ function setup(): {
     "kafka-javascript",
     () => t,
   );
-  return { logger, lines, tick: (ms) => (t += ms) };
+  return {
+    logger,
+    lines,
+    tick: (ms) => {
+      t += ms;
+    },
+  };
 }
 
 describe("kafkaLogger", () => {

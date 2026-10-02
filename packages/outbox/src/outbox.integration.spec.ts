@@ -4,7 +4,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PgUnitOfWork } from "@base/database";
-import type { KafkaProducerService } from "@base/kafka";
+import { type KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { captureSpans, integration, meta, testCase, unique } from "@base/testing";
 
@@ -20,6 +20,10 @@ import { OutboxWriter } from "./outbox.writer.js";
 const infra = integration("postgres");
 
 type Sent = Parameters<KafkaProducerService["send"]>[0];
+
+/** What the real client throws, run through the registry like send() does. */
+const libError = (code: number, message: string): Error =>
+  toKafkaSendError(Object.assign(new Error(message), { code }));
 
 describe.skipIf(infra.skip)("outbox (integration)", () => {
   meta({
@@ -38,14 +42,17 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
   const sent: Sent[] = [];
   let brokerDown = false;
   let poisonSends = 0;
+  let queueFullKeys = new Set<string>();
 
   const kafka = {
     send: (record: Sent) => {
-      if (record.messages[0]?.key === "poison") {
+      const key = String(record.messages[0]?.key);
+      if (key === "poison") {
         poisonSends++;
-        return Promise.reject(new Error("message too large"));
+        return Promise.reject(libError(10, "Broker: Message size too large"));
       }
-      if (brokerDown) return Promise.reject(new Error("broker down"));
+      if (queueFullKeys.has(key)) return Promise.reject(libError(-184, "Local: Queue full"));
+      if (brokerDown) return Promise.reject(libError(-187, "broker down"));
       sent.push(record);
       return trace
         .getTracer("test")
@@ -128,7 +135,12 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
       await writer.add({ topic, key: "good-1", value: {} });
     });
     await poisonRelay.relayOnce();
-    expect(await attempts()).toEqual([{ attempts: 1, last_error: "message too large" }]);
+    expect(await attempts()).toEqual([
+      {
+        attempts: 1,
+        last_error: "Kafka send failed (message_too_large): Broker: Message size too large",
+      },
+    ]);
     expect(await mine()).toBe(1);
 
     await writer.add({ topic, key: "good-2", value: {} });
@@ -145,6 +157,34 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     );
     expect(await mine()).toBe(1);
     await pool.query("DELETE FROM outbox WHERE topic = $1 AND key = 'poison'", [topic]);
+  });
+
+  it("a retryable failure of part of a batch (queue full) is kept, never counted", async () => {
+    await testCase("NB-939", "back-pressure never dead-letters an event");
+    const r = new OutboxRelay(
+      pool,
+      kafka,
+      new ConfigService({ OUTBOX_BATCH_SIZE: "1000", OUTBOX_MAX_ATTEMPTS: "1" }),
+      logger,
+    );
+    await uow.runInTransaction(async () => {
+      await writer.add({ topic, key: "qf-ok", value: {} });
+      await writer.add({ topic, key: "qf-full", value: {} });
+    });
+    queueFullKeys = new Set(["qf-full"]);
+    // Pass 1: one row out, one kept. Later passes: only the kept row, failing
+    // retryably — an outage-shaped pass, which leaves it untouched.
+    await expect(r.relayOnce()).resolves.toBe(1);
+    await expect(r.relayOnce()).rejects.toMatchObject({ kind: "queue_full" });
+    await expect(r.relayOnce()).rejects.toMatchObject({ kind: "queue_full" });
+    const { rows } = await pool.query<{ key: string; attempts: number }>(
+      "SELECT key, attempts FROM outbox WHERE topic = $1",
+      [topic],
+    );
+    expect(rows).toEqual([{ key: "qf-full", attempts: 0 }]);
+    queueFullKeys = new Set();
+    await r.relayOnce();
+    expect(await mine()).toBe(0);
   });
 
   it("sends each record in the trace of the request that wrote it", async () => {

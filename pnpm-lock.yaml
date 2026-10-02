@@ -640,6 +640,9 @@ importers:
 
   packages/kafka:
     dependencies:
+      '@base/common':
+        specifier: workspace:*
+        version: link:../common
       '@base/logger':
         specifier: workspace:*
         version: link:../logger

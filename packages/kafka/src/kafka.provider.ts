@@ -2,22 +2,33 @@ import { KafkaJS } from "@confluentinc/kafka-javascript";
 import { Global, Injectable, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
+import { remainingMs } from "@base/common";
 import { AppLogger, ecsError } from "@base/logger";
 
 import { buildKafkaClientConfig, buildProducerConfig } from "./kafka-config.builder.js";
+import { KafkaSendError, toKafkaSendError } from "./kafka-errors.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
 import { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+const DEFAULT_WAIT_MS = 5_000;
 
-/** send() while the producer is not connected — retry later (the outbox does). */
-export class KafkaNotConnectedError extends Error {
-  constructor() {
-    super("Kafka producer is not connected");
-    this.name = "KafkaNotConnectedError";
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export interface KafkaSendOptions {
+  /**
+   * How long send() waits out local back-pressure before it throws:
+   * `not_connected` (always) and `queue_full` (single-message records only —
+   * see send()). Default 5000; capped by the request's deadline; 0 fails fast
+   * (a caller with its own retry loop, like the outbox relay).
+   */
+  waitMs?: number;
 }
 
 /**
@@ -31,8 +42,8 @@ export class KafkaNotConnectedError extends Error {
  *     attempt gets a fresh one.
  *   - a fatal librdkafka error (the idempotent producer's sequence state is
  *     broken) leaves the producer unusable; it is replaced the same way.
- *   - until connected, send() rejects with KafkaNotConnectedError at once —
- *     events go through the outbox, which keeps them and retries.
+ *   - send() fails only with a KafkaSendError (kafka-errors.ts: the registry of
+ *     kinds, which are retryable, and what to do about each).
  *   - shutdown never waits for a connect in flight: kafkajs-compat waits for
  *     its metadata request (up to 30 s) before it can disconnect, and Nest
  *     ends the process once the close hooks return.
@@ -64,12 +75,53 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
   }
 
   /**
-   * `producer.send` inside a PRODUCER span, with the trace context injected
-   * into the record headers, so the consumer's span continues the caller's trace.
+   * Send `record` inside a PRODUCER span, with the trace context injected into
+   * the record headers so the consumer's span continues the caller's trace.
+   *
+   * Resolves once every message is acknowledged (acks=all). Rejects only with
+   * a {@link KafkaSendError} — branch on `err.retryable`:
+   *   - true: the record may succeed later; keep it and resend (the outbox does)
+   *   - false: it never will (too large, invalid, unknown topic, no access)
+   *
+   * Short local back-pressure is waited out here, up to `options.waitMs`
+   * (default 5 s, never past the request deadline), with backoff:
+   *   - `not_connected` — nothing was enqueued, safe to wait for any record;
+   *   - `queue_full` — only for a single-message record. The client enqueues
+   *     a batch message by message, so on `queue_full` the first messages of
+   *     a batch may already be on their way: a batch fails at once, and
+   *     resending it can duplicate those (at-least-once, as everywhere).
    */
-  async send(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
+  async send(
+    record: KafkaJS.ProducerRecord,
+    options: KafkaSendOptions = {},
+  ): Promise<KafkaJS.RecordMetadata[]> {
+    const budget = Math.max(
+      0,
+      Math.min(options.waitMs ?? DEFAULT_WAIT_MS, remainingMs() ?? Infinity),
+    );
+    const until = Date.now() + budget;
+    let delay = 50;
+    for (;;) {
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- a retry loop: each attempt waits for the last
+        return await this.sendOnce(record);
+      } catch (err) {
+        const error = toKafkaSendError(err);
+        const waitable =
+          error.kind === "not_connected" ||
+          (error.kind === "queue_full" && record.messages.length === 1);
+        const left = until - Date.now();
+        if (!waitable || left <= 0) throw error;
+        // oxlint-disable-next-line no-await-in-loop -- backoff between attempts
+        await sleep(Math.min(delay, left));
+        delay = Math.min(delay * 2, 1_000);
+      }
+    }
+  }
+
+  private async sendOnce(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
     const producer = this.producer;
-    if (!this.connected || producer === undefined) throw new KafkaNotConnectedError();
+    if (!this.connected || producer === undefined) throw new KafkaSendError("not_connected");
     try {
       return await sendTraced(producer, record);
     } catch (err) {
@@ -121,7 +173,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     try {
       await producer.connect();
       if (this.stopped) {
-        await producer.disconnect().catch(() => undefined);
+        await producer.disconnect().catch(() => {});
         return;
       }
       this.connected = true;
@@ -147,7 +199,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
       { ...ecsError(err as Error) },
       "Kafka producer hit a fatal error — replacing it",
     );
-    void broken.disconnect().catch(() => undefined);
+    void broken.disconnect().catch(() => {});
     void this.connectWithRetry();
   }
 }
