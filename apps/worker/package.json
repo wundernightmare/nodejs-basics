@@ -14,7 +14,7 @@
     "start:dev": "node ../../scripts/dev.mjs --admin-port=9093",
     "start:debug": "node ../../scripts/dev.mjs --admin-port=9093 --inspect",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "oxlint --max-warnings=16 src vite.config.ts",
+    "lint": "oxlint --max-warnings=3 src vite.config.ts",
     "lint:fix": "oxlint --fix src vite.config.ts",
     "format": "oxfmt \"src/**/*.ts\" vite.config.ts",
     "format:check": "oxfmt --check \"src/**/*.ts\" vite.config.ts",

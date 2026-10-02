@@ -4,6 +4,11 @@ export {
   buildProducerConfig,
   type KafkaRdKafkaConfig,
 } from "./kafka-config.builder.js";
+export {
+  KafkaBackpressureError,
+  type KafkaConsumerOptions,
+  KafkaConsumerRunner,
+} from "./kafka-consumer.js";
 export { kafkaLogger } from "./kafka-log-creator.js";
 export { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
 export { KafkaModule } from "./kafka.module.js";

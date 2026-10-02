@@ -10,9 +10,8 @@ import { KafkaSendError, toKafkaSendError } from "./kafka-errors.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
 import { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
+import { Reconnect } from "./reconnect.js";
 
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
 const DEFAULT_WAIT_MS = 5_000;
 
 function sleep(ms: number): Promise<void> {
@@ -55,9 +54,15 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
   private readonly clientMetrics: KafkaClientMetrics;
   private producer: KafkaJS.Producer | undefined;
   private connected = false;
-  private stopped = false;
-  private reconnectTimer: NodeJS.Timeout | undefined;
-  private reconnectDelayMs = RECONNECT_BASE_MS;
+  private readonly reconnect = new Reconnect(
+    () => this.connect(),
+    (err, delay) => {
+      this.logger.warn(
+        { ...ecsError(err), "retry.delay_ms": delay },
+        "Kafka producer failed to connect — retrying; the outbox holds events meanwhile",
+      );
+    },
+  );
 
   constructor(
     private readonly config: ConfigService,
@@ -126,12 +131,11 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
   }
 
   onApplicationBootstrap(): void {
-    void this.connectWithRetry();
+    this.reconnect.start();
   }
 
   async onApplicationShutdown(signal?: string): Promise<void> {
-    this.stopped = true;
-    clearTimeout(this.reconnectTimer);
+    this.reconnect.stop();
     const producer = this.producer;
     try {
       if (this.connected && producer !== undefined) {
@@ -140,7 +144,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
         await producer.disconnect();
       }
     } catch (err) {
-      this.logger.warn({ ...ecsError(err as Error) }, "Kafka producer disconnect error");
+      this.logger.warn({ ...ecsError(err) }, "Kafka producer disconnect error");
     } finally {
       this.clientMetrics.dispose();
     }
@@ -160,40 +164,24 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     });
   }
 
-  private async connectWithRetry(): Promise<void> {
-    if (this.stopped) return;
+  private async connect(): Promise<void> {
     const producer = this.createProducer();
     this.producer = producer;
-    try {
-      await producer.connect();
-      if (this.stopped) {
-        await producer.disconnect().catch(() => {});
-        return;
-      }
-      this.connected = true;
-      this.reconnectDelayMs = RECONNECT_BASE_MS;
-      this.logger.info("Kafka producer connected");
-    } catch (err) {
-      if (this.stopped) return;
-      const delay = this.reconnectDelayMs;
-      this.reconnectDelayMs = Math.min(delay * 2, RECONNECT_MAX_MS);
-      this.logger.warn(
-        { ...ecsError(err as Error), "retry.delay_ms": delay },
-        "Kafka producer failed to connect — retrying; the outbox holds events meanwhile",
-      );
-      this.reconnectTimer = setTimeout(() => void this.connectWithRetry(), delay);
+    await producer.connect();
+    if (this.reconnect.stopped) {
+      await producer.disconnect().catch(() => {});
+      return;
     }
+    this.connected = true;
+    this.logger.info("Kafka producer connected");
   }
 
   /** Drop a producer a fatal error broke and connect a fresh one. */
   private replace(broken: KafkaJS.Producer, err: unknown): void {
-    if (this.producer !== broken || this.stopped) return;
+    if (this.producer !== broken || this.reconnect.stopped) return;
     this.connected = false;
-    this.logger.error(
-      { ...ecsError(err as Error) },
-      "Kafka producer hit a fatal error — replacing it",
-    );
+    this.logger.error({ ...ecsError(err) }, "Kafka producer hit a fatal error — replacing it");
     void broken.disconnect().catch(() => {});
-    void this.connectWithRetry();
+    this.reconnect.start();
   }
 }
