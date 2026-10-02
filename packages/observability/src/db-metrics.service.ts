@@ -7,7 +7,8 @@
  *
  * Valkey (iovalkey):
  *   valkey.client.command_queue_size  — commands dispatched but awaiting reply
- *   valkey.client.connected           — 1 = ready, 0 = any other state
+ *   (valkey.client.connected comes from @base/cache registerValkeyMetrics —
+ *   registering it here too would export the gauge twice)
  *
  * PostgreSQL (pg.Pool):
  *   db.client.connection.count{state="idle"}     — idle connections in pool
@@ -51,19 +52,12 @@ export class DbMetricsService implements OnModuleInit {
       unit: "{command}",
     });
 
-    const connected = meter.createObservableGauge("valkey.client.connected", {
-      description: "1 if the iovalkey client is in the ready state, 0 otherwise",
-    });
-
     meter.addBatchObservableCallback(
       (result) => {
         const client = this.valkey as ValkeyWithQueue;
         result.observe(commandQueueSize, client.commandQueue.length);
-        result.observe(connected, this.valkey.status === "ready" ? 1 : 0, {
-          "valkey.client.status": this.valkey.status,
-        });
       },
-      [commandQueueSize, connected],
+      [commandQueueSize],
     );
   }
 
