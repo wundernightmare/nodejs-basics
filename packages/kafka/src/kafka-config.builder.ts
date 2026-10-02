@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import type { ConfigService } from "@nestjs/config";
 
@@ -74,12 +74,8 @@ function resolveCaLocation(config: ConfigService): string | undefined {
   const inline = readString(config, "KAFKA_SSL_CA_PEM");
   if (!inline) return undefined;
 
-  // Lazy require keeps this module importable in environments without the
-  // Node 'fs' module (e.g. browser test doubles). `writeFileSync` is safe to
-  // call repeatedly — the contents are identical per boot.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("node:fs") as typeof import("node:fs");
-  fs.writeFileSync(KAFKA_CA_PEM_FILE, inline, { encoding: "utf8", mode: 0o600 });
+  // Safe to call repeatedly — the contents are identical per boot.
+  writeFileSync(KAFKA_CA_PEM_FILE, inline, { encoding: "utf8", mode: 0o600 });
   return KAFKA_CA_PEM_FILE;
 }
 
@@ -88,19 +84,22 @@ function resolveCaLocation(config: ConfigService): string | undefined {
  * with a thrown error at boot — silently swallowing it would make it impossible
  * to discover that a typo disabled a custom knob.
  */
-function readExtraProperties(config: ConfigService): KafkaRdKafkaConfig {
-  const raw = readString(config, "KAFKA_EXTRA_PROPERTIES");
+function readExtraProperties(
+  config: ConfigService,
+  key = "KAFKA_EXTRA_PROPERTIES",
+): KafkaRdKafkaConfig {
+  const raw = readString(config, key);
   if (!raw) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`KAFKA_EXTRA_PROPERTIES is not valid JSON: ${(err as Error).message}`, {
+    throw new Error(`${key} is not valid JSON: ${(err as Error).message}`, {
       cause: err,
     });
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("KAFKA_EXTRA_PROPERTIES must be a JSON object of librdkafka string properties");
+    throw new Error(`${key} must be a JSON object of librdkafka string properties`);
   }
   return parsed as KafkaRdKafkaConfig;
 }
@@ -183,15 +182,25 @@ export function buildKafkaClientConfig(
   const reconnectMax = readNumber(config, "KAFKA_RECONNECT_BACKOFF_MAX_MS");
   if (reconnectMax !== undefined) out["reconnect.backoff.max.ms"] = reconnectMax;
 
+  // TCP keepalive on: cloud load balancers and NAT gateways drop idle
+  // connections silently, and a producer that only finds out on its next
+  // send pays a full request timeout first.
+  out["socket.keepalive.enable"] = true;
+
+  // librdkafka statistics (JSON every N ms) feed the client metrics — see
+  // kafka-metrics.ts. 0 turns them off.
+  out["statistics.interval.ms"] = readNumber(config, "KAFKA_STATISTICS_INTERVAL_MS") ?? 15_000;
+
   // Escape hatch is applied last so it can tune anything above on purpose.
   return { ...out, ...readExtraProperties(config) };
 }
 
 /**
  * Producer role flags: acks, idempotence, compression, linger, message
- * timeout. All default to safe money-downstream values (acks=all +
- * idempotence=true + zstd) so a fresh deployment loses records only when the
- * operator deliberately relaxes the knobs.
+ * timeout, local queue bound. Durable by default (acks=all + idempotence) so a
+ * fresh deployment loses records only when the operator deliberately relaxes
+ * the knobs; lz4 because it is the cheapest codec in CPU and latency at a
+ * ratio close enough for event payloads (zstd for bandwidth-bound links).
  */
 export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
   const base = buildKafkaClientConfig(config, "producer");
@@ -200,12 +209,22 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
     ...base,
     acks: readString(config, "KAFKA_PRODUCER_ACKS") ?? "all",
     "enable.idempotence": readBool(config, "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE") ?? true,
-    "compression.type": readString(config, "KAFKA_PRODUCER_COMPRESSION_TYPE") ?? "zstd",
+    "compression.type": readString(config, "KAFKA_PRODUCER_COMPRESSION_TYPE") ?? "lz4",
     "linger.ms": readNumber(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
     "message.timeout.ms": readNumber(config, "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS") ?? 30_000,
+    // The local send queue. librdkafka's default holds up to 1 GiB per
+    // producer: with the broker down and acks=all, that is where the pod's
+    // memory goes. 64 MiB bounds it; a full queue fails send() with
+    // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
+    "queue.buffering.max.kbytes": readNumber(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES") ?? 65_536,
   };
-  // Re-apply the escape hatch so it wins over role flags too.
-  return { ...out, ...readExtraProperties(config) };
+  // Re-apply the escape hatches so they win over role flags too: the shared
+  // one, then the producer-only one.
+  return {
+    ...out,
+    ...readExtraProperties(config),
+    ...readExtraProperties(config, "KAFKA_PRODUCER_EXTRA_PROPERTIES"),
+  };
 }
 
 /**
@@ -226,15 +245,25 @@ export function buildConsumerConfig(
     ...base,
     "group.id": groupId,
     "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET") ?? "latest",
-    // A consumer that subscribes before the producer's first message would
-    // otherwise sit on an empty assignment until the next metadata refresh
-    // (5 min by default): with the broker's auto-create on (docker/deps.yml),
-    // subscribing creates the topic. Off in environments where topics are
-    // provisioned (KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS=false).
-    "allow.auto.create.topics": readBool(config, "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS") ?? true,
+    // Topics are the broker's call: a dev broker auto-creates them
+    // (docker/deps.yml), a provisioned cluster refuses — so the client may
+    // always ask. Without it a consumer that subscribes before the first
+    // message sits on an empty assignment until the next metadata refresh.
+    "allow.auto.create.topics": true,
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
     "session.timeout.ms": readNumber(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
     "max.poll.interval.ms": readNumber(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
+    // Bounded prefetch. librdkafka's defaults size the local queue for raw
+    // throughput (100k messages, up to 64 MiB per partition): a consumer that
+    // handles one message at a time and wakes up to a deep backlog pulls
+    // hundreds of MB in faster than it drains them and is OOM-killed before
+    // its first commit — a crash loop. Tune via KAFKA_CONSUMER_EXTRA_PROPERTIES.
+    "queued.min.messages": 1_000,
+    "queued.max.messages.kbytes": 4_096,
   };
-  return { ...out, ...readExtraProperties(config) };
+  return {
+    ...out,
+    ...readExtraProperties(config),
+    ...readExtraProperties(config, "KAFKA_CONSUMER_EXTRA_PROPERTIES"),
+  };
 }

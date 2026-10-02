@@ -4,8 +4,18 @@
  * Every OUTBOX_POLL_INTERVAL_MS (sooner while there is a backlog) one
  * transaction takes up to OUTBOX_BATCH_SIZE rows with FOR UPDATE SKIP LOCKED,
  * sends them and deletes them. SKIP LOCKED lets every replica run a relay
- * without two of them sending the same row; a failed send rolls the batch back
- * and the rows go out on a later tick (backoff up to 30 s).
+ * without two of them sending the same row. Sent rows are deleted; a failed
+ * send is judged by the @base/kafka error registry (KAFKA_SEND_ERRORS):
+ *
+ *   - retryable (broker down, queue full, reconnecting, topic not provisioned
+ *     yet, unknown): the row stays as it is and goes out on a later pass —
+ *     never counted, so no outage or back-pressure can dead-letter an event;
+ *   - not retryable (`rejected`: too large, invalid): a poison row — `attempts + 1` and `last_error`; after OUTBOX_MAX_ATTEMPTS it is
+ *     left in the table for an operator (the `outbox.dead` gauge) instead of
+ *     being retried forever.
+ *
+ * Any failure backs the relay off (up to 30 s). A row that is retried gives
+ * up its order relative to later rows of its key.
  *
  * At least once, not exactly once: a crash between the broker's ack and the
  * COMMIT sends the batch again — consumers are idempotent (the worker's BullMQ
@@ -27,7 +37,7 @@ import { context, metrics, propagation, ROOT_CONTEXT } from "@opentelemetry/api"
 import type { Pool } from "pg";
 
 import { PG_POOL } from "@base/database";
-import { KafkaProducerService } from "@base/kafka";
+import { KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 
 interface OutboxRow {
@@ -39,6 +49,9 @@ interface OutboxRow {
 }
 
 const MAX_BACKOFF_MS = 30_000;
+// Upper bound on how long shutdown waits for a batch in flight; after it the
+// pool closes anyway and the batch rolls back (sent again by the next relay).
+const DRAIN_TIMEOUT_MS = 5_000;
 
 function positiveInt(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
@@ -50,10 +63,13 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly intervalMs: number;
   private readonly batchSize: number;
+  private readonly maxAttempts: number;
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> = Promise.resolve();
   private stopping = false;
   private failures = 0;
+  // The last pass had rows that failed while it still made progress.
+  private partial = false;
 
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
@@ -64,72 +80,135 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     this.logger = appLogger.child(OutboxRelay.name);
     this.intervalMs = positiveInt(config.get<string>("OUTBOX_POLL_INTERVAL_MS"), 200);
     this.batchSize = positiveInt(config.get<string>("OUTBOX_BATCH_SIZE"), 100);
-    // The one number to alert on: rows waiting to be published.
-    metrics
-      .getMeter("outbox")
-      .createObservableGauge("outbox.pending", {
-        description: "Outbox rows not yet published to Kafka.",
-        unit: "{message}",
-      })
-      .addCallback(async (result) => {
+    this.maxAttempts = positiveInt(config.get<string>("OUTBOX_MAX_ATTEMPTS"), 10);
+    // The numbers to alert on: rows waiting to be published, rows given up on.
+    const meter = metrics.getMeter("outbox");
+    const pending = meter.createObservableGauge("outbox.pending", {
+      description: "Outbox rows not yet published to Kafka.",
+      unit: "{message}",
+    });
+    const dead = meter.createObservableGauge("outbox.dead", {
+      description: "Outbox rows that failed OUTBOX_MAX_ATTEMPTS times and are no longer sent.",
+      unit: "{message}",
+    });
+    meter.addBatchObservableCallback(
+      async (result) => {
         if (this.stopping) return;
         try {
-          const { rows } = await this.pool.query<{ n: number }>(
-            "SELECT count(*)::int AS n FROM outbox",
+          const { rows } = await this.pool.query<{ pending: number; dead: number }>(
+            `SELECT count(*) FILTER (WHERE attempts < $1)::int AS pending,
+                    count(*) FILTER (WHERE attempts >= $1)::int AS dead
+               FROM outbox`,
+            [this.maxAttempts],
           );
-          result.observe(rows[0]?.n ?? 0);
+          result.observe(pending, rows[0]?.pending ?? 0);
+          result.observe(dead, rows[0]?.dead ?? 0);
         } catch {
           // no sample this scrape (database unreachable)
         }
-      });
+      },
+      [pending, dead],
+    );
   }
 
   onApplicationBootstrap(): void {
     this.schedule(0);
   }
 
-  /** Stop polling and let a batch in flight finish before Kafka and the pool close. */
+  /** Stop polling and let a batch in flight finish (up to DRAIN_TIMEOUT_MS) before Kafka and the pool close. */
   async beforeApplicationShutdown(): Promise<void> {
     this.stopping = true;
     clearTimeout(this.timer);
-    await this.running;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        this.logger.warn({ "outbox.drain_timeout_ms": DRAIN_TIMEOUT_MS }, "Outbox drain timed out");
+        resolve();
+      }, DRAIN_TIMEOUT_MS);
+    });
+    await Promise.race([this.running, timeout]);
+    clearTimeout(timer);
   }
 
-  /** One relay pass; resolves to the number of records published. Public for tests. */
+  /**
+   * One relay pass; resolves to the number of records published, rejects when
+   * every send failed (nothing changes then). Public for tests.
+   */
   async relayOnce(): Promise<number> {
     const client = await this.pool.connect();
+    let broken: Error | undefined; // ROLLBACK failed → destroy, don't pool
     try {
       await client.query("BEGIN");
       const { rows } = await client.query<OutboxRow>(
         `SELECT id, topic, key, payload, headers FROM outbox
+          WHERE attempts < $2
          ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`,
-        [this.batchSize],
+        [this.batchSize, this.maxAttempts],
       );
-      if (rows.length > 0) {
-        // Issued in row order: the producer keeps that order per partition.
-        await Promise.all(
-          rows.map((row) =>
-            context.with(propagation.extract(ROOT_CONTEXT, row.headers), () =>
-              this.kafka.send({
+      // Issued in row order: the producer keeps that order per partition.
+      const results = await Promise.allSettled(
+        rows.map((row) =>
+          context.with(propagation.extract(ROOT_CONTEXT, row.headers), () =>
+            this.kafka.send(
+              {
                 topic: row.topic,
                 messages: [
                   { key: row.key, value: JSON.stringify(row.payload), headers: row.headers },
                 ],
-              }),
+              },
+              // No waiting inside send(): the relay has its own backoff.
+              { waitMs: 0 },
             ),
           ),
-        );
+        ),
+      );
+      const sent = rows.filter((_, i) => results[i]?.status === "fulfilled");
+      const failed = rows.flatMap((row, i) => {
+        const r = results[i];
+        return r?.status === "rejected" ? [{ row, error: toKafkaSendError(r.reason) }] : [];
+      });
+      const poison = failed.filter((f) => !f.error.retryable);
+      // Nothing went out and nothing is the rows' fault: an outage — leave
+      // the batch as it is (the rollback below) and back off.
+      const first = failed[0];
+      if (first !== undefined && sent.length === 0 && poison.length === 0) throw first.error;
+
+      if (sent.length > 0) {
         await client.query("DELETE FROM outbox WHERE id = ANY($1::bigint[])", [
-          rows.map((r) => r.id),
+          sent.map((r) => r.id),
         ]);
       }
+      for (const { row, error } of poison) {
+        await client.query(
+          "UPDATE outbox SET attempts = attempts + 1, last_error = $2 WHERE id = $1",
+          [row.id, error.message.slice(0, 1000)],
+        );
+      }
       await client.query("COMMIT");
-      return rows.length;
+      this.partial = first !== undefined;
+      if (first !== undefined) {
+        const worst = poison[0] ?? first;
+        this.logger.warn(
+          {
+            ...ecsError(worst.error),
+            "error.code": worst.error.kind,
+            "outbox.failed": failed.length,
+            "outbox.poison": poison.length,
+            "outbox.sent": sent.length,
+          },
+          poison.length > 0
+            ? "Outbox rows rejected by Kafka — counted towards OUTBOX_MAX_ATTEMPTS"
+            : "Outbox rows not published yet — kept for a later pass",
+        );
+      }
+      return sent.length;
     } catch (err) {
-      await client.query("ROLLBACK").catch(() => undefined);
+      await client.query("ROLLBACK").catch((rollbackErr: unknown) => {
+        broken = rollbackErr as Error;
+      });
       throw err;
     } finally {
-      client.release();
+      client.release(broken);
     }
   }
 
@@ -145,9 +224,15 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     let delay = this.intervalMs;
     try {
       const sent = await this.relayOnce();
-      if (this.failures > 0) this.logger.info({ "outbox.sent": sent }, "Outbox relay recovered");
-      this.failures = 0;
-      if (sent === this.batchSize) delay = 0; // backlog: go again at once
+      if (this.partial) {
+        // Space out the retries of the failed rows, as for a failed pass.
+        this.failures++;
+        delay = Math.min(this.intervalMs * 2 ** this.failures, MAX_BACKOFF_MS);
+      } else {
+        if (this.failures > 0) this.logger.info({ "outbox.sent": sent }, "Outbox relay recovered");
+        this.failures = 0;
+        if (sent === this.batchSize) delay = 0; // backlog: go again at once
+      }
     } catch (err) {
       this.failures++;
       delay = Math.min(this.intervalMs * 2 ** this.failures, MAX_BACKOFF_MS);

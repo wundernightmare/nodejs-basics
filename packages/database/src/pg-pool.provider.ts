@@ -31,7 +31,7 @@ export const PG_BREAKER = Symbol("PG_BREAKER");
 
 /**
  * DI token for the optional DATABASE_PASSWORD_FILE SecretFileWatcher —
- * `null` when the env key is unset. The lifecycle service (PrismaService)
+ * `null` when the env key is unset. DatabaseLifecycleService
  * calls .stop() on shutdown so the polling timer doesn't leak across
  * test suites.
  */
@@ -139,8 +139,8 @@ function buildPool(
  *     SET statements produced by the builder run once per new backend
  *     connection (surviving libpq failover to a different host).
  *
- * Pool cleanup is performed by PrismaService.onModuleDestroy() which
- * calls pool.end() after $disconnect().
+ * Pool cleanup: DatabaseLifecycleService.onApplicationShutdown() calls
+ * pool.end().
  */
 export const pgPoolProvider: FactoryProvider<Pool> = {
   provide: PG_POOL,
@@ -163,10 +163,8 @@ export const pgPoolProvider: FactoryProvider<Pool> = {
  * unconditionally — single-node dev pays no cost, managed prod gets a
  * real replica the moment the operator wires one up.
  *
- * Cleanup: when a separate pool is created the lifecycle service
- * (PrismaService.onModuleDestroy) is responsible for calling .end() on
- * both pools. In alias mode only the primary pool exists, so its normal
- * shutdown path already covers it.
+ * Cleanup: DatabaseLifecycleService ends both pools when they are separate,
+ * and only the primary in alias mode.
  */
 export const pgReadonlyPoolProvider: FactoryProvider<Pool> = {
   provide: PG_POOL_READONLY,

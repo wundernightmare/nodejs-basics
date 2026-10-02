@@ -1,5 +1,12 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "import"
+  ],
   "categories": {
     "correctness": "error",
     "restriction": "off",
@@ -24,7 +31,12 @@
     "no-negated-condition": "off",
     "no-unsafe-type-assertion": "off",
     "no-unnecessary-type-arguments": "warn",
-    "no-underscore-dangle": "off"
+    "no-underscore-dangle": "off",
+    "prefer-readonly-parameter-types": "off",
+    "import/no-cycle": "error",
+    "import/no-named-as-default-member": "off",
+    "import/no-unassigned-import": "off",
+    "import/max-dependencies": "off"
   },
   "overrides": [
     {

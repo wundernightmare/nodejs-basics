@@ -34,6 +34,9 @@ export class PgUnitOfWork implements IUnitOfWork {
     if (ambient) return fn();
 
     const client = await this.pool.connect();
+    // Set when ROLLBACK fails: the connection is in an unknown state and is
+    // destroyed on release instead of going back to the pool.
+    let broken: Error | undefined;
     try {
       await client.query("BEGIN");
       // Under a request deadline the server cancels a statement that would
@@ -45,12 +48,12 @@ export class PgUnitOfWork implements IUnitOfWork {
     } catch (err) {
       try {
         await client.query("ROLLBACK");
-      } catch {
-        // The connection may already be dead — pg will recycle it on release.
+      } catch (rollbackErr) {
+        broken = rollbackErr as Error;
       }
       throw err;
     } finally {
-      client.release();
+      client.release(broken);
     }
   }
 }
