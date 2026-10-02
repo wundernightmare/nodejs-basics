@@ -156,46 +156,27 @@ high-signal, easy-to-miss bits.
   non-retryable `KafkaSendError` counts `attempts`; at `OUTBOX_MAX_ATTEMPTS`
   the row stays in the table (`outbox.dead` gauge). Retryable failures (outage,
   queue full) never count — never dead-letter an event for back-pressure.
-- **Kafka consumers commit explicitly**: `enable.auto.commit=false` and the
-  kafkajs-compat layer only *stores* offsets — call `consumer.commitOffsets()`
-  after a handled message, or a restart (`auto.offset.reset: latest`) skips
-  everything produced meanwhile. On a failed hand-off `pause()` + backoff +
-  rethrow (a bare throw re-fetches at once — a hot loop); commit and skip a
-  message that can never decode. Pattern: `apps/worker/.../task-events.consumer.ts`.
-- **Kafka client config** (`@base/kafka` builders): lz4, producer queue
-  bounded to 64 MiB (`KAFKA_PRODUCER_QUEUE_MAX_KBYTES`; librdkafka's default
-  is 1 GiB — full → QUEUE_FULL, the outbox retries), consumer prefetch 4 MiB,
-  keepalive on. Topics are the broker's call (dev auto-creates, a provisioned
-  cluster refuses — `not_provisioned` is retryable). Any librdkafka property: `KAFKA_EXTRA_PROPERTIES` (all
-  clients) then `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES`. A new client
-  passes `stats_cb: kafkaClientMetrics(role).statsCb` — the kafkajs-compat
-  clients have no event surface, statistics are the only metrics source.
-  Never add a topic/partition label to a kafka.client.* metric — a client on
-  hundreds of topics would explode Prometheus; aggregate (lag max/sum).
-- **Kafka connection lifecycle**: `KafkaProducerService` connects in the
-  background and retries with backoff (a kafkajs-compat client whose
-  connect() failed is dead — make a fresh one), replaces a producer on a
-  fatal error. `send()` throws only `KafkaSendError` (`kafka-errors.ts`:
-  the `KAFKA_SEND_ERRORS` registry — kind, retryable, what to do); it waits out
-  `not_connected` and single-message `queue_full` for `waitMs` (5 s, capped by
-  the request deadline; a batch is never resent — the client may have
-  enqueued part of it). New failure modes go into the registry, not into
-  callers. Shutdown never awaits a pending connect (it waits on
-  a 30 s metadata request). The `Kafka` instance gets the shared client
-  config only — role properties there log CONFWARN on every connect.
-- **librdkafka logs** go through `kafkaLogger`: `fac`/`name` →
-  `kafka.log.facility`/`kafka.client.name`, repeats folded for 60 s
-  (`kafka.log.suppressed`). Level is INFO regardless of the runtime level;
-  debug a client with `KAFKA_EXTRA_PROPERTIES='{"debug":"broker,protocol"}'`.
-- **Consumer back-pressure**: the worker pauses a partition (same path as a
-  failed hand-off) while BullMQ holds `WORKER_QUEUE_MAX_WAITING` jobs — keep
-  backlogs in Kafka, not in Valkey.
-- **Consumer parallelism**: `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` (default
-  1) — partitions in parallel, order within a partition kept; backoff state is
-  per partition. For many topics consider
-  `"partition.assignment.strategy":"cooperative-sticky"` via
-  `KAFKA_CONSUMER_EXTRA_PROPERTIES` (incremental rebalances) — every member of
-  the group must switch together, so it is not the default.
+- **Kafka (`@base/kafka`)** — the rules the code encodes; read its JSDoc first.
+  - Produce with `KafkaProducerService.send()`: it connects in the background
+    (retrying), replaces a client after a fatal error, and fails only with
+    `KafkaSendError` — branch on `retryable` (registry: `KAFKA_SEND_ERRORS`,
+    only `rejected` is not). Short back-pressure (`not_connected`, a
+    single-message `queue_full`) is waited out for `waitMs` (5 s).
+  - Consume with `KafkaConsumerRunner`: you write `handle()` — resolve =
+    committed (offset + 1), throw = paused and retried with per-partition
+    backoff, `KafkaBackpressureError` = "not now" (5 s cap), return for a
+    message that can never succeed. Never commit with a bare
+    `commitOffsets()` and never rethrow without a pause (a hot loop).
+  - Never race a client's connect() against a timer: it waits up to 30 s for
+    metadata, and a disconnect under it crashes the process (`Reconnect`).
+  - Config: lz4, producer queue 64 MiB (`KAFKA_PRODUCER_QUEUE_MAX_KBYTES`),
+    consumer prefetch 4 MiB; anything else via `KAFKA_EXTRA_PROPERTIES` /
+    `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES` (e.g. `{"debug":"broker"}`, or
+    `cooperative-sticky` — the whole group switches together). Topics are the
+    broker's call; a missing one is `not_provisioned`, retryable.
+  - Metrics come from librdkafka statistics (`kafkaClientMetrics`) — never a
+    topic/partition label on them; logs go through `kafkaLogger`, repeats
+    folded for 60 s.
 - **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
   checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
   create tables from app code or edit an applied file — add a new one.
