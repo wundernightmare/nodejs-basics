@@ -1,23 +1,11 @@
 /**
  * Drains the `tasks.events` Kafka topic (produced by apps/api) and, for each
  * `task.created` event (TaskCreatedEvent — generated from api/tsp/events.tsp,
- * the same type the producer writes), enqueues a BullMQ job — demonstrating the Kafka
- * consumer + the hand-off to the job system. The TaskEventsProcessor handles
- * the enqueued job.
- *
- * Delivery is at least once, and the offset is ours to move:
- *   • `enable.auto.commit` is false (@base/kafka) and the kafkajs-compat layer
- *     only *stores* an offset after `eachMessage` returns — nothing flushes the
- *     store. Without the explicit `commitOffsets()` a restarted worker resumes
- *     at the tail (`auto.offset.reset: latest`) and silently drops whatever
- *     was produced while it was down.
- *   • A throw from `eachMessage` makes the layer seek back and re-fetch at
- *     once — a busy loop while Valkey is down. So: pause the partition, resume
- *     it on a backoff timer, then throw.
- *   • A message that can never be handled (not JSON) is committed and skipped
- *     — retrying it would wedge the partition forever.
+ * the same type the producer writes), enqueues a BullMQ job that
+ * TaskEventsProcessor handles. The Kafka side (connect, commit, pause and
+ * backoff, tracing) is @base/kafka's KafkaConsumerRunner; this class is the
+ * part every consumer writes for itself: decode the event, hand it off.
  */
-import { KafkaJS } from "@confluentinc/kafka-javascript";
 import {
   Inject,
   Injectable,
@@ -30,40 +18,19 @@ import { type Queue } from "bullmq";
 
 import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
-import {
-  buildConsumerConfig,
-  buildKafkaClientConfig,
-  kafkaClientMetrics,
-  kafkaLogger,
-  traceKafkaMessage,
-} from "@base/kafka";
-import {
-  AppLogger,
-  ecsError,
-  generateRequestId,
-  isValidRequestId,
-  withDebugLogging,
-  withRequestId,
-} from "@base/logger";
+import { KafkaBackpressureError, KafkaConsumerRunner } from "@base/kafka";
+import { AppLogger, ecsError } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
 const GROUP_ID = "tasks-worker";
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
-const PROCESS_RETRY_BASE_MS = 1_000;
-const PROCESS_RETRY_MAX_MS = 60_000;
-// A full job queue is re-checked sooner: it drains on its own, and a long
-// pause would leave the worker idle after it has.
-const BACKPRESSURE_RETRY_MAX_MS = 5_000;
 // How stale the job-queue depth may be before it is read again.
 const QUEUE_DEPTH_TTL_MS = 1_000;
 
 /**
- * The job queue is above WORKER_QUEUE_MAX_WAITING: back-pressure, not a
- * failure. The partition is paused like for any failed hand-off, so the
- * backlog stays in Kafka (built for it) instead of filling Valkey.
+ * The job queue holds WORKER_QUEUE_MAX_WAITING jobs: the runner pauses the
+ * partition, so the backlog stays in Kafka (built for it), not in Valkey.
  */
-export class JobQueueFullError extends Error {
+export class JobQueueFullError extends KafkaBackpressureError {
   constructor(readonly waiting: number) {
     super(`job queue holds ${waiting} waiting jobs`);
     this.name = "JobQueueFullError";
@@ -72,21 +39,10 @@ export class JobQueueFullError extends Error {
 
 @Injectable()
 export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplicationShutdown {
-  private consumer: KafkaJS.Consumer | undefined;
-  private stopped = false;
-  private connected = false;
-  private reconnectTimer: NodeJS.Timeout | undefined;
-  private reconnectDelayMs = RECONNECT_BASE_MS;
-  // Consecutive failures per partition ("topic:partition"): with partitions
-  // handled concurrently, one partition's backoff must not shape another's.
-  private readonly processFailures = new Map<string, number>();
-  // One metrics handle for the logical consumer; every reconnect attempt's
-  // client reports into it (librdkafka statistics → kafka.client.*).
-  private readonly clientMetrics = kafkaClientMetrics("consumer");
-  private readonly partitionsConcurrently: number;
+  readonly runner: KafkaConsumerRunner;
+  private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly maxWaiting: number;
   private queueDepth: { waiting: number; at: number } | undefined;
-  private readonly logger: ReturnType<AppLogger["child"]>;
   // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
   // and that is what dashboards expect); OTel semconv would spell it
   // `worker.tasks.consumed` with unit "{task}" and let the exporter add `_total`.
@@ -97,170 +53,62 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     });
 
   constructor(
-    private readonly config: ConfigService,
+    config: ConfigService,
     @Inject(bullmqQueueToken("task-events")) private readonly queue: Queue,
     appLogger: AppLogger,
     readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
-    const concurrently = Number(config.get<string>("KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY"));
-    this.partitionsConcurrently =
-      Number.isInteger(concurrently) && concurrently > 0 ? concurrently : 1;
     const maxWaiting = Number(config.get<string>("WORKER_QUEUE_MAX_WAITING"));
     this.maxWaiting = Number.isInteger(maxWaiting) && maxWaiting > 0 ? maxWaiting : 10_000;
-    // Critical: a worker that cannot consume is not ready. assignment() throws
-    // unless the consumer is connected, which is exactly the cheap check we want.
+    this.runner = new KafkaConsumerRunner(config, this.logger, {
+      groupId: GROUP_ID,
+      topics: [TASK_EVENTS_TOPIC],
+      handle: (message) => this.handle(message.value),
+    });
+    // Critical: a worker that cannot consume is not ready.
     readiness.register({
       name: "kafka",
-      check: async () => {
-        if (this.consumer === undefined) throw new Error("consumer not started");
-        this.consumer.assignment();
-        return "ok";
+      check: () => {
+        this.runner.assertRunning();
+        return Promise.resolve("ok");
       },
     });
   }
 
   onApplicationBootstrap(): void {
-    // Not awaited: with no broker the worker still boots (readiness says
-    // not_ready) and keeps trying in the background.
-    void this.connectWithRetry();
+    // Not awaited: with no broker the worker still boots (not ready) and keeps trying.
+    this.runner.start();
   }
 
-  /**
-   * Connect + subscribe + run, retrying with exponential backoff until it
-   * sticks or the app shuts down. Each attempt gets a fresh consumer — one
-   * that failed half-way (connected, subscribe threw) cannot be connected again.
-   */
-  private async connectWithRetry(): Promise<void> {
-    if (this.stopped) return;
-    // The Kafka instance takes the shared client config only — consumer properties there make
-    // librdkafka warn "is a consumer property" on every connect.
-    const rdkafka = buildConsumerConfig(this.config, GROUP_ID, "worker");
-    const kafka = new KafkaJS.Kafka({
-      ...buildKafkaClientConfig(this.config, "worker"),
-      kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
-    });
-    const consumer = kafka.consumer({ ...rdkafka, stats_cb: this.clientMetrics.statsCb });
-    this.consumer = consumer;
+  onApplicationShutdown(): Promise<void> {
+    return this.runner.stop();
+  }
 
+  /** Decode and hand off one event. Returns for anything not ours (committed, skipped). */
+  async handle(value: Buffer | null): Promise<void> {
+    let decoded: unknown;
     try {
-      // Not raced against a timer: a connect in flight (it waits up to 30 s
-      // for metadata) must settle before the client can be dropped — a
-      // disconnect() under it makes the late "ready" throw from an event
-      // handler and takes the process down. A rejected connect leaves the
-      // client disconnected; the next attempt uses a fresh one.
-      await consumer.connect();
-      if (this.stopped) {
-        await consumer.disconnect().catch(() => {});
-        return;
-      }
-      await consumer.subscribe({ topics: [TASK_EVENTS_TOPIC] });
-      await consumer.run({
-        // Partitions handled in parallel; order within a partition (and so
-        // per key) still holds. 1 = strictly one message at a time.
-        partitionsConsumedConcurrently: this.partitionsConcurrently,
-        eachMessage: (payload) => this.handleMessage(payload),
-      });
-      this.connected = true;
-      this.reconnectDelayMs = RECONNECT_BASE_MS;
-      this.logger.info(
-        { "kafka.topic": TASK_EVENTS_TOPIC, "kafka.group": GROUP_ID },
-        "Kafka consumer running",
-      );
+      decoded = JSON.parse((value ?? Buffer.from("{}")).toString());
     } catch (err) {
-      await consumer.disconnect().catch(() => {});
-      if (this.stopped) return;
-      const delay = this.reconnectDelayMs;
-      this.reconnectDelayMs = Math.min(delay * 2, RECONNECT_MAX_MS);
-      this.logger.warn(
-        { ...ecsError(err as Error), "retry.delay_ms": delay },
-        "Kafka consumer failed to start — retrying",
-      );
-      this.reconnectTimer = setTimeout(() => void this.connectWithRetry(), delay);
+      this.logger.warn({ ...ecsError(err) }, "Skipping undecodable event");
+      return;
     }
+    // The topic may carry other event types (additive contract): not ours, skip.
+    if (typeof decoded !== "object" || decoded === null) return;
+    const event = decoded as TaskCreatedEvent;
+    if (event.type !== "task.created") return;
+    await this.ensureQueueRoom();
+    this.consumed.add(1);
+    // jobId = task id makes redelivery idempotent; addTraced carries the trace.
+    await addTraced(this.queue, "process-task", event, { jobId: event.id });
+    // Count our own enqueue into the cached depth: a burst inside one cache
+    // window would otherwise all pass on a stale "0".
+    if (this.queueDepth !== undefined) this.queueDepth.waiting++;
+    this.logger.info({ "task.id": event.id }, "task.created consumed → enqueued");
   }
 
-  /** One record: correlate, trace, handle; commit on success, pause + throw on failure. */
-  async handleMessage(payload: KafkaJS.EachMessagePayload): Promise<void> {
-    const { topic, partition, message } = payload;
-    // Correlate with the producing API request (x-request-id header) or
-    // mint an id, so every log line of this message carries one. An
-    // `x-debug-logging` header marks one message for debug logging. The
-    // `process` span continues the producer's trace (traceparent header).
-    const requestId = headerString(message.headers?.["x-request-id"]);
-    const run = (): Promise<void> =>
-      withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
-        this.handle(message.value),
-      );
-    try {
-      await traceKafkaMessage({ topic, partition, message, group: GROUP_ID }, () =>
-        message.headers?.["x-debug-logging"] !== undefined ? withDebugLogging(run) : run(),
-      );
-    } catch (err) {
-      // Not committed: pause this partition so the redelivery is spaced out,
-      // then throw so the layer seeks back to this exact offset.
-      const failures = this.processFailures.get(`${topic}:${partition}`) ?? 0;
-      const cap =
-        err instanceof JobQueueFullError ? BACKPRESSURE_RETRY_MAX_MS : PROCESS_RETRY_MAX_MS;
-      const delay = Math.min(PROCESS_RETRY_BASE_MS * 2 ** failures, cap);
-      this.processFailures.set(`${topic}:${partition}`, failures + 1);
-      const fields = {
-        ...ecsError(err),
-        "kafka.topic": topic,
-        "kafka.offset": message.offset,
-        "retry.delay_ms": delay,
-      };
-      if (err instanceof JobQueueFullError) {
-        this.logger.info(
-          { ...fields, "bullmq.waiting": err.waiting },
-          "Job queue full — partition paused, the backlog stays in Kafka",
-        );
-      } else {
-        this.logger.warn(fields, "Failed to handle event — partition paused, offset not committed");
-      }
-      const resume = payload.pause();
-      setTimeout(() => {
-        // The consumer may have disconnected meanwhile — resume() then throws,
-        // and the pause died with it.
-        try {
-          resume();
-        } catch {
-          /* already disconnected */
-        }
-      }, delay).unref();
-      throw err;
-    }
-    this.processFailures.delete(`${topic}:${partition}`);
-    await this.commit(topic, partition, message.offset);
-  }
-
-  /**
-   * The only thing that advances the group offset: the NEXT offset to read.
-   * Explicit, because a bare `commitOffsets()` from inside eachMessage commits
-   * what the layer stored so far — the previous message (it stores this one
-   * only after eachMessage returns), so every restart would redeliver one.
-   * A failure is logged, not thrown: the job is already enqueued and
-   * redelivery is idempotent (jobId), whereas a throw would re-process a
-   * message that succeeded.
-   */
-  private async commit(topic: string, partition: number, offset: string): Promise<void> {
-    try {
-      await this.consumer?.commitOffsets([
-        { topic, partition, offset: (BigInt(offset) + 1n).toString() },
-      ]);
-    } catch (err) {
-      this.logger.warn(
-        { ...ecsError(err as Error), "kafka.topic": TASK_EVENTS_TOPIC },
-        "Failed to commit offset — redelivery is idempotent",
-      );
-    }
-  }
-
-  /**
-   * Throws JobQueueFullError while the job queue is at WORKER_QUEUE_MAX_WAITING.
-   * The depth is read at most once a second — not one Valkey round trip per
-   * message — and counts this consumer's own enqueues in between.
-   */
+  /** Throws JobQueueFullError at WORKER_QUEUE_MAX_WAITING; the depth is read at most once a second. */
   private async ensureQueueRoom(): Promise<void> {
     const now = Date.now();
     if (this.queueDepth === undefined || now - this.queueDepth.at > QUEUE_DEPTH_TTL_MS) {
@@ -270,48 +118,4 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       throw new JobQueueFullError(this.queueDepth.waiting);
     }
   }
-
-  private async handle(value: Buffer | null): Promise<void> {
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse((value ?? Buffer.from("{}")).toString());
-    } catch (err) {
-      this.logger.warn({ ...ecsError(err as Error) }, "Skipping undecodable event");
-      return;
-    }
-    // The topic may carry other event types (additive contract): not ours, skip.
-    if (typeof decoded !== "object" || decoded === null) return;
-    const event = decoded as TaskCreatedEvent;
-    if (event.type !== "task.created") return;
-    await this.ensureQueueRoom();
-    this.consumed.add(1);
-    // Hand off to the job system; jobId = task id makes redelivery idempotent.
-    // addTraced stores the trace context with the job for the processor.
-    await addTraced(this.queue, "process-task", event, { jobId: event.id });
-    // Count our own enqueue into the cached depth: a burst inside one cache
-    // window would otherwise all pass on a stale "0".
-    if (this.queueDepth !== undefined) this.queueDepth.waiting++;
-    this.logger.info({ "task.id": event.id }, "task.created consumed → enqueued");
-  }
-
-  async onApplicationShutdown(): Promise<void> {
-    this.stopped = true;
-    clearTimeout(this.reconnectTimer);
-    try {
-      // Only a running consumer is disconnected: one still connecting is left
-      // to its metadata timeout (see connectWithRetry) — Nest ends the process.
-      if (this.connected) await this.consumer?.disconnect();
-    } catch (err) {
-      this.logger.warn({ ...ecsError(err as Error) }, "Kafka consumer disconnect failed");
-    } finally {
-      this.clientMetrics.dispose();
-    }
-  }
-}
-
-function headerString(
-  value: Buffer | string | (Buffer | string)[] | undefined,
-): string | undefined {
-  const first = Array.isArray(value) ? value[0] : value;
-  return first === undefined ? undefined : first.toString();
 }
