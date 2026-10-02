@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import type { ConfigService } from "@nestjs/config";
 
@@ -74,12 +74,8 @@ function resolveCaLocation(config: ConfigService): string | undefined {
   const inline = readString(config, "KAFKA_SSL_CA_PEM");
   if (!inline) return undefined;
 
-  // Lazy require keeps this module importable in environments without the
-  // Node 'fs' module (e.g. browser test doubles). `writeFileSync` is safe to
-  // call repeatedly — the contents are identical per boot.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("node:fs") as typeof import("node:fs");
-  fs.writeFileSync(KAFKA_CA_PEM_FILE, inline, { encoding: "utf8", mode: 0o600 });
+  // Safe to call repeatedly — the contents are identical per boot.
+  writeFileSync(KAFKA_CA_PEM_FILE, inline, { encoding: "utf8", mode: 0o600 });
   return KAFKA_CA_PEM_FILE;
 }
 
@@ -235,6 +231,13 @@ export function buildConsumerConfig(
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
     "session.timeout.ms": readNumber(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
     "max.poll.interval.ms": readNumber(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
+    // Bounded prefetch. librdkafka's defaults size the local queue for raw
+    // throughput (100k messages, up to 64 MiB per partition): a consumer that
+    // handles one message at a time and wakes up to a deep backlog pulls
+    // hundreds of MB in faster than it drains them and is OOM-killed before
+    // its first commit — a crash loop. Override via KAFKA_EXTRA_PROPERTIES.
+    "queued.min.messages": 1_000,
+    "queued.max.messages.kbytes": 4_096,
   };
   return { ...out, ...readExtraProperties(config) };
 }
