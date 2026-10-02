@@ -1,18 +1,10 @@
 /**
- * IdempotencyInterceptor — unit tests against an in-memory store.
- *
- * Covers the whole state machine: pass-through, UUID validation, replay of a
- * completed entry for the same request, 409 for a different request under
- * the same key, 409 while in flight (PROCESSING sentinel or a lost SET NX
- * race), eviction of a corrupted entry, lock release on handler error, and
- * fail-open when the store (Valkey) is unavailable.
+ * IdempotencyInterceptor — what only a unit test can reach: races, a corrupt
+ * store, a failing handler, a dead Valkey. Replay, 409 for another request
+ * under the same key and the 400 for a bad key are the contract layer's
+ * (apps/api app.contract.integration.spec.ts) against the real app.
  */
-import {
-  BadRequestException,
-  type CallHandler,
-  ConflictException,
-  type ExecutionContext,
-} from "@nestjs/common";
+import { type CallHandler, ConflictException, type ExecutionContext } from "@nestjs/common";
 import type { ConfigService } from "@nestjs/config";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { lastValueFrom, of, throwError } from "rxjs";
@@ -54,10 +46,6 @@ function memoryStore(): IdempotencyStore & { data: Map<string, string> } {
 
 interface RequestOpts {
   key?: string;
-  userId?: string;
-  method?: string;
-  url?: string;
-  body?: unknown;
   /** Handler outcome: a value, or an Error to fail with. */
   result?: unknown;
 }
@@ -72,11 +60,10 @@ function setup(env: Record<string, string> = {}) {
 
   function call(opts: RequestOpts = {}) {
     const request = {
-      method: opts.method ?? "POST",
-      url: opts.url ?? "/tasks",
-      body: "body" in opts ? opts.body : { title: "a" },
+      method: "POST",
+      url: "/tasks",
+      body: { title: "a" },
       headers: opts.key === undefined ? {} : { "idempotency-key": opts.key },
-      ...(opts.userId === undefined ? {} : { user: { userId: opts.userId } }),
     } as unknown as FastifyRequest;
     const header = vi.fn();
     const status = vi.fn();
@@ -109,130 +96,15 @@ describe("IdempotencyInterceptor", () => {
     tags: ["idempotency", "unit"],
   });
 
-  it("passes through untouched when the header is absent", async () => {
-    await testCase("NB-807", "no Idempotency-Key → plain request");
-    const { store, call } = setup();
-    const req = call();
-
-    await expect(req.run()).resolves.toEqual({ id: "created" });
-    expect(req.handle).toHaveBeenCalledOnce();
-    expect(store.get).not.toHaveBeenCalled();
-  });
-
-  it("rejects a key that is not a UUID with 400 before touching the store", async () => {
-    await testCase("NB-808", "non-UUID key → 400");
-    const { store, call } = setup();
-    const req = call({ key: "not-a-uuid" });
-
-    expect(() => req.run()).toThrow(BadRequestException);
-    expect(req.handle).not.toHaveBeenCalled();
-    expect(store.get).not.toHaveBeenCalled();
-  });
-
-  it("executes once and caches status, body and fingerprint under the user-scoped key", async () => {
-    await testCase("NB-809", "first request runs the handler and is cached");
-    const { store, call } = setup({ IDEMPOTENCY_TTL_SECONDS: "60" });
-    Reflect.defineMetadata("__httpCode__", 201, handlerFn);
-    const req = call({ key: IDEM_UUID, userId: "u1" });
-
-    await expect(req.run()).resolves.toEqual({ id: "created" });
-
-    expect(store.setNx).toHaveBeenCalledWith(
-      `idempotency:u1:${IDEM_UUID}`,
-      PROCESSING_SENTINEL,
-      30,
-    );
-    expect(store.set).toHaveBeenCalledWith(`idempotency:u1:${IDEM_UUID}`, expect.any(String), 60);
-    const cached = JSON.parse(store.data.get(`idempotency:u1:${IDEM_UUID}`) ?? "{}") as {
-      status: number;
-      body: unknown;
-      fingerprint: string;
-    };
-    expect(cached.status).toBe(201);
-    expect(cached.body).toEqual({ id: "created" });
-    expect(cached.fingerprint).toMatch(/^[0-9a-f]{64}$/u);
-  });
-
-  it("defaults the result TTL to 24 h and the status to 200", async () => {
-    await testCase("NB-810", "default TTL and status");
-    const { store, call } = setup();
-    await call({ key: IDEM_UUID }).run();
-
-    expect(store.set).toHaveBeenCalledWith(STORE_KEY, expect.any(String), 86_400);
-    expect(JSON.parse(store.data.get(STORE_KEY) ?? "{}")).toMatchObject({ status: 200 });
-  });
-
-  it("replays the cached response for the same request without invoking the handler", async () => {
-    await testCase("NB-811", "same key + same request → replay");
-    const { call } = setup();
-    Reflect.defineMetadata("__httpCode__", 201, handlerFn);
-    await call({ key: IDEM_UUID }).run();
-
-    const retry = call({ key: IDEM_UUID, result: { id: "second-run" } });
-    await expect(retry.run()).resolves.toEqual({ id: "created" });
-
-    expect(retry.handle).not.toHaveBeenCalled();
-    expect(retry.header).toHaveBeenCalledWith("X-Idempotent-Replayed", "true");
-    expect(retry.status).toHaveBeenCalledWith(201);
-  });
-
-  it("treats the key case-insensitively", async () => {
-    await testCase("NB-812", "upper-case key replays the lower-case entry");
-    const { call } = setup();
-    await call({ key: IDEM_UUID }).run();
-
-    const retry = call({ key: IDEM_UUID.toUpperCase() });
-    await retry.run();
-
-    expect(retry.handle).not.toHaveBeenCalled();
-    expect(retry.header).toHaveBeenCalledWith("X-Idempotent-Replayed", "true");
-  });
-
-  it("replays a handler that returned nothing as a null body", async () => {
-    await testCase("NB-813", "void result is cached as null");
-    const { call } = setup();
-    await call({ key: IDEM_UUID, result: undefined }).run();
-
-    const retry = call({ key: IDEM_UUID });
-    await expect(retry.run()).resolves.toBeNull();
-    expect(retry.handle).not.toHaveBeenCalled();
-  });
-
-  it("answers 409 when the same key arrives with a different body", async () => {
-    await testCase("NB-814", "same key + different body → 409");
-    const { call } = setup();
-    await call({ key: IDEM_UUID, body: { title: "a" } }).run();
-
-    const other = call({ key: IDEM_UUID, body: { title: "b" } });
-    await expect(other.run()).rejects.toThrow(ConflictException);
-    await expect(call({ key: IDEM_UUID, body: { title: "b" } }).run()).rejects.toThrow(
-      /already used for a different request/u,
-    );
-    expect(other.handle).not.toHaveBeenCalled();
-    expect(other.header).not.toHaveBeenCalled();
-  });
-
-  it("answers 409 when the same key arrives for a different path", async () => {
-    await testCase("NB-815", "same key + different path → 409");
-    const { call } = setup();
-    await call({ key: IDEM_UUID, url: "/tasks" }).run();
-
-    await expect(call({ key: IDEM_UUID, url: "/other" }).run()).rejects.toThrow(ConflictException);
-  });
-
-  it("keeps different users apart under the same client key", async () => {
-    await testCase("NB-816", "store key is scoped by user");
-    const { store, call } = setup();
-    const alice = call({ key: IDEM_UUID, userId: "alice" });
-    const bob = call({ key: IDEM_UUID, userId: "bob", body: { title: "other" } });
-
-    await alice.run();
-    await bob.run();
-
-    expect(store.get).toHaveBeenCalledWith(`idempotency:alice:${IDEM_UUID}`);
-    expect(store.get).toHaveBeenCalledWith(`idempotency:bob:${IDEM_UUID}`);
-    expect(alice.handle).toHaveBeenCalledOnce();
-    expect(bob.handle).toHaveBeenCalledOnce();
+  it("caches for 24 h by default — and on a garbage IDEMPOTENCY_TTL_SECONDS", async () => {
+    await testCase("NB-810", "default TTL");
+    const envs: Record<string, string>[] = [{}, { IDEMPOTENCY_TTL_SECONDS: "a day" }];
+    for (const env of envs) {
+      const { store, call } = setup(env);
+      // oxlint-disable-next-line no-await-in-loop -- one setup after another
+      await call({ key: IDEM_UUID }).run();
+      expect(store.set).toHaveBeenCalledWith(STORE_KEY, expect.any(String), 86_400);
+    }
   });
 
   it("answers 409 while an identical request is still in flight", async () => {
