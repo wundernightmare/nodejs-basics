@@ -12,13 +12,12 @@ describe("kafka send error registry", () => {
 
   it.each([
     [-184, "queue_full", true],
-    [-192, "timeout", true],
-    [-187, "unavailable", true],
+    [-192, "unavailable", true],
     [6, "unavailable", true],
-    [10, "message_too_large", false],
-    [87, "invalid_record", false],
-    [3, "unknown_topic", false],
-    [29, "unauthorized", false],
+    [3, "not_provisioned", true],
+    [29, "not_provisioned", true],
+    [10, "rejected", false],
+    [87, "rejected", false],
     [12_345, "unknown", true],
   ])("code %i → %s (retryable %s)", async (code, kind, retryable) => {
     await testCase("NB-936", "librdkafka codes map onto the registry");

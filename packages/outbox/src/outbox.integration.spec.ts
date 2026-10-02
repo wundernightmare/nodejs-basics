@@ -138,7 +138,7 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     expect(await attempts()).toEqual([
       {
         attempts: 1,
-        last_error: "Kafka send failed (message_too_large): Broker: Message size too large",
+        last_error: "Kafka send failed (rejected): Broker: Message size too large",
       },
     ]);
     expect(await mine()).toBe(1);

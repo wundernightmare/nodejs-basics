@@ -279,9 +279,9 @@ transaction client, with the request's trace context and request id.
 `OUTBOX_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED` — every replica can run one —
 sends them and deletes them in that transaction. A failed send is judged by
 the `@base/kafka` error registry (`KAFKA_SEND_ERRORS`): a retryable one
-(broker down, queue full, timeout) leaves the row for a later pass (backoff
-to 30 s) and is never counted; a non-retryable one (too large, invalid,
-unknown topic, no access) makes it a poison row — `attempts`/`last_error`
+(broker down, queue full, topic not provisioned yet) leaves the row for a
+later pass (backoff to 30 s) and is never counted; a `rejected` record (too
+large, invalid) makes it a poison row — `attempts`/`last_error`
 (migrations/0003), and after `OUTBOX_MAX_ATTEMPTS` (10) it stays in the
 table instead of being retried forever. Delivery is at least once, so consumers
 are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
@@ -400,10 +400,10 @@ it — Prometheus is just unscraped, traces are dropped.
   (`KAFKA_STATISTICS_INTERVAL_MS`, 15 s; `stats_cb` → `@base/kafka`
   `kafkaClientMetrics`), only what an application acts on: brokers up,
   request errors, the producer's local queue against its bound
-  (`kafka_client_producer_queue_size` / `_limit`), messages sent / received,
-  consumer lag (max and sum), prefetched bytes, rebalances. No series has a
-  topic or partition label: ~10 series per client whether it uses one topic
-  or hundreds — per-partition lag is the broker side's job.
+  (`kafka_client_producer_queue_size` / `_limit`), consumer lag (max and
+  sum), rebalances. No series has a topic or partition label: 4–5 series per
+  client whether it uses one topic or hundreds — per-partition lag is the
+  broker side's job.
 - **Back-pressure**: `KafkaProducerService.send()` fails only with a
   `KafkaSendError` — `kind` + `retryable` from the `KAFKA_SEND_ERRORS`
   registry (JSDoc lists each kind and what to do). It waits out a full local

@@ -62,8 +62,7 @@ describe("KafkaProducerService", () => {
     expect(svc.made).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(2_000); // 3rd after 2 s more
     expect(svc.made).toHaveLength(3);
-    expect(svc.isConnected()).toBe(true);
-    await svc.send(record);
+    await svc.send(record, { waitMs: 0 });
     expect(svc.made[2]?.send).toHaveBeenCalledOnce();
   });
 
@@ -79,7 +78,7 @@ describe("KafkaProducerService", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(broken.disconnect).toHaveBeenCalled();
     expect(svc.made).toHaveLength(2);
-    expect(svc.isConnected()).toBe(true);
+    await expect(svc.send(record, { waitMs: 0 })).resolves.toEqual([]);
   });
 
   it("a non-fatal send error keeps the producer", async () => {
