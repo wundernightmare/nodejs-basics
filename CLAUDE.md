@@ -196,9 +196,6 @@ high-signal, easy-to-miss bits.
   `"partition.assignment.strategy":"cooperative-sticky"` via
   `KAFKA_CONSUMER_EXTRA_PROPERTIES` (incremental rebalances) — every member of
   the group must switch together, so it is not the default.
-- **Request identity**: guards call `setActor()` / `setTenant()` (@base/common)
-  — they mutate the per-request object the onRequest hook entered; never
-  `enterWith()` from a guard (it does not reach the handler).
 - **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
   checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
   create tables from app code or edit an applied file — add a new one.

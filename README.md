@@ -350,11 +350,11 @@ being processed twice concurrently.
 Always use the merge-object form — never interpolate values into the message:
 
 ```ts
-this.logger.info({ "user.id": userId, "tenant.id": tenantId }, "Invite sent");
+this.logger.info({ "task.id": task.id }, "Task archived");
 ```
 
-`actor.id`, `tenant.id`, `trace.id`, `span.id` are auto-injected from ALS by
-the pino mixin in `@base/logger`. Don't pass them explicitly.
+`http.request.id`, `trace.id`, `span.id` are auto-injected from ALS / the
+active span by the pino mixin in `@base/logger`. Don't pass them explicitly.
 
 ## Patterns NOT included (build per project)
 

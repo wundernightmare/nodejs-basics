@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { getIdentity, getRequestId, isDebugLogging, setActor } from "../utils/request-context.js";
+import { getRequestId, isDebugLogging } from "../utils/request-context.js";
 
 import { genRequestId, registerRequestContext, secretEquals } from "./request-context.hooks.js";
 
@@ -67,30 +67,5 @@ describe("registerRequestContext", () => {
     expect(res.headers["x-debug-logging"]).toBeUndefined();
     expect(res.json().debug).toBe(false);
     await bare.close();
-  });
-});
-
-describe("request identity", () => {
-  it("an actor set by a guard-like hook reaches the handler, and only for its own request", async () => {
-    const app = Fastify({ genReqId: genRequestId, logger: false });
-    registerRequestContext(app);
-    // Like a Nest guard: runs in its own async frame before the handler.
-    app.addHook("preHandler", async (req) => {
-      await Promise.resolve();
-      const user = req.headers["x-user"];
-      if (typeof user === "string") setActor(user);
-    });
-    app.get("/", async () => getIdentity());
-
-    expect((await app.inject({ url: "/", headers: { "x-user": "u1" } })).json()).toEqual({
-      actor: "u1",
-    });
-    expect((await app.inject({ url: "/" })).json()).toEqual({});
-    await app.close();
-  });
-
-  it("setActor outside a request has nowhere to write", () => {
-    expect(setActor("u1")).toBe(false);
-    expect(getIdentity()).toEqual({});
   });
 });
