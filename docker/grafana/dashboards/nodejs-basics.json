@@ -1,9 +1,7 @@
 {
   "uid": "nodejs-basics",
   "title": "nodejs-basics",
-  "tags": [
-    "nodejs-basics"
-  ],
+  "tags": ["nodejs-basics"],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -551,9 +549,7 @@
       "options": {
         "colorMode": "background",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
+          "calcs": ["lastNotNull"]
         }
       },
       "targets": [
@@ -754,7 +750,7 @@
             "uid": "prometheus"
           },
           "refId": "A",
-          "expr": "max by (job) (valkey_client_connected{client_id!=\"\"})",
+          "expr": "max by (job) (valkey_client_connected)",
           "legendFormat": "{{job}} connected"
         },
         {
