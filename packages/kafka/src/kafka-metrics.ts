@@ -19,10 +19,19 @@
  *             kafka.client.producer.queue.size.limit  gauge    … and its bound (queue.buffering.max.kbytes)
  *             kafka.client.messages.sent              counter  messages delivered to brokers
  *             kafka.client.broker.rtt                 gauge    p99 request round trip per broker
- *   consumer  kafka.client.consumer.lag               gauge    per assigned partition
+ *   consumer  kafka.client.consumer.lag.max           gauge    worst assigned partition
+ *             kafka.client.consumer.lag.sum           gauge    total over assigned partitions
  *             kafka.client.consumer.fetch_queue.size  gauge    prefetched bytes (queued.max.messages.kbytes bound)
  *             kafka.client.consumer.rebalances        counter
  *             kafka.client.messages.received          counter  messages fetched from brokers
+ *
+ * Cardinality is fixed: no series carries a topic or partition label, so a
+ * client on hundreds of topics exports the same ~10 series as one on a
+ * single topic (per-partition lag belongs to the broker side — Redpanda's
+ * consumer-group metrics, kminion, Burrow — exported once, not per pod).
+ * The statistics JSON itself still lists every topic and partition: ~2.4 MB
+ * and ~5 ms of JSON.parse for 300 topics × 12 partitions, per interval —
+ * raise KAFKA_STATISTICS_INTERVAL_MS for thousands of topics.
  *
  * A consumer's broker rtt is left out on purpose: it includes the fetch long
  * poll (fetch.wait.max.ms), so it measures the poll, not the network.
@@ -126,8 +135,12 @@ export function kafkaClientMetrics(
     unit: "ms",
   });
 
-  const lag = meter.createObservableGauge("kafka.client.consumer.lag", {
-    description: "Messages between the committed/consumed offset and the partition end.",
+  const lagMax = meter.createObservableGauge("kafka.client.consumer.lag.max", {
+    description: "Largest lag (messages behind the partition end) over the assigned partitions.",
+    unit: "{message}",
+  });
+  const lagSum = meter.createObservableGauge("kafka.client.consumer.lag.sum", {
+    description: "Total lag over the assigned partitions.",
     unit: "{message}",
   });
   const fetchQueue = meter.createObservableGauge("kafka.client.consumer.fetch_queue.size", {
@@ -143,7 +156,7 @@ export function kafkaClientMetrics(
     unit: "{message}",
   });
   if (role === "producer") instruments.push(queueMessages, queueSize, queueLimit, sent, rtt);
-  else instruments.push(lag, fetchQueue, rebalances, received);
+  else instruments.push(lagMax, lagSum, fetchQueue, rebalances, received);
 
   let latest: RdKafkaStats | undefined;
   let receivedAt = 0;
@@ -191,18 +204,20 @@ export function kafkaClientMetrics(
     }
 
     let fetched = 0;
-    for (const [topic, t] of Object.entries(s.topics ?? {})) {
+    let maxLag = 0;
+    let sumLag = 0;
+    for (const t of Object.values(s.topics ?? {})) {
       for (const [partition, p] of Object.entries(t.partitions ?? {})) {
         fetched += p.fetchq_size ?? 0;
         // -1: the internal UA partition, or a lag not known yet.
-        if (partition === "-1" || (p.consumer_lag ?? -1) < 0) continue;
-        result.observe(lag, p.consumer_lag ?? 0, {
-          ...base,
-          "messaging.destination.name": topic,
-          "messaging.destination.partition.id": partition,
-        });
+        const partitionLag = p.consumer_lag ?? -1;
+        if (partition === "-1" || partitionLag < 0) continue;
+        maxLag = Math.max(maxLag, partitionLag);
+        sumLag += partitionLag;
       }
     }
+    result.observe(lagMax, maxLag, base);
+    result.observe(lagSum, sumLag, base);
     result.observe(fetchQueue, fetched, base);
     result.observe(rebalances, s.cgrp?.rebalance_cnt ?? 0, base);
     result.observe(received, s.rxmsgs ?? 0, base);

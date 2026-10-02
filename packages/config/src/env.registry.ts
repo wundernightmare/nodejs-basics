@@ -918,7 +918,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     required: false,
     description:
       "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
-      "metrics. Default 15000; 0 disables them.",
+      "metrics. Default 15000; 0 disables them. The report lists every topic and partition " +
+      "(~2.4 MB / ~5 ms to parse at 300 topics × 12 partitions): raise it for thousands of topics.",
     usedIn: ["kafka"],
   },
 
