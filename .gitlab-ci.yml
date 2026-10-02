@@ -29,9 +29,12 @@ stages:
 default:
   image: ${DOCKER_HUB}/library/node:24-trixie
   before_script:
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 
 variables:
+  # corepack itself (it installs the pnpm from `packageManager`) — the
+  # Dockerfiles' ARG COREPACK_VERSION carries the same pin. Not :latest.
+  COREPACK_VERSION: "0.36.0"
   # ── Closed-network knobs — defaults are the public upstreams ──────────────
   # Registry hosts, used as the prefix of the scanner / docker images below.
   # Point at a pull-through cache (Harbor proxy project, Nexus docker-proxy,
@@ -160,7 +163,7 @@ integration:
     KAFKA_BROKERS: docker:9092
   before_script:
     - apk add --no-cache nodejs npm bash
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
   script:
     - pnpm install --frozen-lockfile
     - docker compose -f docker/deps.yml up -d --wait
@@ -185,7 +188,7 @@ e2e:
     GIT_COMMIT: $CI_COMMIT_SHA
   before_script:
     - apk add --no-cache nodejs npm bash
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
   script:
     - pnpm install --frozen-lockfile
     - docker compose -f docker/deps.yml up -d --wait
@@ -210,7 +213,7 @@ e2e-stack:
   image: ${DOCKER_HUB}/library/docker:28
   before_script:
     - apk add --no-cache nodejs npm bash
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
   script:
     - pnpm install --frozen-lockfile
     - docker compose -f docker/deps.yml up -d --wait
@@ -252,7 +255,7 @@ schemathesis:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl xz-utils docker.io docker-compose-v2 >/dev/null
     - curl -fsSL "${NODE_DIST_URL:-https://nodejs.org/dist}/v${NODE_VERSION}/${NODE_DIST}.tar.xz" | tar -xJ -C /opt
     - export PATH="/opt/${NODE_DIST}/bin:$PATH"
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
   script:
     - pnpm install --frozen-lockfile
     - docker compose -f docker/deps.yml up -d --wait
@@ -329,7 +332,7 @@ allure-report:
   when: always
   before_script:
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs npm >/dev/null
-    - npm install -g corepack@latest && corepack enable && corepack install
+    - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
   script:
     - pnpm install --frozen-lockfile
     - scripts/allure-meta.sh allure-results

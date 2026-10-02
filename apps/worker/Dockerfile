@@ -16,14 +16,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ARG NODE_VERSION=24
+# corepack pinned like everything else (.gitlab-ci.yml COREPACK_VERSION in step).
+ARG COREPACK_VERSION=0.36.0
 
 FROM node:${NODE_VERSION}-trixie AS builder
+ARG COREPACK_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /repo
 COPY . .
 # pnpm from `packageManager` in package.json — see apps/api/Dockerfile.
-RUN npm install -g corepack@latest && corepack enable && corepack install
+RUN npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 RUN pnpm build
