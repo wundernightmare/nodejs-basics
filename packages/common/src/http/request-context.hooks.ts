@@ -29,6 +29,7 @@ import {
   DEBUG_TOKEN_HEADER,
   REQUEST_ID_HEADER,
   debugLoggingStorage,
+  identityStorage,
   isValidRequestId,
   requestIdStorage,
 } from "../utils/request-context.js";
@@ -79,22 +80,25 @@ export function registerRequestContext(
     const timeoutMs =
       budget === undefined ? asked : asked === undefined ? budget : Math.min(asked, budget);
     const run = (): void => {
-      requestIdStorage.run(req.id, () => {
-        if (debugToken === "") {
-          done();
-          return;
-        }
-        const raw = req.headers[DEBUG_TOKEN_HEADER];
-        const got = Array.isArray(raw) ? raw[0] : raw;
-        if (!secretEquals(got, debugToken)) {
-          done();
-          return;
-        }
-        void reply.header(DEBUG_LOGGING_HEADER, "on");
-        debugLoggingStorage.run(true, () => {
-          done();
-        });
-      });
+      // A fresh identity per request; guards fill it in with setActor/setTenant.
+      requestIdStorage.run(req.id, () =>
+        identityStorage.run({}, () => {
+          if (debugToken === "") {
+            done();
+            return;
+          }
+          const raw = req.headers[DEBUG_TOKEN_HEADER];
+          const got = Array.isArray(raw) ? raw[0] : raw;
+          if (!secretEquals(got, debugToken)) {
+            done();
+            return;
+          }
+          void reply.header(DEBUG_LOGGING_HEADER, "on");
+          debugLoggingStorage.run(true, () => {
+            done();
+          });
+        }),
+      );
     };
     if (timeoutMs === undefined) run();
     else withDeadline(timeoutMs, run);
