@@ -602,6 +602,10 @@ importers:
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
 
   packages/jobs:
     dependencies:
@@ -803,6 +807,9 @@ importers:
         specifier: 10.0.0
         version: 10.0.0
     devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
       '@types/opossum':
         specifier: 8.1.9
         version: 8.1.9
