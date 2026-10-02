@@ -70,8 +70,15 @@ export class AppLogger implements LoggerService {
         stringify(message),
       );
     } else if (isStackTrace(stackOrContextOrError)) {
+      // Not ecsError(): a stack STRING takes its non-Error branch and becomes
+      // `error.message: <whole stack>` with no `error.stack_trace`. Nest's own
+      // internals log through this signature.
       this._pino.error(
-        { "log.logger": context, ...ecsError(stackOrContextOrError) },
+        {
+          "log.logger": context,
+          "error.message": stringify(message),
+          "error.stack_trace": stackOrContextOrError,
+        },
         stringify(message),
       );
     } else {

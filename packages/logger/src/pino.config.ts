@@ -23,13 +23,7 @@
 import { trace } from "@opentelemetry/api";
 import pino from "pino";
 
-import {
-  actorStorage,
-  isDebugLogging,
-  requestIdStorage,
-  tenantStorage,
-  withDebugLogging,
-} from "@base/common";
+import { identityStorage, isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
 
 import {
   DEFAULT_LOG_LEVEL_MAX_TTL_MS,
@@ -72,11 +66,9 @@ function contextMixin(): Record<string, string> {
   const requestId = requestIdStorage.getStore();
   if (requestId !== null && requestId !== undefined) fields["http.request.id"] = requestId;
 
-  const actor = actorStorage.getStore();
-  if (actor !== null && actor !== undefined) fields["actor.id"] = actor;
-
-  const tenant = tenantStorage.getStore();
-  if (tenant !== null && tenant !== undefined) fields["tenant.id"] = tenant;
+  const identity = identityStorage.getStore();
+  if (identity?.actor !== undefined) fields["actor.id"] = identity.actor;
+  if (identity?.tenant !== undefined) fields["tenant.id"] = identity.tenant;
 
   return fields;
 }
@@ -209,13 +201,25 @@ export function buildPinoOptions(level: LogLevel): pino.LoggerOptions {
     mixin: contextMixin,
     formatters,
     serializers,
+    // Pino paths: `*.password` means "a NESTED `password` one level down" — it
+    // matches neither a top-level `password` nor a flat ECS key such as
+    // `"user.password"` (one key containing a dot). Flat keys take the bracket
+    // form. pino.config.spec.ts checks every entry against a real logger.
     redact: {
       paths: [
-        "req.headers.authorization",
-        "req.headers.cookie",
+        '["user.password"]',
+        '["user.token"]',
+        '["auth.token"]',
+        '["auth.secret"]',
+        '["sasl.password"]',
+        "password",
+        "secret",
+        "token",
         "*.password",
         "*.secret",
         "*.token",
+        "req.headers.authorization",
+        "req.headers.cookie",
       ],
       censor: "[REDACTED]",
     },
