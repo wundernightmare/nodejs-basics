@@ -32,7 +32,10 @@ high-signal, easy-to-miss bits.
 - **Lint/format** are oxlint + oxfmt (Rust-based, fast). Each app/e2e package
   needs its own `.oxlintrc.json` extending the root — oxlint's `typeAware`
   option is only valid in the config it treats as the root, so a package run
-  from its own dir must re-anchor to `../.oxlintrc.json`.
+  from its own dir must re-anchor to `../.oxlintrc.json`. Every `lint` script
+  carries `--max-warnings=N`, a ratchet: fix warnings and lower N, never
+  raise it. `import/no-cycle` is an error. The root `scripts/` and config
+  files are linted/formatted by the root `lint:root` / `format:check`.
 - **Tests** are vitest with ONE root `vitest.config.ts` and two projects:
   `unit` (`*.spec.ts`, `pnpm test`) and `integration` (`*.integration.spec.ts`,
   `pnpm test:integration`, real services from `just deps` via `DATABASE_URL` /
@@ -149,10 +152,24 @@ high-signal, easy-to-miss bits.
   `uow.runInTransaction` (same transaction as the write), `OutboxRelay`
   publishes (SKIP LOCKED, at least once — consumers must be idempotent). Do
   not call `kafka.send()` from a request path for an event that must not be
-  lost. The relay keeps the request's trace (context stored per row).
+  lost. The relay keeps the request's trace (context stored per row). A row
+  that fails while others go out counts `attempts`; at `OUTBOX_MAX_ATTEMPTS`
+  it stays in the table (`outbox.dead` gauge) instead of blocking the batch.
+- **Kafka consumers commit explicitly**: `enable.auto.commit=false` and the
+  kafkajs-compat layer only *stores* offsets — call `consumer.commitOffsets()`
+  after a handled message, or a restart (`auto.offset.reset: latest`) skips
+  everything produced meanwhile. On a failed hand-off `pause()` + backoff +
+  rethrow (a bare throw re-fetches at once — a hot loop); commit and skip a
+  message that can never decode. Pattern: `apps/worker/.../task-events.consumer.ts`.
+- **Request identity**: guards call `setActor()` / `setTenant()` (@base/common)
+  — they mutate the per-request object the onRequest hook entered; never
+  `enterWith()` from a guard (it does not reach the handler).
 - **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
   checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
-  create tables from app code or edit an applied file — add a new one. The
+  create tables from app code or edit an applied file — add a new one.
+  `migrations-safety.spec.ts` rejects DDL that breaks the running release
+  (DROP/RENAME COLUMN, SET NOT NULL, CREATE INDEX without CONCURRENTLY on an
+  existing table, …) unless the file says `-- migration-safety: reviewed`. The
   integration project migrates in its `globalSetup`, the e2e spawn harness
   and schemathesis.sh before starting the api, docker/stack.yml through the
   one-shot `migrate` service. Its image is a self-contained bundle
@@ -206,6 +223,7 @@ high-signal, easy-to-miss bits.
   appsec run) fails once the date has passed. The docker workflow also runs
   weekly with `pull: true`, so a stale or newly vulnerable base image turns
   it red without a commit.
-- **Signing is local-only**: `just docker-sign` / `docker-verify` use cosign in
-  key mode with `--tlog-upload=false` (`COSIGN_PRIVATE_KEY` from `.env`);
+- **Signing is local-only**: `just docker-sign` / `docker-verify <image>` use
+  cosign in key mode with `--tlog-upload=false` (`COSIGN_PRIVATE_KEY` from
+  `.env`) on a *pushed* image reference — cosign cannot sign a local tag;
   CI builds, SBOMs (syft, 7-day artifact) and scans but does not push or sign.

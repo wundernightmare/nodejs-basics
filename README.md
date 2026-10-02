@@ -236,6 +236,7 @@ export class PrismaUnitOfWork implements IUnitOfWork {
 ```
 
 Wire in your AppModule:
+
 ```ts
 { provide: UNIT_OF_WORK, useClass: PrismaUnitOfWork }
 ```
@@ -248,11 +249,11 @@ handling it — the deadline lives in AsyncLocalStorage (`@base/common`
 `withDeadline` / `remainingMs` / `callBudgetMs`) and each client takes what
 is left of it:
 
-| Dependency | How the budget applies |
-|---|---|
-| Postgres | nothing is sent once it is spent (a `ROLLBACK` always is); a unit of work sets `SET LOCAL statement_timeout` to the rest, so the **server** cancels a statement that would outlive the request |
-| Valkey | rejected unsent once spent; the request stops waiting when it runs out |
-| HTTP (`resilient-client`, `getRemainingMs`) | each attempt is aborted at the deadline and sends `x-request-timeout-ms` downstream; spent → `deadline_exceeded`, never retried |
+| Dependency                                  | How the budget applies                                                                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres                                    | nothing is sent once it is spent (a `ROLLBACK` always is); a unit of work sets `SET LOCAL statement_timeout` to the rest, so the **server** cancels a statement that would outlive the request |
+| Valkey                                      | rejected unsent once spent; the request stops waiting when it runs out                                                                                                                         |
+| HTTP (`resilient-client`, `getRemainingMs`) | each attempt is aborted at the deadline and sends `x-request-timeout-ms` downstream; spent → `deadline_exceeded`, never retried                                                                |
 
 A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
 caller can ask for less with `x-request-timeout-ms` (never more), which is
@@ -276,12 +277,16 @@ await uow.runInTransaction(async () => {
 transaction client, with the request's trace context and request id.
 `OutboxRelay` (every `OUTBOX_POLL_INTERVAL_MS`, 200 ms) takes up to
 `OUTBOX_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED` — every replica can run one —
-sends them and deletes them in that transaction; a failed send leaves them
-for the next pass (backoff to 30 s). Delivery is at least once, so consumers
+sends them and deletes them in that transaction; when every send fails (the
+broker is down) the batch is left for the next pass (backoff to 30 s). A row
+that fails while others go out is a poison row: it gets `attempts`/`last_error`
+(migrations/0003) and after `OUTBOX_MAX_ATTEMPTS` (10) stays in the table
+instead of blocking the batch. Delivery is at least once, so consumers
 are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
 each record in the trace of the request that wrote it, so the trace still
-reads request → Kafka → worker. `outbox_pending` (Grafana: "Outbox pending")
-is the one number to alert on.
+reads request → Kafka → worker. Alert on `outbox_pending` (Grafana: "Outbox
+pending") and on any `outbox_dead`. Shutdown waits up to 5 s for a batch in
+flight.
 
 ### Migrations
 
@@ -291,6 +296,11 @@ The schema lives in `migrations/*.sql` — plain SQL, one file per change,
 row in `schema_migrations` (`-- migrate: no-transaction` on the first line
 for `CREATE INDEX CONCURRENTLY`), under an advisory lock so replicas and CI
 jobs can race safely, and refuses to run when an applied file was edited.
+A unit test (`apps/migrate/src/migrations-safety.spec.ts`) flags DDL that
+breaks the release still running or locks a busy table — DROP/RENAME COLUMN,
+DROP TABLE, SET NOT NULL, a type change without USING, CREATE INDEX without
+CONCURRENTLY on an existing table — unless the file carries
+`-- migration-safety: reviewed`; a no-transaction file must be one statement.
 
 ```sh
 just deps                      # compose up + just migrate
@@ -302,7 +312,7 @@ Everything that needs a schema goes through it: `docker/stack.yml` (the api
 waits for the `migrate` service to exit 0 — how a Kubernetes Job / init
 container would run it), the integration layer (vitest `globalSetup`), the
 e2e spawn harness and `just schemathesis`. The apps never create tables.
-The image is small on purpose: Vite bundles the runner *with* `pg`
+The image is small on purpose: Vite bundles the runner _with_ `pg`
 (`nodeApp(…, { selfContained: true })`), so it is distroless Node + one
 `.js` + the SQL files, no `node_modules` (156 MB vs 722 MB for the api).
 An ORM's migrator (Prisma, Drizzle, Kysely) replaces it cleanly — keep the
@@ -356,7 +366,7 @@ the pino mixin in `@base/logger`. Don't pass them explicitly.
 ## Local dependencies (`docker/deps.yml`)
 
 | Service     | Image                           | Port |
-|-------------|---------------------------------|------|
+| ----------- | ------------------------------- | ---- |
 | Postgres 18 | `postgres:18`                   | 5432 |
 | Valkey 9    | `valkey/valkey:9.0`             | 6379 |
 | Redpanda    | `redpandadata/redpanda:v26.2.3` | 9092 |
@@ -366,7 +376,7 @@ Default credentials: `app` / `app` for postgres. **Change before deploying.**
 ## Observability stack (`docker/observability.yml`)
 
 | Service        | Image                                          | Port  |
-|----------------|------------------------------------------------|-------|
+| -------------- | ---------------------------------------------- | ----- |
 | Jaeger v2      | `jaegertracing/jaeger:2.21.0`                  | 16686 |
 | Prometheus     | `prom/prometheus:v3.14.0`                      | 9090  |
 | Grafana        | `grafana/grafana:12.4.11`                      | 3001  |
@@ -397,14 +407,14 @@ before `instrumentation.ts` runs — so OTel instrumentations that patch a
 module when it is first loaded (`instrumentation-pg`, `-nestjs-core`,
 `-aws-sdk`, `-ioredis`, …) never fire. What does work, and what the repo uses:
 
-| Source | How |
-|---|---|
-| inbound HTTP | `@fastify/otel` plugin (`apps/api/src/instrumentation.ts`), span `{method} {route}` |
-| outbound HTTP | `UndiciInstrumentation` (diagnostics_channel, no patching) |
-| Postgres | `@base/database` `tracePgPool` — wraps the pool it builds |
-| Valkey | `@base/cache` `traceValkeyClient` — wraps the shared client |
-| Kafka | `@base/kafka` `KafkaProducerService.send` / `traceKafkaMessage` — `traceparent` in the record headers |
-| BullMQ | `@base/jobs` `addTraced` / `traceJob` — context in the job's `opts.telemetry.metadata` |
+| Source        | How                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| inbound HTTP  | `@fastify/otel` plugin (`apps/api/src/instrumentation.ts`), span `{method} {route}`                   |
+| outbound HTTP | `UndiciInstrumentation` (diagnostics_channel, no patching)                                            |
+| Postgres      | `@base/database` `tracePgPool` — wraps the pool it builds                                             |
+| Valkey        | `@base/cache` `traceValkeyClient` — wraps the shared client                                           |
+| Kafka         | `@base/kafka` `KafkaProducerService.send` / `traceKafkaMessage` — `traceparent` in the record headers |
+| BullMQ        | `@base/jobs` `addTraced` / `traceJob` — context in the job's `opts.telemetry.metadata`                |
 
 DB / cache spans are only made under an active span (no root trace per
 readiness probe); query text is the parameterised statement and Valkey
@@ -421,17 +431,17 @@ same contract as the Go sibling. The harness that makes that cheap is
 
 ### Layers and what each one owns
 
-| Layer | Where | Owns | Does not repeat |
-|---|---|---|---|
-| **Unit** | `*.spec.ts` next to the code — vitest project `unit`, `just test` | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server | anything that needs a real dependency |
-| **Property** | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000) | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec |
-| **Mutation** | `packages/resilient-client` — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch | — |
-| **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration` | the libs against real Postgres / Valkey / Redpanda from `docker/deps.yml`: the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout | route behaviour already proven with fakes; process-level behaviour |
-| **E2E** | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes) | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ | per-route behaviour, error bodies (unit), the libs' semantics (integration) |
-| **Smoke** | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job | the distroless images start and serve | everything else |
-| **Contract** | `apps/api/src/app.contract.integration.spec.ts` (integration project; `createApp` + fastify `inject`, every exchange validated with `loadOpenAPI` from `@base/testing`) | the running app honours [`api/tsp`](api/tsp): every route, every declared status, problem bodies, 404/405 routing | inputs the schema can generate (generative) |
-| **Generative** | `just schemathesis` (Schemathesis against the built api and its OpenAPI document) | inputs nobody wrote a test for: every operation with generated positive and negative requests and stateful sequences, no 5xx, every response in the contract's shape — "bad input → 4xx problem" cases are owned here, not hand-written | business semantics the schema cannot express (unit / contract), effects on dependencies (integration) |
-| **Load** | [`benchmarks/`](benchmarks) (k6) | latency / error thresholds under load; reports on the load stand, outside Allure | — |
+| Layer           | Where                                                                                                                                                                   | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Does not repeat                                                                                       |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Unit**        | `*.spec.ts` next to the code — vitest project `unit`, `just test`                                                                                                       | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server                                                                                                                                                                                                                                                                                                               | anything that needs a real dependency                                                                 |
+| **Property**    | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000)            | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec                                                      |
+| **Mutation**    | `packages/resilient-client` — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
+| **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration`                                                                                         | the libs against real Postgres / Valkey / Redpanda from `docker/deps.yml`: the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout                                                                                                                                                                                                                                                                       | route behaviour already proven with fakes; process-level behaviour                                    |
+| **E2E**         | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes)                                                             | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ                                                                                                                                                                                                                                                                                                                                  | per-route behaviour, error bodies (unit), the libs' semantics (integration)                           |
+| **Smoke**       | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job                                                                                                | the distroless images start and serve                                                                                                                                                                                                                                                                                                                                                                                                                                                   | everything else                                                                                       |
+| **Contract**    | `apps/api/src/app.contract.integration.spec.ts` (integration project; `createApp` + fastify `inject`, every exchange validated with `loadOpenAPI` from `@base/testing`) | the running app honours [`api/tsp`](api/tsp): every route, every declared status, problem bodies, 404/405 routing                                                                                                                                                                                                                                                                                                                                                                       | inputs the schema can generate (generative)                                                           |
+| **Generative**  | `just schemathesis` (Schemathesis against the built api and its OpenAPI document)                                                                                       | inputs nobody wrote a test for: every operation with generated positive and negative requests and stateful sequences, no 5xx, every response in the contract's shape — "bad input → 4xx problem" cases are owned here, not hand-written                                                                                                                                                                                                                                                 | business semantics the schema cannot express (unit / contract), effects on dependencies (integration) |
+| **Load**        | [`benchmarks/`](benchmarks) (k6)                                                                                                                                        | latency / error thresholds under load; reports on the load stand, outside Allure                                                                                                                                                                                                                                                                                                                                                                                                        | —                                                                                                     |
 
 When you add a behaviour, put its test at the lowest layer that can observe
 it, and only there. If a higher layer needs it as a precondition, it waits for
@@ -454,7 +464,7 @@ it (the e2e harness waits for `/readyz`), it does not assert it again.
   `metricValue(text, name, labels)` (a sample out of Prometheus text; `-1`
   when absent) let a test assert on telemetry instead of mocking it.
 - `loadOpenAPI("openapi3/tasks.openapi.yaml").validate(method, path, status,
-  body, headers)` throws unless the exchange is in the contract (operation
+body, headers)` throws unless the exchange is in the contract (operation
   matched by path template, status declared, content type declared, required
   headers present, body conforms — ajv, OpenAPI 3.0 `nullable` translated);
   `validateSchema("Problem", body)` checks a body against a named component.
@@ -497,7 +507,7 @@ layer the harness spawns the built api + worker under `NODE_V8_COVERAGE`
 the counters) and `scripts/v8-to-istanbul.mjs` (ast-v8-to-istanbul, the
 converter vitest itself uses) maps the bundles' raw V8 ranges back to `src/**`
 through their source maps — c8 was tried first and silently dropped every
-*uncovered* range of a bundle. `merge` unions the layers **per line**: the
+_uncovered_ range of a bundle. `merge` unions the layers **per line**: the
 executable lines of every file are what vitest reports (it lists every
 included file, covered or not; the e2e layer only contributes hits), and a
 line is covered when any layer hit it. Nothing is counted twice; it writes
@@ -575,7 +585,7 @@ document. A handler that drifts from the contract fails its own test.
 ### Schemathesis
 
 [Schemathesis](https://schemathesis.io) is the generative layer: it reads the
-OpenAPI document and drives the *real process* (`apps/api/dist`, scratch ports
+OpenAPI document and drives the _real process_ (`apps/api/dist`, scratch ports
 18300/19300) with requests it derives from the schema — boundary values,
 invalid bodies, unknown members, undeclared methods, stateful
 create → read → update → archive chains over the links it infers — checking
@@ -595,7 +605,7 @@ an undeclared method got a 404 instead of a 405, that `POST /tasks/{id}/archive`
 answered 201 (NestJS's POST default) for a document that says 200, that an
 over-long id was a 414, that the bodies were strict while the document was
 open, that unknown query parameters were silently ignored, and that a reused
-`Idempotency-Key` replayed the first 201 for *any* payload (even none) — the
+`Idempotency-Key` replayed the first 201 for _any_ payload (even none) — the
 interceptor now binds the key to a request fingerprint and answers a
 different request under the same key with a 409 problem. The app and the
 document agree on all of it. With it in place, hand-written
@@ -638,7 +648,7 @@ Coverage says a line ran; mutation testing says a test would notice if it
 were wrong. [StrykerJS](https://stryker-mutator.io) mutates the code (flips a
 comparison, an operator, a branch, empties a literal), re-runs the specs that
 cover the mutated line (`coverageAnalysis: perTest`) and reports every mutant
-that *survived*. It is worth its cost on small, pure, decision-heavy code and
+that _survived_. It is worth its cost on small, pure, decision-heavy code and
 noise elsewhere, so — like the Go sibling — it is scoped, not global:
 [`stryker.config.mjs`](stryker.config.mjs) mutates `packages/resilient-client`
 only (backoff, cache, errors, pool, the client; not the OTel wiring).
@@ -672,14 +682,14 @@ AppSec tools are pinned in `mise.toml` and installed by `just setup-sec`; every
 `just sec-*` recipe runs its tool through `mise exec --`, and CI runs the same
 versions from pinned container images (see "Pipelines" below).
 
-| Recipe             | Tool        | Config             | Covers                                        |
-|--------------------|-------------|--------------------|-----------------------------------------------|
-| `just sec-waivers` | sh + awk    | —                  | no `Remove after YYYY-MM-DD` date has passed  |
-| `just sec-secrets` | gitleaks    | `.gitleaks.toml`   | secrets in tree + history                     |
-| `just sec-sast`    | semgrep     | `.semgrepignore`   | `p/owasp-top-ten` + `p/typescript` packs      |
-| `just sec-deps`    | osv-scanner | `osv-scanner.toml` | OSV.dev advisories over `pnpm-lock.yaml`      |
-| `just sec-iac`     | hadolint    | `.hadolint.yaml`   | every `apps/*/Dockerfile`                     |
-| `just sec`         | —           | —                  | all of the above, fail-fast                   |
+| Recipe             | Tool        | Config             | Covers                                       |
+| ------------------ | ----------- | ------------------ | -------------------------------------------- |
+| `just sec-waivers` | sh + awk    | —                  | no `Remove after YYYY-MM-DD` date has passed |
+| `just sec-secrets` | gitleaks    | `.gitleaks.toml`   | secrets in tree + history                    |
+| `just sec-sast`    | semgrep     | `.semgrepignore`   | `p/owasp-top-ten` + `p/typescript` packs     |
+| `just sec-deps`    | osv-scanner | `osv-scanner.toml` | OSV.dev advisories over `pnpm-lock.yaml`     |
+| `just sec-iac`     | hadolint    | `.hadolint.yaml`   | every `apps/*/Dockerfile`                    |
+| `just sec`         | —           | —                  | all of the above, fail-fast                  |
 
 Container side (against a locally-built image):
 
@@ -687,8 +697,8 @@ Container side (against a locally-built image):
 just docker-build api         # build nodejs-basics-api:dev
 just docker-scan api          # syft SBOM (sbom-api.json) + grype CVE scan
 just docker-scan-ci api       # same, --fail-on high (the CI gate)
-just docker-sign api dev      # cosign sign (key-mode, no Rekor; COSIGN_PRIVATE_KEY from .env)
-just docker-verify api dev    # offline verify against cosign.pub
+just docker-sign reg.example/api@sha256:…    # cosign sign a pushed image (key-mode, no Rekor; COSIGN_PRIVATE_KEY from .env)
+just docker-verify reg.example/api@sha256:…  # offline verify against COSIGN_PUBLIC_KEY (cosign.pub)
 ```
 
 CI builds every `apps/*/Dockerfile`, generates the SBOM (kept 7 days as a job
@@ -697,15 +707,15 @@ release-time step.
 
 ### pnpm supply-chain policy (`pnpm-workspace.yaml`)
 
-| Setting                    | Effect                                                                                  |
-|----------------------------|-----------------------------------------------------------------------------------------|
-| `minimumReleaseAge: 10080` | a version published < 7 days ago does not resolve (`.npmrc` `min-release-age=7` for npm) |
-| `blockExoticSubdeps`       | transitive deps come from the registry only — no git / tarball URLs                     |
-| `trustPolicy: no-downgrade`| a dependency update cannot silently relax these settings                                |
-| `allowBuilds`              | the only postinstall scripts allowed to run (pnpm 11+ fails the install otherwise)      |
-| `overrides`                | caret floors: CVE fixes on transitive deps + one copy of cross-package types            |
-| `peerDependencyRules`      | peers declared older than what we run (Sentry / nestjs-zod vs NestJS 12), checked to work |
-| `minimumReleaseAgeExclude` | the escape hatch — time-boxed, with a `Remove after YYYY-MM-DD` line                    |
+| Setting                     | Effect                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `minimumReleaseAge: 10080`  | a version published < 7 days ago does not resolve (`.npmrc` `min-release-age=7` for npm)  |
+| `blockExoticSubdeps`        | transitive deps come from the registry only — no git / tarball URLs                       |
+| `trustPolicy: no-downgrade` | a dependency update cannot silently relax these settings                                  |
+| `allowBuilds`               | the only postinstall scripts allowed to run (pnpm 11+ fails the install otherwise)        |
+| `overrides`                 | caret floors: CVE fixes on transitive deps + one copy of cross-package types              |
+| `peerDependencyRules`       | peers declared older than what we run (Sentry / nestjs-zod vs NestJS 12), checked to work |
+| `minimumReleaseAgeExclude`  | the escape hatch — time-boxed, with a `Remove after YYYY-MM-DD` line                      |
 
 Waivers that cannot be pinned out go in `osv-scanner.toml` / `.grype.yaml`,
 each with the reason and a removal trigger. A dated trigger is written
@@ -748,32 +758,32 @@ block a change:
 
 ## Scripts
 
-| Command            | What it does                            |
-|--------------------|-----------------------------------------|
-| `pnpm typecheck`   | tsc --noEmit per package (TypeScript 7, native) |
-| `pnpm lint`        | oxlint                                  |
-| `pnpm format`      | oxfmt                                   |
-| `pnpm test`        | unit layer (vitest project `unit`)      |
-| `pnpm test:integration` | integration layer (needs `just deps`) |
-| `just contracts` | regenerate `api/openapi3` + `@base/contracts` from `api/tsp` |
-| `just contracts-check [BASE]` | generated files current + oasdiff breaking-change gate |
-| `just schemathesis` | generative layer against the built api (needs `just deps`) |
-| `just cov-all` / `cov-check` | three-layer coverage, merged + gated |
-| `just fuzz` / `mutate` | property specs with 5000 cases / StrykerJS on resilient-client |
-| `just allure-report` | one Allure HTML report from every layer |
-| `just e2e` / `e2e-smoke` / `e2e-spawn` | Playwright vs images / @smoke / spawned processes |
-| `pnpm check`       | typecheck + lint + format:check         |
-| `pnpm clean`       | drop dist/coverage                      |
-| `just deps`        | docker compose up postgres/valkey/kafka |
-| `just obs`         | docker compose up Jaeger/Prometheus/Grafana |
-| `just dev` / `dev-worker` | vite build --watch + restart after each build |
-| `just build-watch <app>` | rebuild an app bundle on change, no process |
-| `just test-watch[-integration]` | vitest watch, unit / integration project |
-| `just setup-sec`   | install the AppSec toolchain (mise)     |
-| `just sec`         | expired waivers + gitleaks + semgrep + osv-scanner + hadolint |
-| `just docker-build <app>` | build `nodejs-basics-<app>:dev`  |
-| `just docker-scan[-ci] <app>` | syft SBOM + grype (`-ci`: fail on HIGH+) |
-| `just docker-sign\|verify <app> <tag>` | cosign key-mode sign / offline verify |
+| Command                                | What it does                                                   |
+| -------------------------------------- | -------------------------------------------------------------- |
+| `pnpm typecheck`                       | tsc --noEmit per package (TypeScript 7, native)                |
+| `pnpm lint`                            | oxlint                                                         |
+| `pnpm format`                          | oxfmt                                                          |
+| `pnpm test`                            | unit layer (vitest project `unit`)                             |
+| `pnpm test:integration`                | integration layer (needs `just deps`)                          |
+| `just contracts`                       | regenerate `api/openapi3` + `@base/contracts` from `api/tsp`   |
+| `just contracts-check [BASE]`          | generated files current + oasdiff breaking-change gate         |
+| `just schemathesis`                    | generative layer against the built api (needs `just deps`)     |
+| `just cov-all` / `cov-check`           | three-layer coverage, merged + gated                           |
+| `just fuzz` / `mutate`                 | property specs with 5000 cases / StrykerJS on resilient-client |
+| `just allure-report`                   | one Allure HTML report from every layer                        |
+| `just e2e` / `e2e-smoke` / `e2e-spawn` | Playwright vs images / @smoke / spawned processes              |
+| `pnpm check`                           | typecheck + lint + format:check                                |
+| `pnpm clean`                           | drop dist/coverage                                             |
+| `just deps`                            | docker compose up postgres/valkey/kafka                        |
+| `just obs`                             | docker compose up Jaeger/Prometheus/Grafana                    |
+| `just dev` / `dev-worker`              | vite build --watch + restart after each build                  |
+| `just build-watch <app>`               | rebuild an app bundle on change, no process                    |
+| `just test-watch[-integration]`        | vitest watch, unit / integration project                       |
+| `just setup-sec`                       | install the AppSec toolchain (mise)                            |
+| `just sec`                             | expired waivers + gitleaks + semgrep + osv-scanner + hadolint  |
+| `just docker-build <app>`              | build `nodejs-basics-<app>:dev`                                |
+| `just docker-scan[-ci] <app>`          | syft SBOM + grype (`-ci`: fail on HIGH+)                       |
+| `just docker-sign\|verify <image>`     | cosign key-mode sign / offline verify of a pushed image         |
 
 ## Worktrees (multi-branch dev)
 
