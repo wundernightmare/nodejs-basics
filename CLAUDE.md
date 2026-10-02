@@ -173,7 +173,10 @@ high-signal, easy-to-miss bits.
     consumer prefetch 4 MiB; anything else via `KAFKA_EXTRA_PROPERTIES` /
     `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES` (e.g. `{"debug":"broker"}`, or
     `cooperative-sticky` — the whole group switches together). Topics are the
-    broker's call; a missing one is `not_provisioned`, retryable.
+    broker's call: the runner asks for its topics before subscribing (a
+    consumer subscribed to a missing topic notices it only at the next 5-min
+    metadata refresh), a provisioned cluster answers "exists" or refuses; a
+    missing topic on send is `not_provisioned`, retryable.
   - Metrics come from librdkafka statistics (`kafkaClientMetrics`) — never a
     topic/partition label on them; logs go through `kafkaLogger`, repeats
     folded for 60 s.
