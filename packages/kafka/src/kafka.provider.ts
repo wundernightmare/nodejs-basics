@@ -6,7 +6,7 @@ import { AppLogger, ecsError } from "@base/logger";
 
 import { buildKafkaClientConfig, buildProducerConfig } from "./kafka-config.builder.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
-import { registerKafkaMetrics, type KafkaMetricsHandle } from "./kafka-metrics.js";
+import { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
 
 export const KAFKA_PRODUCER = Symbol("KAFKA_PRODUCER");
@@ -19,15 +19,15 @@ export const KAFKA_PRODUCER = Symbol("KAFKA_PRODUCER");
  *   onApplicationShutdown  → producer.disconnect()
  *
  * If Kafka is unreachable at startup the connection error is logged but the
- * application continues — config events are best-effort; the hourly S3 snapshot
- * is the authoritative source of truth for ingest services.
+ * application continues — events go through the outbox, so a broker that is
+ * down only delays the relay.
  */
 @Injectable()
 @Global()
 export class KafkaProducerService implements OnApplicationBootstrap, OnApplicationShutdown {
   readonly producer: KafkaJS.Producer;
   private readonly logger: ReturnType<AppLogger["child"]>;
-  private readonly metricsHandle: KafkaMetricsHandle;
+  private readonly clientMetrics: KafkaClientMetrics;
 
   constructor(config: ConfigService, appLogger: AppLogger) {
     this.logger = appLogger.child(KafkaProducerService.name);
@@ -42,13 +42,12 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
       ...buildKafkaClientConfig(config, "producer"),
       kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
     });
+    // librdkafka statistics → kafka.client.* metrics (kafka-metrics.ts).
+    this.clientMetrics = kafkaClientMetrics("producer");
     this.producer = kafka.producer({
       ...buildProducerConfig(config),
+      stats_cb: this.clientMetrics.statsCb,
       kafkaJS: { allowAutoTopicCreation: false },
-    });
-    this.metricsHandle = registerKafkaMetrics(this.producer, {
-      role: "producer",
-      client_id: process.env["OTEL_SERVICE_NAME"] ?? "app",
     });
   }
 
@@ -73,7 +72,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
       await Promise.race([this.producer.connect(), timeout]);
       this.logger.info("Kafka producer connected");
     } catch (err) {
-      // Non-fatal: config events are best-effort; S3 snapshot is authoritative.
+      // Non-fatal: the outbox keeps the events until the broker is back.
       this.logger.warn(
         { ...ecsError(err as Error) },
         "Kafka producer failed to connect — events will be dropped until reconnected",
@@ -88,7 +87,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     } catch (err) {
       this.logger.warn({ ...ecsError(err as Error) }, "Kafka producer disconnect error");
     } finally {
-      this.metricsHandle.dispose();
+      this.clientMetrics.dispose();
     }
   }
 }

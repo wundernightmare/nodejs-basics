@@ -161,6 +161,13 @@ high-signal, easy-to-miss bits.
   everything produced meanwhile. On a failed hand-off `pause()` + backoff +
   rethrow (a bare throw re-fetches at once — a hot loop); commit and skip a
   message that can never decode. Pattern: `apps/worker/.../task-events.consumer.ts`.
+- **Kafka client config** (`@base/kafka` builders): lz4, producer queue
+  bounded to 64 MiB (`KAFKA_PRODUCER_QUEUE_MAX_KBYTES`; librdkafka's default
+  is 1 GiB — full → QUEUE_FULL, the outbox retries), consumer prefetch 4 MiB,
+  keepalive on. Any librdkafka property: `KAFKA_EXTRA_PROPERTIES` (all
+  clients) then `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES`. A new client
+  passes `stats_cb: kafkaClientMetrics(role).statsCb` — the kafkajs-compat
+  clients have no event surface, statistics are the only metrics source.
 - **Request identity**: guards call `setActor()` / `setTenant()` (@base/common)
   — they mutate the per-request object the onRequest hook entered; never
   `enterWith()` from a guard (it does not reach the handler).

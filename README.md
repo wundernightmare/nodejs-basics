@@ -394,6 +394,12 @@ it — Prometheus is just unscraped, traces are dropped.
   (`docker/grafana/dashboards/`): RED for the api (rate, 5xx / 4xx ratio,
   p50/p95/p99), worker throughput and backlog, event loop, heap, pg pool,
   Valkey.
+- **Kafka client metrics** come from librdkafka's own statistics
+  (`KAFKA_STATISTICS_INTERVAL_MS`, 15 s; `stats_cb` → `@base/kafka`
+  `kafkaClientMetrics`), only what an application acts on: brokers up,
+  request errors, the producer's local queue against its bound
+  (`kafka_client_producer_queue_size` / `_limit`), messages sent / received,
+  consumer lag per partition, prefetched bytes, rebalances.
 - **Traces**: one trace per request, across both apps —
   `POST /tasks` → Valkey (idempotency) → Postgres (`BEGIN` / `INSERT` /
   `COMMIT`) → `send tasks.events` → worker `process tasks.events` →

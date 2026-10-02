@@ -5,7 +5,12 @@ export {
   type KafkaRdKafkaConfig,
 } from "./kafka-config.builder.js";
 export { kafkaLogger } from "./kafka-log-creator.js";
-export { registerKafkaMetrics, type KafkaMetricsHandle } from "./kafka-metrics.js";
+export {
+  type KafkaClientMetrics,
+  kafkaClientMetrics,
+  type KafkaClientRole,
+  parseStats,
+} from "./kafka-metrics.js";
 export { KafkaModule } from "./kafka.module.js";
 export { sendTraced, traceKafkaMessage, type KafkaMessageContext } from "./kafka-tracing.js";
 export { KAFKA_PRODUCER, KafkaProducerService } from "./kafka.provider.js";
