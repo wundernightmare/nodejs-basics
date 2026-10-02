@@ -65,3 +65,44 @@ describe("pino logMethod hook", () => {
     expect(lines[1]?.["http.request.id"]).toBeUndefined();
   });
 });
+
+/** What a real logger with the shared options writes for `fields`. */
+function written(fields: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const sink = new Writable({
+    write(chunk: Buffer, _enc, cb) {
+      lines.push(chunk.toString());
+      cb();
+    },
+  });
+  pino(buildPinoOptions(new LogLevel("info")), sink).info(fields, "msg");
+  return lines.join("");
+}
+
+describe("pino redact", () => {
+  // Flat ECS keys, root-level and nested secrets: none may reach the stream.
+  const sensitive: Record<string, unknown>[] = [
+    { "user.password": "p1-plaintext" },
+    { "user.token": "p2-plaintext" },
+    { "auth.token": "p3-plaintext" },
+    { "auth.secret": "p4-plaintext" },
+    { "sasl.password": "p5-plaintext" },
+    { password: "p6-plaintext" },
+    { secret: "p7-plaintext" },
+    { token: "p8-plaintext" },
+    { db: { password: "p9-plaintext" } },
+  ];
+
+  it.each(sensitive)("censors %o", (fields) => {
+    const out = written(fields);
+    expect(out).not.toMatch(/plaintext/u);
+    expect(out).toContain("[REDACTED]");
+  });
+
+  it("never writes request headers (the req serializer keeps none)", () => {
+    const out = written({
+      req: { url: "/x", headers: { authorization: "Bearer plaintext", cookie: "s=plaintext" } },
+    });
+    expect(out).not.toMatch(/plaintext/u);
+  });
+});
