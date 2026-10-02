@@ -117,7 +117,9 @@ export class IdempotencyInterceptor implements NestInterceptor {
     fingerprint: string,
   ): Promise<unknown> {
     const reply = context.switchToHttp().getResponse<FastifyReply>();
-    const ttl = parseInt(this.config.get<string>("IDEMPOTENCY_TTL_SECONDS") ?? "86400", 10);
+    const configured = Number(this.config.get<string>("IDEMPOTENCY_TTL_SECONDS"));
+    // A typo must not turn into a NaN TTL (the SET then fails and replay quietly stops).
+    const ttl = Number.isInteger(configured) && configured > 0 ? configured : 86_400;
     const statusCode =
       (Reflect.getMetadata(HTTP_CODE_METADATA, context.getHandler()) as number | undefined) ?? 200;
 
