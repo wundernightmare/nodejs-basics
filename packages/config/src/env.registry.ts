@@ -825,7 +825,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     key: "KAFKA_PRODUCER_COMPRESSION_TYPE",
     yaml: "kafka.producer.compression_type",
     required: false,
-    description: "Producer compression.type. Default zstd.",
+    description:
+      "Producer compression.type (none|gzip|snappy|lz4|zstd). Default lz4 — cheapest in CPU and " +
+      "latency; zstd when bandwidth or broker disk is the constraint.",
     usedIn: ["kafka"],
   },
 
@@ -842,6 +844,81 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "kafka.producer.message_timeout_ms",
     required: false,
     description: "Producer message.timeout.ms (delivery deadline). Default 30000.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
+    yaml: "kafka.producer.queue_max_kbytes",
+    required: false,
+    description:
+      "Producer queue.buffering.max.kbytes — memory bound of the local send queue. Default 65536 " +
+      "(64 MiB; librdkafka's own is 1 GiB). A full queue fails send() with QUEUE_FULL.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES",
+    yaml: "kafka.producer.queue_max_messages",
+    required: false,
+    description: "Producer queue.buffering.max.messages. Default 100000.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
+    yaml: "kafka.producer.extra_properties",
+    required: false,
+    description:
+      "JSON object of librdkafka properties for the producer only, applied after " +
+      "KAFKA_EXTRA_PROPERTIES.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_QUEUED_MIN_MESSAGES",
+    yaml: "kafka.consumer.queued_min_messages",
+    required: false,
+    description:
+      "Consumer queued.min.messages (prefetch per partition). Default 1000 (librdkafka: 100000).",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_QUEUED_MAX_KBYTES",
+    yaml: "kafka.consumer.queued_max_kbytes",
+    required: false,
+    description:
+      "Consumer queued.max.messages.kbytes — prefetch memory bound. Default 4096 (librdkafka: " +
+      "65536) so a deep backlog cannot OOM the pod.",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+    yaml: "kafka.consumer.extra_properties",
+    required: false,
+    description:
+      "JSON object of librdkafka properties for consumers only, applied after " +
+      "KAFKA_EXTRA_PROPERTIES.",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
+    key: "KAFKA_SOCKET_KEEPALIVE",
+    yaml: "kafka.socket_keepalive",
+    required: false,
+    description: "socket.keepalive.enable (true|false). Default true.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_STATISTICS_INTERVAL_MS",
+    yaml: "kafka.statistics_interval_ms",
+    required: false,
+    description:
+      "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
+      "metrics. Default 15000; 0 disables them.",
     usedIn: ["kafka"],
   },
 

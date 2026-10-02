@@ -30,7 +30,12 @@ import { type Queue } from "bullmq";
 
 import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
-import { buildConsumerConfig, kafkaLogger, traceKafkaMessage } from "@base/kafka";
+import {
+  buildConsumerConfig,
+  kafkaClientMetrics,
+  kafkaLogger,
+  traceKafkaMessage,
+} from "@base/kafka";
 import {
   AppLogger,
   ecsError,
@@ -55,6 +60,9 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   private reconnectTimer: NodeJS.Timeout | undefined;
   private reconnectDelayMs = RECONNECT_BASE_MS;
   private processFailures = 0;
+  // One metrics handle for the logical consumer; every reconnect attempt's
+  // client reports into it (librdkafka statistics → kafka.client.*).
+  private readonly clientMetrics = kafkaClientMetrics("consumer");
   private readonly logger: ReturnType<AppLogger["child"]>;
   // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
   // and that is what dashboards expect); OTel semconv would spell it
@@ -102,7 +110,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       ...rdkafka,
       kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
     });
-    const consumer = kafka.consumer({ ...rdkafka });
+    const consumer = kafka.consumer({ ...rdkafka, stats_cb: this.clientMetrics.statsCb });
     this.consumer = consumer;
 
     let timer: NodeJS.Timeout | undefined;
@@ -252,6 +260,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       await this.consumer?.disconnect();
     } catch (err) {
       this.logger.warn({ ...ecsError(err as Error) }, "Kafka consumer disconnect failed");
+    } finally {
+      this.clientMetrics.dispose();
     }
   }
 }

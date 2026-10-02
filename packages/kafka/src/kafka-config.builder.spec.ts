@@ -35,7 +35,12 @@ describe("buildKafkaClientConfig", () => {
     await testCase("NB-789", "no env → plaintext localhost:9092");
     vi.stubEnv("OTEL_SERVICE_NAME", undefined);
     const cfg = buildKafkaClientConfig(stub({}), "producer");
-    expect(cfg).toEqual({ "metadata.broker.list": "localhost:9092", "client.id": "app-producer" });
+    expect(cfg).toEqual({
+      "metadata.broker.list": "localhost:9092",
+      "client.id": "app-producer",
+      "socket.keepalive.enable": true,
+      "statistics.interval.ms": 15_000,
+    });
   });
 
   it("derives client.id from OTEL_SERVICE_NAME when KAFKA_CLIENT_ID is unset", async () => {
@@ -72,6 +77,8 @@ describe("buildKafkaClientConfig", () => {
       "sasl.password": "pw",
       "ssl.ca.location": "/etc/ssl/ca.pem",
       "ssl.endpoint.identification.algorithm": "https",
+      "socket.keepalive.enable": true,
+      "statistics.interval.ms": 15_000,
     });
   });
 
@@ -187,17 +194,61 @@ describe("buildProducerConfig", () => {
     tags: ["kafka", "unit"],
   });
 
-  it("defaults to durable flags (acks=all + idempotence + zstd) on a -producer client id", async () => {
+  it("defaults to durable flags (acks=all + idempotence + lz4) on a -producer client id", async () => {
     await testCase("NB-799", "producer durability defaults");
     const cfg = buildProducerConfig(stub({ KAFKA_CLIENT_ID: "svc" }));
     expect(cfg).toMatchObject({
       "client.id": "svc-producer",
       acks: "all",
       "enable.idempotence": true,
-      "compression.type": "zstd",
+      "compression.type": "lz4",
       "linger.ms": 10,
       "message.timeout.ms": 30_000,
     });
+  });
+
+  it("bounds the producer's local queue to 64 MiB (librdkafka's own is 1 GiB)", async () => {
+    await testCase("NB-916", "bounded producer memory");
+    expect(buildProducerConfig(stub({}))).toMatchObject({
+      "queue.buffering.max.kbytes": 65_536,
+      "queue.buffering.max.messages": 100_000,
+    });
+    expect(
+      buildProducerConfig(
+        stub({
+          KAFKA_PRODUCER_QUEUE_MAX_KBYTES: "16384",
+          KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: "500",
+        }),
+      ),
+    ).toMatchObject({ "queue.buffering.max.kbytes": 16_384, "queue.buffering.max.messages": 500 });
+  });
+
+  it("role extras apply to their role only, after the shared escape hatch", async () => {
+    await testCase("NB-917", "per-role librdkafka properties");
+    const env = stub({
+      KAFKA_EXTRA_PROPERTIES: JSON.stringify({ "socket.nagle.disable": "true", "linger.ms": "1" }),
+      KAFKA_PRODUCER_EXTRA_PROPERTIES: JSON.stringify({ "linger.ms": "50" }),
+      KAFKA_CONSUMER_EXTRA_PROPERTIES: JSON.stringify({ "fetch.wait.max.ms": "100" }),
+    });
+    const producer = buildProducerConfig(env);
+    const consumer = buildConsumerConfig(env, "g");
+    expect(producer["linger.ms"]).toBe("50");
+    expect(producer["socket.nagle.disable"]).toBe("true");
+    expect(producer["fetch.wait.max.ms"]).toBeUndefined();
+    expect(consumer["fetch.wait.max.ms"]).toBe("100");
+    expect(consumer["socket.nagle.disable"]).toBe("true");
+    expect(() =>
+      buildConsumerConfig(stub({ KAFKA_CONSUMER_EXTRA_PROPERTIES: "{oops" }), "g"),
+    ).toThrow(/KAFKA_CONSUMER_EXTRA_PROPERTIES is not valid JSON/u);
+  });
+
+  it("keepalive and statistics are on by default and can be turned off", async () => {
+    await testCase("NB-918", "keepalive + statistics knobs");
+    const cfg = buildKafkaClientConfig(
+      stub({ KAFKA_SOCKET_KEEPALIVE: "false", KAFKA_STATISTICS_INTERVAL_MS: "0" }),
+    );
+    expect(cfg["socket.keepalive.enable"]).toBe(false);
+    expect(cfg["statistics.interval.ms"]).toBe(0);
   });
 
   it("honours operator overrides that trade durability for throughput", async () => {
@@ -263,6 +314,12 @@ describe("buildConsumerConfig", () => {
     const cfg = buildConsumerConfig(stub({}), "my-group");
     expect(cfg["queued.min.messages"]).toBe(1_000);
     expect(cfg["queued.max.messages.kbytes"]).toBe(4_096);
+    const tuned = buildConsumerConfig(
+      stub({ KAFKA_CONSUMER_QUEUED_MIN_MESSAGES: "50", KAFKA_CONSUMER_QUEUED_MAX_KBYTES: "1024" }),
+      "my-group",
+    );
+    expect(tuned["queued.min.messages"]).toBe(50);
+    expect(tuned["queued.max.messages.kbytes"]).toBe(1_024);
   });
 
   it("honours operator overrides for offsets, commits and rebalance timeouts", async () => {
