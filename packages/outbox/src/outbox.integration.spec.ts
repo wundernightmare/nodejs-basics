@@ -36,14 +36,16 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
   let writer: OutboxWriter;
   let uow: PgUnitOfWork;
   const sent: Sent[] = [];
-  let failNext = false;
+  let brokerDown = false;
+  let poisonSends = 0;
 
   const kafka = {
     send: (record: Sent) => {
-      if (failNext) {
-        failNext = false;
-        return Promise.reject(new Error("broker down"));
+      if (record.messages[0]?.key === "poison") {
+        poisonSends++;
+        return Promise.reject(new Error("message too large"));
       }
+      if (brokerDown) return Promise.reject(new Error("broker down"));
       sent.push(record);
       return trace
         .getTracer("test")
@@ -89,14 +91,60 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
 
   it("publishes the rows with their headers, then deletes them; a failed send keeps them", async () => {
     await testCase("NB-502", "at least once: sent → deleted, broker down → still queued");
-    failNext = true;
+    brokerDown = true;
     await expect(relay().relayOnce()).rejects.toThrow("broker down");
+    brokerDown = false;
     expect(await mine()).toBe(1);
+    const { rows } = await pool.query<{ attempts: number }>(
+      "SELECT attempts FROM outbox WHERE topic = $1",
+      [topic],
+    );
+    expect(rows[0]?.attempts).toBe(0); // an outage is not the row's fault
 
     await relay().relayOnce();
     const record = sent.find((r) => r.topic === topic);
     expect(record?.messages[0]).toMatchObject({ key: "k1", value: '{"n":1}' });
     expect(await mine()).toBe(0);
+  });
+
+  it("a row that fails while others go out is retried OUTBOX_MAX_ATTEMPTS times, then left aside", async () => {
+    await testCase("NB-908", "a poison row does not block the outbox");
+    const poisonRelay = new OutboxRelay(
+      pool,
+      kafka,
+      new ConfigService({ OUTBOX_BATCH_SIZE: "1000", OUTBOX_MAX_ATTEMPTS: "2" }),
+      logger,
+    );
+    const attempts = async (): Promise<{ attempts: number; last_error: string | null }[]> =>
+      (
+        await pool.query<{ attempts: number; last_error: string | null }>(
+          "SELECT attempts, last_error FROM outbox WHERE topic = $1 AND key = 'poison'",
+          [topic],
+        )
+      ).rows;
+
+    await uow.runInTransaction(async () => {
+      await writer.add({ topic, key: "poison", value: {} });
+      await writer.add({ topic, key: "good-1", value: {} });
+    });
+    await poisonRelay.relayOnce();
+    expect(await attempts()).toEqual([{ attempts: 1, last_error: "message too large" }]);
+    expect(await mine()).toBe(1);
+
+    await writer.add({ topic, key: "good-2", value: {} });
+    await poisonRelay.relayOnce();
+    expect((await attempts())[0]?.attempts).toBe(2);
+
+    // Dead: no longer selected, the rest of the outbox flows.
+    poisonSends = 0;
+    await writer.add({ topic, key: "good-3", value: {} });
+    await poisonRelay.relayOnce();
+    expect(poisonSends).toBe(0);
+    expect(sent.filter((r) => r.topic === topic).map((r) => r.messages[0]?.key)).toEqual(
+      expect.arrayContaining(["good-1", "good-2", "good-3"]),
+    );
+    expect(await mine()).toBe(1);
+    await pool.query("DELETE FROM outbox WHERE topic = $1 AND key = 'poison'", [topic]);
   });
 
   it("sends each record in the trace of the request that wrote it", async () => {

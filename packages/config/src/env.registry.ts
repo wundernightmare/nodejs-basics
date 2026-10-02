@@ -900,6 +900,18 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     usedIn: ["outbox"],
   },
 
+  {
+    key: "OUTBOX_MAX_ATTEMPTS",
+    yaml: "outbox.max_attempts",
+    required: false,
+    default: "10",
+    description:
+      "Failed sends after which an outbox row is no longer published (a poison row: it failed " +
+      "while others in its batch went out). It stays in the table with last_error — the " +
+      "outbox.dead gauge counts them.",
+    usedIn: ["outbox"],
+  },
+
   // ─── OpenTelemetry ─────────────────────────────────────────────────────────
 
   {
