@@ -20,7 +20,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import convert from "ast-v8-to-istanbul";
+import { convert } from "ast-v8-to-istanbul";
 import { parseAstAsync } from "vite";
 
 const [rawDir, outFile] = process.argv.slice(2);
@@ -69,7 +69,7 @@ for (const name of readdirSync(rawDir).filter((n) => n.endsWith(".json"))) {
   for (const script of result) {
     if (!script.url.startsWith("file://")) continue;
     const path = fileURLToPath(script.url);
-    if (!path.endsWith(`${"/dist/main.js"}`) || !existsSync(`${path}.map`)) continue;
+    if (!path.endsWith("/dist/main.js") || !existsSync(`${path}.map`)) continue;
     const { code, ast, sourceMap } = await bundle(path);
     const data = await convert({ code, ast, sourceMap, coverage: script });
     scripts++;
@@ -77,6 +77,7 @@ for (const name of readdirSync(rawDir).filter((n) => n.endsWith(".json"))) {
       const abs = resolve(dirname(path), fileCov.path);
       const rel = abs.startsWith(root + "/") ? abs.slice(root.length + 1) : abs;
       if (!wanted(rel)) continue;
+      // oxlint-disable-next-line no-misused-spread -- plain coverage data; a copy with the absolute path is the point
       add({ ...fileCov, path: abs });
     }
   }
