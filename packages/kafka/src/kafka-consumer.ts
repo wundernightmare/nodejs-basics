@@ -177,6 +177,10 @@ export class KafkaConsumerRunner {
     }
   }
 
+  private askForTopics(kafka: KafkaJS.Kafka): Promise<void> {
+    return askForTopicsOn(kafka, this.options.topics, this.logger);
+  }
+
   private async connect(): Promise<void> {
     // The Kafka instance takes the shared client config only — consumer
     // properties there make librdkafka warn on every connect.
@@ -190,6 +194,7 @@ export class KafkaConsumerRunner {
     });
     this.consumer = consumer;
     try {
+      await this.askForTopics(kafka);
       await consumer.connect();
       if (this.reconnect.stopped) {
         await consumer.disconnect();
@@ -209,6 +214,32 @@ export class KafkaConsumerRunner {
       { "kafka.topics": this.options.topics, "kafka.group": this.options.groupId },
       "Kafka consumer running",
     );
+  }
+}
+
+/**
+ * Asks the broker for the topics before subscribing: a consumer subscribed
+ * to a topic that does not exist yet notices it only at the next metadata
+ * refresh (topic.metadata.refresh.interval.ms, 5 min) — on a fresh broker the
+ * first events would wait that long. Whether a topic is created stays the
+ * broker's call: a provisioned cluster answers "exists" or refuses, both fine.
+ */
+async function askForTopicsOn(
+  kafka: KafkaJS.Kafka,
+  topics: string[],
+  logger: Logger,
+): Promise<void> {
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    await admin.createTopics({ topics: topics.map((topic) => ({ topic })) });
+  } catch (err) {
+    logger.debug(
+      { ...ecsError(err), "kafka.topics": topics },
+      "Topics not created (exist, or not allowed)",
+    );
+  } finally {
+    await admin.disconnect().catch(() => {});
   }
 }
 
