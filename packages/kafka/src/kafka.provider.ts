@@ -9,85 +9,145 @@ import { kafkaLogger } from "./kafka-log-creator.js";
 import { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
 
-export const KAFKA_PRODUCER = Symbol("KAFKA_PRODUCER");
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+
+/** send() while the producer is not connected — retry later (the outbox does). */
+export class KafkaNotConnectedError extends Error {
+  constructor() {
+    super("Kafka producer is not connected");
+    this.name = "KafkaNotConnectedError";
+  }
+}
 
 /**
- * Provides a connected KafkaJS producer shared across the application.
+ * The application's Kafka producer. Use `send()` — it traces and propagates
+ * the trace context — never a raw producer.
  *
- * Lifecycle:
- *   onApplicationBootstrap → producer.connect()
- *   onApplicationShutdown  → producer.disconnect()
- *
- * If Kafka is unreachable at startup the connection error is logged but the
- * application continues — events go through the outbox, so a broker that is
- * down only delays the relay.
+ * Connection is the service's job, not the caller's:
+ *   - bootstrap does not wait for the broker: connect runs in the background
+ *     and retries with backoff (1 s → 30 s) until it sticks. A kafkajs-compat
+ *     producer whose connect() failed can never connect again, so every
+ *     attempt gets a fresh one.
+ *   - a fatal librdkafka error (the idempotent producer's sequence state is
+ *     broken) leaves the producer unusable; it is replaced the same way.
+ *   - until connected, send() rejects with KafkaNotConnectedError at once —
+ *     events go through the outbox, which keeps them and retries.
+ *   - shutdown never waits for a connect in flight: kafkajs-compat waits for
+ *     its metadata request (up to 30 s) before it can disconnect, and Nest
+ *     ends the process once the close hooks return.
  */
 @Injectable()
 @Global()
 export class KafkaProducerService implements OnApplicationBootstrap, OnApplicationShutdown {
-  readonly producer: KafkaJS.Producer;
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly clientMetrics: KafkaClientMetrics;
+  private producer: KafkaJS.Producer | undefined;
+  private connected = false;
+  private stopped = false;
+  private reconnectTimer: NodeJS.Timeout | undefined;
+  private reconnectDelayMs = RECONNECT_BASE_MS;
 
-  constructor(config: ConfigService, appLogger: AppLogger) {
+  constructor(
+    private readonly config: ConfigService,
+    appLogger: AppLogger,
+  ) {
     this.logger = appLogger.child(KafkaProducerService.name);
-
-    // Security (SASL/TLS) + socket tunables are resolved by the shared
-    // builder so the producer and every consumer in this process stay in
-    // lockstep with the KAFKA_* env.registry entries.
-    // `kafkaJS.brokers` is typed as required, but the flat librdkafka config
-    // above already carries `metadata.broker.list`; the runtime accepts the
-    // mix, so we narrow the cast to the kafkaJS sub-block only.
-    const kafka = new KafkaJS.Kafka({
-      ...buildKafkaClientConfig(config, "producer"),
-      kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
-    });
-    // librdkafka statistics → kafka.client.* metrics (kafka-metrics.ts).
+    // librdkafka statistics → kafka.client.* metrics (kafka-metrics.ts); one
+    // handle for the logical producer, whichever client instance reports.
     this.clientMetrics = kafkaClientMetrics("producer");
-    this.producer = kafka.producer({
-      ...buildProducerConfig(config),
-      stats_cb: this.clientMetrics.statsCb,
-      kafkaJS: { allowAutoTopicCreation: false },
-    });
+  }
+
+  /** Whether send() can deliver right now. */
+  isConnected(): boolean {
+    return this.connected;
   }
 
   /**
    * `producer.send` inside a PRODUCER span, with the trace context injected
-   * into the record headers — use this rather than `producer.send` so the
-   * consumer's span continues the caller's trace.
+   * into the record headers, so the consumer's span continues the caller's trace.
    */
-  send(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
-    return sendTraced(this.producer, record);
-  }
-
-  async onApplicationBootstrap(): Promise<void> {
-    // Race against a 5 s deadline so a missing broker (local dev, no Kafka in deps.yml)
-    // doesn't block the NestJS bootstrap chain for 2+ minutes.
-    const timeout = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error("Kafka connect timed out after 5 s"));
-      }, 5_000);
-    });
+  async send(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
+    const producer = this.producer;
+    if (!this.connected || producer === undefined) throw new KafkaNotConnectedError();
     try {
-      await Promise.race([this.producer.connect(), timeout]);
-      this.logger.info("Kafka producer connected");
+      return await sendTraced(producer, record);
     } catch (err) {
-      // Non-fatal: the outbox keeps the events until the broker is back.
-      this.logger.warn(
-        { ...ecsError(err as Error) },
-        "Kafka producer failed to connect — events will be dropped until reconnected",
-      );
+      if ((err as { fatal?: unknown }).fatal === true) this.replace(producer, err);
+      throw err;
     }
   }
 
+  onApplicationBootstrap(): void {
+    void this.connectWithRetry();
+  }
+
   async onApplicationShutdown(signal?: string): Promise<void> {
-    this.logger.info({ "process.signal": signal ?? null }, "Kafka producer disconnecting");
+    this.stopped = true;
+    clearTimeout(this.reconnectTimer);
+    const producer = this.producer;
     try {
-      await this.producer.disconnect();
+      if (this.connected && producer !== undefined) {
+        this.logger.info({ "process.signal": signal ?? null }, "Kafka producer disconnecting");
+        this.connected = false;
+        await producer.disconnect();
+      }
     } catch (err) {
       this.logger.warn({ ...ecsError(err as Error) }, "Kafka producer disconnect error");
     } finally {
       this.clientMetrics.dispose();
     }
+  }
+
+  /** A new, unconnected producer. Protected so a test can substitute a fake. */
+  protected createProducer(): KafkaJS.Producer {
+    // `kafkaJS.brokers` is typed as required, but the flat librdkafka config
+    // already carries `metadata.broker.list`; the cast covers the kafkaJS block.
+    const kafka = new KafkaJS.Kafka({
+      ...buildKafkaClientConfig(this.config, "producer"),
+      kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
+    });
+    return kafka.producer({
+      ...buildProducerConfig(this.config),
+      stats_cb: this.clientMetrics.statsCb,
+      kafkaJS: { allowAutoTopicCreation: false },
+    });
+  }
+
+  private async connectWithRetry(): Promise<void> {
+    if (this.stopped) return;
+    const producer = this.createProducer();
+    this.producer = producer;
+    try {
+      await producer.connect();
+      if (this.stopped) {
+        await producer.disconnect().catch(() => undefined);
+        return;
+      }
+      this.connected = true;
+      this.reconnectDelayMs = RECONNECT_BASE_MS;
+      this.logger.info("Kafka producer connected");
+    } catch (err) {
+      if (this.stopped) return;
+      const delay = this.reconnectDelayMs;
+      this.reconnectDelayMs = Math.min(delay * 2, RECONNECT_MAX_MS);
+      this.logger.warn(
+        { ...ecsError(err as Error), "retry.delay_ms": delay },
+        "Kafka producer failed to connect — retrying; the outbox holds events meanwhile",
+      );
+      this.reconnectTimer = setTimeout(() => void this.connectWithRetry(), delay);
+    }
+  }
+
+  /** Drop a producer a fatal error broke and connect a fresh one. */
+  private replace(broken: KafkaJS.Producer, err: unknown): void {
+    if (this.producer !== broken || this.stopped) return;
+    this.connected = false;
+    this.logger.error(
+      { ...ecsError(err as Error) },
+      "Kafka producer hit a fatal error — replacing it",
+    );
+    void broken.disconnect().catch(() => undefined);
+    void this.connectWithRetry();
   }
 }

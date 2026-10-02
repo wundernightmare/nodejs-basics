@@ -1,19 +1,14 @@
 import { Global, Module } from "@nestjs/common";
 
-import { KAFKA_PRODUCER, KafkaProducerService } from "./kafka.provider.js";
+import { KafkaProducerService } from "./kafka.provider.js";
 
+/**
+ * The shared producer. Inject KafkaProducerService and call send(): the
+ * underlying client is replaced on reconnect, so it is never handed out.
+ */
 @Global()
 @Module({
-  providers: [
-    KafkaProducerService,
-    // Expose the raw producer under the KAFKA_PRODUCER token so consumers
-    // can inject it without depending on the service class directly.
-    {
-      provide: KAFKA_PRODUCER,
-      useFactory: (svc: KafkaProducerService) => svc.producer,
-      inject: [KafkaProducerService],
-    },
-  ],
-  exports: [KafkaProducerService, KAFKA_PRODUCER],
+  providers: [KafkaProducerService],
+  exports: [KafkaProducerService],
 })
 export class KafkaModule {}

@@ -33,11 +33,12 @@ function harness(add = vi.fn(async () => ({}))): Harness {
 
 function payload(
   value: string | null,
-  resume: () => void = vi.fn(),
+  resume: () => unknown = vi.fn(),
+  partition = 0,
 ): KafkaJS.EachMessagePayload & { pause: ReturnType<typeof vi.fn> } {
   return {
     topic: "tasks.events",
-    partition: 0,
+    partition,
     message: {
       key: null,
       value: value === null ? null : Buffer.from(value),
@@ -137,6 +138,22 @@ describe("TaskEventsConsumer.handleMessage", () => {
     await expect(h.consumer.handleMessage(payload(created, third))).rejects.toThrow();
     vi.advanceTimersByTime(1_000);
     expect(third).toHaveBeenCalledOnce();
+  });
+
+  it("backs off per partition: one failing partition does not slow another down", async () => {
+    await testCase("NB-932", "kafka consumer backoff is per partition");
+    const h = harness(vi.fn(() => Promise.reject(new Error("valkey down"))));
+    const p0a = vi.fn();
+    const p0b = vi.fn();
+    const p1 = vi.fn();
+    await expect(h.consumer.handleMessage(payload(created, p0a, 0))).rejects.toThrow();
+    await expect(h.consumer.handleMessage(payload(created, p0b, 0))).rejects.toThrow();
+    await expect(h.consumer.handleMessage(payload(created, p1, 1))).rejects.toThrow();
+    vi.advanceTimersByTime(1_000);
+    expect(p1).toHaveBeenCalledOnce(); // partition 1: first failure → 1 s
+    expect(p0b).not.toHaveBeenCalled(); // partition 0: second failure → 2 s
+    vi.advanceTimersByTime(1_000);
+    expect(p0b).toHaveBeenCalledOnce();
   });
 
   it("a failed commit is logged, not thrown", async () => {

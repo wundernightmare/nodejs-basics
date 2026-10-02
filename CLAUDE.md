@@ -124,7 +124,7 @@ high-signal, easy-to-miss bits.
   (@base/database), `traceValkeyClient` (@base/cache),
   `KafkaProducerService.send` + `traceKafkaMessage` (@base/kafka, traceparent
   in record headers), `addTraced` + `traceJob` (@base/jobs, carrier in
-  `opts.telemetry.metadata`). Use `kafka.send()`, never `kafka.producer.send()`.
+  `opts.telemetry.metadata`). Use `KafkaProducerService.send()` — the raw producer is not exposed (it is replaced on reconnect).
   `setupTelemetry` must keep the AsyncLocalStorage context manager — without
   it every span is a root and logs lose `trace.id`. Test spans with
   `captureSpans()` from @base/testing.
@@ -170,6 +170,23 @@ high-signal, easy-to-miss bits.
   clients have no event surface, statistics are the only metrics source.
   Never add a topic/partition label to a kafka.client.* metric — a client on
   hundreds of topics would explode Prometheus; aggregate (lag max/sum).
+- **Kafka connection lifecycle**: `KafkaProducerService` connects in the
+  background and retries with backoff (a kafkajs-compat client whose
+  connect() failed is dead — make a fresh one), replaces a producer on a
+  fatal error, and `send()` throws `KafkaNotConnectedError` until connected
+  (the outbox retries). Shutdown never awaits a pending connect (it waits on
+  a 30 s metadata request). The `Kafka` instance gets the shared client
+  config only — role properties there log CONFWARN on every connect.
+- **librdkafka logs** go through `kafkaLogger`: `fac`/`name` →
+  `kafka.log.facility`/`kafka.client.name`, repeats folded for 60 s
+  (`kafka.log.suppressed`). Level is INFO regardless of the runtime level;
+  debug a client with `KAFKA_EXTRA_PROPERTIES='{"debug":"broker,protocol"}'`.
+- **Consumer parallelism**: `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` (default
+  1) — partitions in parallel, order within a partition kept; backoff state is
+  per partition. For many topics consider
+  `"partition.assignment.strategy":"cooperative-sticky"` via
+  `KAFKA_CONSUMER_EXTRA_PROPERTIES` (incremental rebalances) — every member of
+  the group must switch together, so it is not the default.
 - **Request identity**: guards call `setActor()` / `setTenant()` (@base/common)
   — they mutate the per-request object the onRequest hook entered; never
   `enterWith()` from a guard (it does not reach the handler).

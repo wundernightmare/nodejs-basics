@@ -905,6 +905,16 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
+    key: "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY",
+    yaml: "kafka.consumer.partitions_concurrently",
+    required: false,
+    description:
+      "How many assigned partitions a consumer handles in parallel (eachMessage; order within " +
+      "a partition holds). Default 1 — raise it when one consumer serves many partitions/topics.",
+    usedIn: ["apps/worker"],
+  },
+
+  {
     key: "KAFKA_SOCKET_KEEPALIVE",
     yaml: "kafka.socket_keepalive",
     required: false,
