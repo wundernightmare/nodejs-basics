@@ -32,17 +32,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 ARG NODE_VERSION=24
+# corepack pinned like everything else (.gitlab-ci.yml COREPACK_VERSION in step).
+ARG COREPACK_VERSION=0.36.0
 
 # ── Stage 1 – builder ────────────────────────────────────────────────────────
 FROM node:${NODE_VERSION}-trixie AS builder
+ARG COREPACK_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /repo
 COPY . .
 # pnpm comes from `packageManager` in package.json (corepack reads it), so the
-# image, CI and local installs cannot drift. A current corepack first: the one
+# image, CI and local installs cannot drift. A newer corepack first (pinned): the one
 # bundled with Node lags behind the npm registry's signing keys.
-RUN npm install -g corepack@latest && corepack enable && corepack install
+RUN npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
     pnpm install --frozen-lockfile
 # Build every package + the app (workspace packages emit their dist in place).

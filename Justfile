@@ -174,13 +174,16 @@ docker-scan APP:
 docker-scan-ci APP:
     mise exec -- grype nodejs-basics-{{APP}}:dev --config .grype.yaml --fail-on high
 
-# Sign an image with cosign (key-mode, no Rekor); needs COSIGN_PRIVATE_KEY (see .env.example)
-docker-sign APP TAG:
-    mise exec -- cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false nodejs-basics-{{APP}}:{{TAG}}
+# Sign a PUSHED image with cosign (key-mode, no Rekor); needs COSIGN_PRIVATE_KEY
+# (see .env.example). cosign signs registry references — the signature is
+# stored next to the image — so a local `nodejs-basics-api:dev` cannot be
+# signed: IMAGE = registry/repo@sha256:… (or :tag).
+docker-sign IMAGE:
+    mise exec -- cosign sign --key env://COSIGN_PRIVATE_KEY --tlog-upload=false {{IMAGE}}
 
-# Offline-verify an image against cosign.pub
-docker-verify APP TAG:
-    mise exec -- cosign verify --key cosign.pub --insecure-ignore-tlog=true nodejs-basics-{{APP}}:{{TAG}}
+# Offline-verify a pushed image against the public key (COSIGN_PUBLIC_KEY, default cosign.pub)
+docker-verify IMAGE:
+    mise exec -- cosign verify --key "${COSIGN_PUBLIC_KEY:-cosign.pub}" --insecure-ignore-tlog=true {{IMAGE}}
 
 # ── Contracts — TypeSpec → OpenAPI → TS types (see README "Contracts") ────────
 
