@@ -1,14 +1,17 @@
 import { Injectable } from "@nestjs/common";
 import type { Counter, Histogram } from "@opentelemetry/api";
 import { metrics } from "@opentelemetry/api";
+import type { Job, Worker } from "bullmq";
 
 /**
- * OTel metrics for BullMQ jobs.
+ * OTel metrics for BullMQ jobs, keyed by queue. `observe(worker)` subscribes
+ * to the worker's events — call it once right after creating a Worker.
  *
- * Counters and histograms are keyed by queue name + tenantId so that Grafana
- * dashboards can show per-tenant job latency and failure rates.
- *
- * Usage: inject into processor services and call from worker event listeners.
+ *   bullmq.job.completed.total   jobs that succeeded
+ *   bullmq.job.failed.total      jobs that failed for good (attempts exhausted)
+ *   bullmq.job.stalled.total     jobs whose lock expired mid-run (pod crash, blocked loop)
+ *   bullmq.job.duration.ms       run time (processedOn → finishedOn) of every
+ *                                attempt, by `outcome` — not the queue wait
  */
 @Injectable()
 export class BullMQMetricsService {
@@ -41,17 +44,26 @@ export class BullMQMetricsService {
     });
   }
 
-  recordCompleted(queue: string, tenantId: string, durationMs: number): void {
-    const attrs = { queue, tenant_id: tenantId };
-    this.completedCounter.add(1, attrs);
-    this.durationHistogram.record(durationMs, attrs);
+  /** Record this worker's completed / failed / stalled jobs. */
+  observe(worker: Worker): void {
+    const queue = worker.name;
+    worker.on("completed", (job) => {
+      this.completedCounter.add(1, { queue });
+      this.recordDuration(queue, job, "completed");
+    });
+    worker.on("failed", (job) => {
+      if (job === undefined) return;
+      this.recordDuration(queue, job, "failed");
+      // `failed` fires on every attempt; a retried job is not a failure yet.
+      if (job.attemptsMade >= (job.opts.attempts ?? 1)) this.failedCounter.add(1, { queue });
+    });
+    worker.on("stalled", () => {
+      this.stalledCounter.add(1, { queue });
+    });
   }
 
-  recordFailed(queue: string, tenantId: string): void {
-    this.failedCounter.add(1, { queue, tenant_id: tenantId });
-  }
-
-  recordStalled(queue: string): void {
-    this.stalledCounter.add(1, { queue });
+  private recordDuration(queue: string, job: Job, outcome: "completed" | "failed"): void {
+    if (job.processedOn === undefined || job.finishedOn === undefined) return;
+    this.durationHistogram.record(job.finishedOn - job.processedOn, { queue, outcome });
   }
 }

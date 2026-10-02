@@ -9,20 +9,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export const requestIdStorage = new AsyncLocalStorage<string>();
 
 /**
- * Stores the authenticated userId for the current async request context.
- * Set by an auth guard after successful token verification.
- * Falls back to "system" when no actor is set (background jobs, system operations).
- */
-export const actorStorage = new AsyncLocalStorage<string>();
-
-/**
- * Stores the active tenantId for the current async request context.
- * Set by a tenant middleware after tenant resolution.
- * Undefined on routes outside a tenant context.
- */
-export const tenantStorage = new AsyncLocalStorage<string>();
-
-/**
  * Marks the current async context as "debug this unit of work": every log
  * line emitted under it passes regardless of the runtime log level. Set for
  * one request by the X-Debug-Token hook, or for one message by a worker.
@@ -38,19 +24,6 @@ export const DEBUG_LOGGING_HEADER = "x-debug-logging";
 
 /** Upper bound for an inbound request id — it is echoed and logged. */
 const MAX_REQUEST_ID_LEN = 128;
-
-/**
- * Runs fn with the given actorId in context — use this to override the actor
- * for a specific scope (e.g. invite-accept flows where the newly-created
- * userId acts on its own behalf without going through the auth guard).
- */
-export function withActor<T>(actorId: string, fn: () => T): T {
-  return actorStorage.run(actorId, fn);
-}
-
-export function withTenant<T>(tenantId: string, fn: () => T): T {
-  return tenantStorage.run(tenantId, fn);
-}
 
 export function withRequestId<T>(requestId: string, fn: () => T): T {
   return requestIdStorage.run(requestId, fn);

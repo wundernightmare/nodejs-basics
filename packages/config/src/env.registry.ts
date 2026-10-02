@@ -691,19 +691,6 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   },
 
   {
-    key: "KAFKA_CONSUMER_ALLOW_AUTO_CREATE_TOPICS",
-    yaml: "kafka.consumer.allow_auto_create_topics",
-    required: false,
-    default: "true",
-    description:
-      "librdkafka allow.auto.create.topics for consumers: a subscribe creates a " +
-      "missing topic (the broker's auto-create must be on, as in docker/deps.yml), so a " +
-      "worker that starts before the first producer gets its assignment at once. " +
-      "Set false where topics are provisioned.",
-    usedIn: ["kafka", "apps/worker"],
-  },
-
-  {
     key: "KAFKA_SASL_PASSWORD_FILE",
     yaml: "kafka.sasl.password_file",
     required: false,
@@ -825,7 +812,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     key: "KAFKA_PRODUCER_COMPRESSION_TYPE",
     yaml: "kafka.producer.compression_type",
     required: false,
-    description: "Producer compression.type. Default zstd.",
+    description:
+      "Producer compression.type (none|gzip|snappy|lz4|zstd). Default lz4 — cheapest in CPU and " +
+      "latency; zstd when bandwidth or broker disk is the constraint.",
     usedIn: ["kafka"],
   },
 
@@ -842,6 +831,67 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "kafka.producer.message_timeout_ms",
     required: false,
     description: "Producer message.timeout.ms (delivery deadline). Default 30000.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
+    yaml: "kafka.producer.queue_max_kbytes",
+    required: false,
+    description:
+      "Producer queue.buffering.max.kbytes — memory bound of the local send queue. Default 65536 " +
+      "(64 MiB; librdkafka's own is 1 GiB). A full queue fails send() with QUEUE_FULL.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
+    yaml: "kafka.producer.extra_properties",
+    required: false,
+    description:
+      "JSON object of librdkafka properties for the producer only, applied after " +
+      "KAFKA_EXTRA_PROPERTIES.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+    yaml: "kafka.consumer.extra_properties",
+    required: false,
+    description:
+      "JSON object of librdkafka properties for consumers only, applied after " +
+      "KAFKA_EXTRA_PROPERTIES.",
+    usedIn: ["kafka", "apps/worker"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY",
+    yaml: "kafka.consumer.partitions_concurrently",
+    required: false,
+    description:
+      "How many assigned partitions a consumer handles in parallel (eachMessage; order within " +
+      "a partition holds). Default 1 — raise it when one consumer serves many partitions/topics.",
+    usedIn: ["apps/worker"],
+  },
+
+  {
+    key: "WORKER_QUEUE_MAX_WAITING",
+    yaml: "worker.queue_max_waiting",
+    required: false,
+    description:
+      "Waiting jobs in the worker's BullMQ queue above which the Kafka consumer pauses its " +
+      "partitions (back-pressure: the backlog stays in Kafka, not in Valkey). Default 10000.",
+    usedIn: ["apps/worker"],
+  },
+
+  {
+    key: "KAFKA_STATISTICS_INTERVAL_MS",
+    yaml: "kafka.statistics_interval_ms",
+    required: false,
+    description:
+      "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
+      "metrics. Default 15000; 0 disables them. The report lists every topic and partition " +
+      "(~2.4 MB / ~5 ms to parse at 300 topics × 12 partitions): raise it for thousands of topics.",
     usedIn: ["kafka"],
   },
 
@@ -897,6 +947,18 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     required: false,
     default: "100",
     description: "Outbox rows one relay pass takes (FOR UPDATE SKIP LOCKED) and publishes.",
+    usedIn: ["outbox"],
+  },
+
+  {
+    key: "OUTBOX_MAX_ATTEMPTS",
+    yaml: "outbox.max_attempts",
+    required: false,
+    default: "10",
+    description:
+      "Failed sends after which an outbox row is no longer published. Only a rejected record " +
+      "counts (KAFKA_SEND_ERRORS: too large, invalid) — an outage, back-pressure or a missing " +
+      "topic never does. The row stays with last_error; outbox.dead counts them.",
     usedIn: ["outbox"],
   },
 

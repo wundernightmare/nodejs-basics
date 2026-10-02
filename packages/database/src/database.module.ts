@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 
 import { buildDbRateLimiter, DbRateLimiter } from "@base/resilience";
 
+import { DatabaseLifecycleService } from "./database.lifecycle.service.js";
 import {
   PG_BREAKER,
   PG_CONFIG,
@@ -26,6 +27,7 @@ const dbRateLimiterProvider: FactoryProvider<DbRateLimiter> = {
 /**
  * Global module exposing a tuned PG pool, optional read-only pool, secret-file
  * watcher (for K8s rotation), shared circuit breaker, and per-tenant rate limiter.
+ * DatabaseLifecycleService closes the pools and the watcher on shutdown.
  *
  * NOT included: an ORM service — bring your own (Prisma, Drizzle, plain pg).
  * The pool exposed at PG_POOL is the same instance you'd hand to your ORM's
@@ -42,6 +44,7 @@ const dbRateLimiterProvider: FactoryProvider<DbRateLimiter> = {
     pgReadonlyPoolProvider,
     pgBreakerProvider,
     dbRateLimiterProvider,
+    DatabaseLifecycleService,
   ],
   exports: [PG_POOL, PG_POOL_READONLY, PG_CONFIG, PG_BREAKER, PG_PASSWORD_WATCHER, DbRateLimiter],
 })

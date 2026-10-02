@@ -13,7 +13,7 @@ import {
 import { metrics } from "@opentelemetry/api";
 import { type ConnectionOptions, type Job, Worker } from "bullmq";
 
-import { BULLMQ_CONNECTION, traceJob } from "@base/jobs";
+import { BULLMQ_CONNECTION, BullMQMetricsService, traceJob } from "@base/jobs";
 import { AppLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
@@ -33,6 +33,7 @@ export class TaskEventsProcessor implements OnApplicationBootstrap, OnApplicatio
 
   constructor(
     @Inject(BULLMQ_CONNECTION) private readonly connection: ConnectionOptions,
+    private readonly jobMetrics: BullMQMetricsService,
     appLogger: AppLogger,
     readiness: ReadinessService,
   ) {
@@ -64,8 +65,18 @@ export class TaskEventsProcessor implements OnApplicationBootstrap, OnApplicatio
           );
           await Promise.resolve();
         }),
-      { connection: this.connection },
+      {
+        connection: this.connection,
+        // Explicit, so they read as decisions: one job at a time per worker; a
+        // job whose lock is not renewed for lockDuration is stalled and moved
+        // back to wait (once — the second stall fails it).
+        concurrency: 1,
+        lockDuration: 30_000,
+        stalledInterval: 30_000,
+        maxStalledCount: 1,
+      },
     );
+    this.jobMetrics.observe(this.worker);
     this.logger.info({ "bullmq.queue": QUEUE_NAME }, "BullMQ worker started");
   }
 

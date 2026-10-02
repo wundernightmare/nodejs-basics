@@ -31,8 +31,11 @@ import { resolve } from "node:path";
 const appDir = process.cwd();
 const entry = resolve(appDir, "dist/main.js");
 const ADMIN_PORT_FLAG = "--admin-port=";
-const adminPort = process.argv.find((a) => a.startsWith(ADMIN_PORT_FLAG))?.slice(ADMIN_PORT_FLAG.length);
-if (adminPort !== undefined && (process.env.ADMIN_PORT ?? "") === "") process.env.ADMIN_PORT = adminPort;
+const adminPort = process.argv
+  .find((a) => a.startsWith(ADMIN_PORT_FLAG))
+  ?.slice(ADMIN_PORT_FLAG.length);
+if (adminPort !== undefined && (process.env.ADMIN_PORT ?? "") === "")
+  process.env.ADMIN_PORT = adminPort;
 // Everything else goes to node, e.g. --inspect, --inspect-brk=9229.
 const extraNodeArgs = process.argv.slice(2).filter((a) => !a.startsWith(ADMIN_PORT_FLAG));
 

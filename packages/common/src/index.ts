@@ -1,6 +1,5 @@
 // Utilities
 export {
-  actorStorage,
   DEBUG_LOGGING_HEADER,
   DEBUG_TOKEN_HEADER,
   debugLoggingStorage,
@@ -9,11 +8,8 @@ export {
   isValidRequestId,
   REQUEST_ID_HEADER,
   requestIdStorage,
-  tenantStorage,
-  withActor,
   withDebugLogging,
   withRequestId,
-  withTenant,
 } from "./utils/request-context.js";
 export {
   callBudgetMs,

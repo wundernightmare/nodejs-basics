@@ -11,7 +11,7 @@
     "build": "vite build",
     "start": "node --enable-source-maps dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "oxlint src vite.config.ts",
+    "lint": "oxlint --max-warnings=10 src vite.config.ts",
     "lint:fix": "oxlint --fix src vite.config.ts",
     "format": "oxfmt \"src/**/*.ts\" vite.config.ts",
     "format:check": "oxfmt --check \"src/**/*.ts\" vite.config.ts",

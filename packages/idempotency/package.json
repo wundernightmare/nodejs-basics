@@ -19,7 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
-    "lint": "oxlint src",
+    "lint": "oxlint --max-warnings=1 src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
@@ -36,5 +36,8 @@
     "@nestjs/common": "12.x",
     "@nestjs/config": "12.x",
     "fastify": "5.x"
+  },
+  "devDependencies": {
+    "@base/testing": "workspace:*"
   }
 }

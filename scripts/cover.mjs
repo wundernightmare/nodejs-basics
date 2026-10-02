@@ -160,12 +160,12 @@ function merge() {
   const byPkg = new Map();
   let total = 0;
   let covered = 0;
-  for (const [file, u] of [...universe.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [file, u] of [...universe.entries()].toSorted(([a], [b]) => a.localeCompare(b))) {
     const lines = hits.get(file) ?? new Map();
     let lf = 0;
     let lh = 0;
     lcov.push(`SF:${rel(file)}`);
-    for (const line of [...u].sort((a, b) => a - b)) {
+    for (const line of [...u].toSorted((a, b) => a - b)) {
       const h = lines.get(line) ?? 0;
       lcov.push(`DA:${line},${h}`);
       lf++;
@@ -183,7 +183,7 @@ function merge() {
   writeFileSync(join(root, "coverage-merged.lcov"), lcov.join("\n") + "\n");
   const breakdown = Object.fromEntries(
     [...byPkg.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .toSorted(([a], [b]) => a.localeCompare(b))
       .map(([k, s]) => [k, Number(pct(s).toFixed(2))]),
   );
   writeFileSync(join(root, config.breakdownFile), JSON.stringify(breakdown, null, 2) + "\n");
