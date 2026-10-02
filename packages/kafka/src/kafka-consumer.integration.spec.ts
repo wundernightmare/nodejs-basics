@@ -1,4 +1,3 @@
-import { KafkaJS } from "@confluentinc/kafka-javascript";
 import { ConfigService } from "@nestjs/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -12,16 +11,20 @@ import { KafkaProducerService } from "./kafka.provider.js";
  * The consumer loop against a real broker (`just deps` Redpanda, which
  * auto-creates the test's own topic). The scenario is the one a mock cannot
  * prove: a message produced while the consumer is down is handled after it
- * restarts, and nothing handled before is handled again — the group's
- * committed offset is the proof.
+ * restarts, and nothing handled before is handled again. (A bare
+ * `commitOffsets()` commits one message behind; no commit re-reads the topic
+ * from the start — either way the second run sees m1 again.)
+ *
+ * Not asserted through admin.fetchOffsets: kafka-javascript 1.10.x segfaults
+ * the process on it for a group that does not exist yet (seen on CI and on
+ * Redpanda 26.1.8).
  */
 const infra = integration("kafka");
 const appLogger = new AppLogger(pinoLogger.child({}, { level: "silent" }));
 
-async function until(cond: () => Promise<boolean> | boolean, ms = 30_000): Promise<void> {
+async function until(cond: () => boolean, ms = 30_000): Promise<void> {
   const deadline = Date.now() + ms;
-  // oxlint-disable-next-line no-await-in-loop -- polling: each check waits for the last
-  while (!(await cond())) {
+  while (!cond()) {
     if (Date.now() > deadline) throw new Error("timed out waiting");
     // oxlint-disable-next-line no-await-in-loop -- the pause between checks
     await new Promise((resolve) => {
@@ -42,9 +45,8 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
   const groupId = unique("it-group");
   let config: ConfigService;
   let producer: KafkaProducerService;
-  let admin: KafkaJS.Admin;
 
-  beforeAll(async () => {
+  beforeAll(() => {
     config = new ConfigService({
       KAFKA_BROKERS: infra.url("kafka"),
       // A fresh group on a fresh topic reads it from the start.
@@ -52,18 +54,10 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
     });
     producer = new KafkaProducerService(config, appLogger);
     producer.onApplicationBootstrap();
-    admin = new KafkaJS.Kafka({ kafkaJS: { brokers: [infra.url("kafka")], logLevel: 0 } }).admin();
-    await admin.connect();
   });
   afterAll(async () => {
-    await admin.disconnect();
     await producer.onApplicationShutdown();
   });
-
-  const committed = async (): Promise<string | undefined> => {
-    const [entry] = await admin.fetchOffsets({ groupId, topics: [topic] });
-    return entry?.partitions[0]?.offset;
-  };
 
   it("handles what was produced while it was down, and nothing twice", async () => {
     await testCase("NB-944", "kafka consumer resumes from its committed offset");
@@ -84,12 +78,13 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
     // waitMs: the producer connects in the background; the first send creates the topic.
     await producer.send({ topic, messages: [{ value: "m1" }] }, { waitMs: 15_000 });
     const first = start();
-    await until(async () => (await committed()) === "1");
+    await until(() => seen.includes("m1"));
+    // stop() waits for the message in flight, its commit included.
     await first.stop();
 
     await producer.send({ topic, messages: [{ value: "m2" }] });
     const second = start();
-    await until(async () => (await committed()) === "2");
+    await until(() => seen.includes("m2"));
     await second.stop();
 
     expect(seen).toEqual(["m1", "m2"]);
