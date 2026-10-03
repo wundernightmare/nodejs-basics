@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@base/cache": "workspace:*",
+    "@base/config": "workspace:*",
     "@base/logger": "workspace:*",
     "iovalkey": "0.4.0",
     "rxjs": "7.8.2"

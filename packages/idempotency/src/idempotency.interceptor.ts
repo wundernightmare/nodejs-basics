@@ -37,6 +37,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { type Observable, from } from "rxjs";
 import { firstValueFrom } from "rxjs";
 
+import { readInt } from "@base/config";
 import { AppLogger, ecsError } from "@base/logger";
 
 import { IDEMPOTENCY_STORE, type IdempotencyStore } from "./idempotency.store.js";
@@ -117,9 +118,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     fingerprint: string,
   ): Promise<unknown> {
     const reply = context.switchToHttp().getResponse<FastifyReply>();
-    const configured = Number(this.config.get<string>("IDEMPOTENCY_TTL_SECONDS"));
-    // A typo must not turn into a NaN TTL (the SET then fails and replay quietly stops).
-    const ttl = Number.isInteger(configured) && configured > 0 ? configured : 86_400;
+    const ttl = readInt(this.config, "IDEMPOTENCY_TTL_SECONDS") ?? 86_400;
     const statusCode =
       (Reflect.getMetadata(HTTP_CODE_METADATA, context.getHandler()) as number | undefined) ?? 200;
 

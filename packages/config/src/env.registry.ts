@@ -7,7 +7,8 @@
  *   - its default value when optional (default)
  *   - what it controls (description)
  *
- * config.loader.ts uses this registry to validate required keys at startup.
+ * config.loader.ts uses this registry at startup to reject unknown YAML keys
+ * and values that do not parse as their `type`, and to check required keys.
  *
  * Every key the code reads must be here — env.registry.spec.ts fails on a key
  * read through `config.get` / the builders' readers / `process.env` that is
@@ -16,6 +17,14 @@
  * process.env at startup: leave it out when "unset" means "the library's
  * own default", and say the code's default in the description instead.
  */
+
+/**
+ * int, number: a decimal number (int: whole), within min/max; bool:
+ * true|false|1|0; duration: Go-style ("30m", "1h30m", "500ms"; a bare number
+ * is seconds); json: a JSON object (a YAML mapping is serialised to one);
+ * enum: one of `values`.
+ */
+export type EnvType = "string" | "int" | "number" | "bool" | "duration" | "json" | "enum";
 
 export interface EnvEntry {
   /** Exact variable name (process.env key and flat YAML key). */
@@ -26,6 +35,20 @@ export interface EnvEntry {
    * Env vars always win; yaml paths take priority over flat keys.
    */
   yaml?: string;
+  /**
+   * What the value must parse as; the loader checks every set value at
+   * startup and the typed readers (config.values.ts) parse it the same way.
+   * Default "string" (anything goes).
+   */
+  type?: EnvType;
+  /** Bounds of an int / number value, inclusive. */
+  min?: number;
+  max?: number;
+  /**
+   * enum: the allowed values (matched ignoring case). Any other type: literals
+   * accepted besides a value of the type ("null" for VALKEY_MAX_RETRIES_PER_REQUEST).
+   */
+  values?: readonly string[];
   /** Crash at startup if the variable is absent after all sources are merged. */
   required: boolean;
   /** Value used when required=false and the variable is not set. */
@@ -64,6 +87,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "PORT",
     yaml: "app.port",
+    type: "int",
+    min: 0,
+    max: 65_535,
     required: false,
     default: "3000",
     description: "TCP port the HTTP server listens on.",
@@ -73,6 +99,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "HTTP_BODY_LIMIT_BYTES",
     yaml: "app.http.body_limit_bytes",
+    type: "int",
+    min: 1,
     required: false,
     default: "1048576",
     description: "Largest request body the api accepts; a bigger one is a 413 problem.",
@@ -82,6 +110,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "HTTP_REQUEST_TIMEOUT_MS",
     yaml: "app.http.request_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     default: "10000",
     description:
@@ -94,6 +124,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "ADMIN_PORT",
     yaml: "app.admin_port",
+    type: "int",
+    min: 0,
+    max: 65_535,
     required: false,
     default: "9090",
     description:
@@ -134,6 +167,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "LOG_LEVEL",
     yaml: "app.log_level",
+    type: "enum",
+    values: ["trace", "debug", "info", "warn", "error", "fatal", "silent"],
     required: false,
     description:
       "Base pino log level (trace|debug|info|warn|error|fatal|silent). Default: info in " +
@@ -145,6 +180,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "LOG_LEVEL_MAX_TTL",
     yaml: "app.log_level_max_ttl",
+    type: "duration",
     required: false,
     default: "24h",
     description:
@@ -209,6 +245,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_POOL_MAX",
     yaml: "database.pool_max",
+    type: "int",
+    min: 1,
     required: false,
     default: "10",
     description: "Maximum pg pool size (this default wins over the builder's own fallback of 20).",
@@ -227,6 +265,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_POOL_MIN",
     yaml: "database.pool_min",
+    type: "int",
+    min: 0,
     required: false,
     description: "Minimum pg pool size kept open. Default 0.",
     usedIn: ["database"],
@@ -235,6 +275,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_POOL_IDLE_TIMEOUT_MS",
     yaml: "database.pool_idle_timeout_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Close a pooled connection idle this long. Default 30000.",
     usedIn: ["database"],
@@ -243,6 +285,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_POOL_MAX_USES",
     yaml: "database.pool_max_uses",
+    type: "int",
+    min: 0,
     required: false,
     description: "Recycle a connection after this many checkouts (0 = never). Default 0.",
     usedIn: ["database"],
@@ -251,6 +295,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CONNECT_TIMEOUT_MS",
     yaml: "database.connect_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "TCP + auth connect timeout (libpq connect_timeout). Default 5000.",
     usedIn: ["database"],
@@ -259,6 +305,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_STATEMENT_TIMEOUT_MS",
     yaml: "database.statement_timeout_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Server-side statement_timeout set on every connection. Default 30000.",
     usedIn: ["database"],
@@ -267,6 +315,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS",
     yaml: "database.idle_in_transaction_timeout_ms",
+    type: "int",
+    min: 0,
     required: false,
     description:
       "Server-side idle_in_transaction_session_timeout set on every connection. Default 60000.",
@@ -276,6 +326,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_QUERY_TIMEOUT_MS",
     yaml: "database.query_timeout_ms",
+    type: "int",
+    min: 0,
     required: false,
     description:
       "Client-side pg query_timeout. Unset: none (the server statement_timeout applies).",
@@ -285,6 +337,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_KEEPALIVE",
     yaml: "database.keepalive",
+    type: "bool",
     required: false,
     description: "TCP keepalive on pool connections (true|false). Default true.",
     usedIn: ["database"],
@@ -293,6 +346,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_KEEPALIVE_INITIAL_DELAY_MS",
     yaml: "database.keepalive_initial_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Delay before the first TCP keepalive probe. Default 10000.",
     usedIn: ["database"],
@@ -310,6 +365,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_TARGET_SESSION_ATTRS",
     yaml: "database.target_session_attrs",
+    type: "enum",
+    values: ["any", "read-write", "read-only", "primary", "standby", "prefer-standby"],
     required: false,
     description:
       "libpq target_session_attrs of the primary pool (e.g. read-write for multi-host failover URLs). Unset: libpq default (any).",
@@ -319,6 +376,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_READONLY_TARGET_SESSION_ATTRS",
     yaml: "database.readonly_target_session_attrs",
+    type: "enum",
+    values: ["any", "read-write", "read-only", "primary", "standby", "prefer-standby"],
     required: false,
     description:
       "target_session_attrs of the read-only pool (e.g. prefer-standby). Default: DATABASE_TARGET_SESSION_ATTRS, else any.",
@@ -328,6 +387,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_USE_NATIVE",
     yaml: "database.use_native",
+    type: "bool",
     required: false,
     description:
       "Use pg-native (libpq) instead of pure-JS pg — needed for multi-host URLs. Default false.",
@@ -337,6 +397,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_SSL_MODE",
     yaml: "database.ssl.mode",
+    type: "enum",
+    values: ["disable", "allow", "prefer", "require", "verify-ca", "verify-full", "no-verify"],
     required: false,
     description: "libpq sslmode (disable|require|verify-ca|verify-full). Unset: from DATABASE_URL.",
     usedIn: ["database"],
@@ -362,6 +424,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_SSL_SKIP_VERIFY",
     yaml: "database.ssl.skip_verify",
+    type: "bool",
     required: false,
     description: "Accept any server certificate (true|false). Default false — never in production.",
     usedIn: ["database"],
@@ -370,6 +433,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_EXTRA_PROPERTIES",
     yaml: "database.extra_properties",
+    type: "json",
     required: false,
     description: "JSON object of extra pg PoolConfig properties, applied last (escape hatch).",
     usedIn: ["database"],
@@ -378,6 +442,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_RETRY_MAX_ATTEMPTS",
     yaml: "database.retry.max_attempts",
+    type: "int",
+    min: 1,
     required: false,
     description: "Attempts per Postgres operation incl. the first. Default 3.",
     usedIn: ["database"],
@@ -386,6 +452,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_RETRY_BASE_DELAY_MS",
     yaml: "database.retry.base_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "First backoff delay (full jitter, doubling). Default 100.",
     usedIn: ["database"],
@@ -394,6 +462,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_RETRY_MAX_DELAY_MS",
     yaml: "database.retry.max_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Backoff delay cap. Default 5000.",
     usedIn: ["database"],
@@ -402,6 +472,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_RETRY_BUDGET_MS",
     yaml: "database.retry.budget_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Total time one operation may spend retrying. Default 10000.",
     usedIn: ["database"],
@@ -410,6 +482,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CB_ENABLED",
     yaml: "database.circuit_breaker.enabled",
+    type: "bool",
     required: false,
     description: "Circuit breaker around Postgres calls (true|false). Default true.",
     usedIn: ["database"],
@@ -418,6 +491,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CB_TIMEOUT_MS",
     yaml: "database.circuit_breaker.timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "A call slower than this counts as a failure. Default 30000.",
     usedIn: ["database"],
@@ -426,6 +501,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CB_ERROR_THRESHOLD_PCT",
     yaml: "database.circuit_breaker.error_threshold_pct",
+    type: "number",
+    min: 0,
+    max: 100,
     required: false,
     description: "Failure percentage that opens the breaker. Default 50.",
     usedIn: ["database"],
@@ -434,6 +512,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CB_VOLUME_THRESHOLD",
     yaml: "database.circuit_breaker.volume_threshold",
+    type: "int",
+    min: 1,
     required: false,
     description: "Calls in the window before the breaker may open. Default 10.",
     usedIn: ["database"],
@@ -442,6 +522,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "DATABASE_CB_RESET_TIMEOUT_MS",
     yaml: "database.circuit_breaker.reset_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Time open before a half-open probe. Default 30000.",
     usedIn: ["database"],
@@ -486,6 +568,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_DB",
     yaml: "cache.db",
+    type: "int",
+    min: 0,
     required: false,
     description: "Logical database number. Overrides the path of VALKEY_URL. Default 0.",
     usedIn: ["cache"],
@@ -494,6 +578,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_TLS",
     yaml: "cache.tls",
+    type: "bool",
     required: false,
     description: "TLS without a rediss:// URL (true|false). Default false.",
     usedIn: ["cache"],
@@ -502,6 +587,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_SKIP_VERIFY",
     yaml: "cache.skip_verify",
+    type: "bool",
     required: false,
     description: "Accept any server certificate (true|false). Default false — never in production.",
     usedIn: ["cache"],
@@ -526,6 +612,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CONNECT_TIMEOUT_MS",
     yaml: "cache.connect_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Connect timeout. Default 5000.",
     usedIn: ["cache"],
@@ -534,6 +622,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_COMMAND_TIMEOUT_MS",
     yaml: "cache.command_timeout_ms",
+    type: "int",
+    min: 0,
     required: false,
     description:
       "Per-command timeout of the shared client (never applied to BullMQ connections). Default 5000.",
@@ -543,6 +633,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_KEEPALIVE_MS",
     yaml: "cache.keepalive_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "TCP keepalive initial delay (0 = off). Default 0.",
     usedIn: ["cache"],
@@ -551,6 +643,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_MAX_RETRIES_PER_REQUEST",
     yaml: "cache.max_retries_per_request",
+    type: "int",
+    min: 0,
+    values: ["null"],
     required: false,
     description: 'iovalkey maxRetriesPerRequest ("null" = retry forever). Default 3.',
     usedIn: ["cache"],
@@ -559,6 +654,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RECONNECT_BASE_DELAY_MS",
     yaml: "cache.reconnect_base_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "First reconnect delay (exponential). Default 100.",
     usedIn: ["cache"],
@@ -567,6 +664,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RECONNECT_MAX_DELAY_MS",
     yaml: "cache.reconnect_max_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Reconnect delay cap. Default 5000.",
     usedIn: ["cache"],
@@ -575,6 +674,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_EXTRA_PROPERTIES",
     yaml: "cache.extra_properties",
+    type: "json",
     required: false,
     description: "JSON object of extra iovalkey options, applied last (escape hatch).",
     usedIn: ["cache"],
@@ -583,6 +683,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RETRY_MAX_ATTEMPTS",
     yaml: "cache.retry.max_attempts",
+    type: "int",
+    min: 1,
     required: false,
     description: "Attempts per Valkey operation incl. the first. Default 3.",
     usedIn: ["cache"],
@@ -591,6 +693,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RETRY_BASE_DELAY_MS",
     yaml: "cache.retry.base_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "First backoff delay (full jitter, doubling). Default 50.",
     usedIn: ["cache"],
@@ -599,6 +703,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RETRY_MAX_DELAY_MS",
     yaml: "cache.retry.max_delay_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Backoff delay cap. Default 1000.",
     usedIn: ["cache"],
@@ -607,6 +713,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_RETRY_BUDGET_MS",
     yaml: "cache.retry.budget_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Total time one operation may spend retrying. Default 5000.",
     usedIn: ["cache"],
@@ -615,6 +723,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CB_ENABLED",
     yaml: "cache.circuit_breaker.enabled",
+    type: "bool",
     required: false,
     description: "Circuit breaker around Valkey calls (true|false). Default false.",
     usedIn: ["cache"],
@@ -623,6 +732,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CB_TIMEOUT_MS",
     yaml: "cache.circuit_breaker.timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "A call slower than this counts as a failure. Default 5000.",
     usedIn: ["cache"],
@@ -631,6 +742,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CB_ERROR_THRESHOLD_PCT",
     yaml: "cache.circuit_breaker.error_threshold_pct",
+    type: "number",
+    min: 0,
+    max: 100,
     required: false,
     description: "Failure percentage that opens the breaker. Default 50.",
     usedIn: ["cache"],
@@ -639,6 +753,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CB_VOLUME_THRESHOLD",
     yaml: "cache.circuit_breaker.volume_threshold",
+    type: "int",
+    min: 1,
     required: false,
     description: "Calls in the window before the breaker may open. Default 20.",
     usedIn: ["cache"],
@@ -647,6 +763,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "VALKEY_CB_RESET_TIMEOUT_MS",
     yaml: "cache.circuit_breaker.reset_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Time open before a half-open probe. Default 15000.",
     usedIn: ["cache"],
@@ -655,6 +773,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "IDEMPOTENCY_TTL_SECONDS",
     yaml: "idempotency.ttl_seconds",
+    type: "int",
+    min: 1,
     required: false,
     description: "How long a stored Idempotency-Key result is replayed. Default 86400 (24 h).",
     usedIn: ["idempotency"],
@@ -681,6 +801,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_AUTO_OFFSET_RESET",
     yaml: "kafka.consumer.auto_offset_reset",
+    type: "enum",
+    values: ["earliest", "latest", "smallest", "largest", "beginning", "end", "error"],
     required: false,
     default: "latest",
     description:
@@ -704,6 +826,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_SECURITY_PROTOCOL",
     yaml: "kafka.security_protocol",
+    type: "enum",
+    values: ["plaintext", "ssl", "sasl_plaintext", "sasl_ssl"],
     required: false,
     description:
       "librdkafka security.protocol (plaintext|ssl|sasl_plaintext|sasl_ssl). Unset: plaintext.",
@@ -713,6 +837,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_SASL_MECHANISM",
     yaml: "kafka.sasl.mechanism",
+    type: "enum",
+    values: ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"],
     required: false,
     description: "sasl.mechanism (PLAIN|SCRAM-SHA-256|SCRAM-SHA-512).",
     usedIn: ["kafka"],
@@ -754,6 +880,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM",
     yaml: "kafka.ssl.endpoint_identification_algorithm",
+    type: "enum",
+    values: ["https", "none"],
     required: false,
     description:
       "ssl.endpoint.identification.algorithm (https|none). Unset: librdkafka default (https).",
@@ -763,6 +891,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_REQUEST_TIMEOUT_MS",
     yaml: "kafka.request_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "socket request timeout. Unset: librdkafka default.",
     usedIn: ["kafka"],
@@ -771,6 +901,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_METADATA_MAX_AGE_MS",
     yaml: "kafka.metadata_max_age_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "metadata.max.age.ms. Unset: librdkafka default.",
     usedIn: ["kafka"],
@@ -779,6 +911,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_RECONNECT_BACKOFF_MS",
     yaml: "kafka.reconnect_backoff_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "reconnect.backoff.ms. Unset: librdkafka default.",
     usedIn: ["kafka"],
@@ -787,6 +921,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_RECONNECT_BACKOFF_MAX_MS",
     yaml: "kafka.reconnect_backoff_max_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "reconnect.backoff.max.ms. Unset: librdkafka default.",
     usedIn: ["kafka"],
@@ -795,6 +931,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_ACKS",
     yaml: "kafka.producer.acks",
+    type: "enum",
+    values: ["all", "-1", "0", "1"],
     required: false,
     description: "Producer acks. Default all.",
     usedIn: ["kafka"],
@@ -803,6 +941,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE",
     yaml: "kafka.producer.enable_idempotence",
+    type: "bool",
     required: false,
     description: "Producer enable.idempotence (true|false). Default true.",
     usedIn: ["kafka"],
@@ -811,6 +950,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_COMPRESSION_TYPE",
     yaml: "kafka.producer.compression_type",
+    type: "enum",
+    values: ["none", "gzip", "snappy", "lz4", "zstd"],
     required: false,
     description:
       "Producer compression.type (none|gzip|snappy|lz4|zstd). Default lz4 — cheapest in CPU and " +
@@ -821,6 +962,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_LINGER_MS",
     yaml: "kafka.producer.linger_ms",
+    type: "int",
+    min: 0,
     required: false,
     description: "Producer linger.ms (batching window). Default 10.",
     usedIn: ["kafka"],
@@ -829,6 +972,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS",
     yaml: "kafka.producer.message_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Producer message.timeout.ms (delivery deadline). Default 30000.",
     usedIn: ["kafka"],
@@ -837,6 +982,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
     yaml: "kafka.producer.queue_max_kbytes",
+    type: "int",
+    min: 1,
     required: false,
     description:
       "Producer queue.buffering.max.kbytes — memory bound of the local send queue. Default 65536 " +
@@ -847,6 +994,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
     yaml: "kafka.producer.extra_properties",
+    type: "json",
     required: false,
     description:
       "JSON object of librdkafka properties for the producer only, applied after " +
@@ -857,6 +1005,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_EXTRA_PROPERTIES",
     yaml: "kafka.consumer.extra_properties",
+    type: "json",
     required: false,
     description:
       "JSON object of librdkafka properties for consumers only, applied after " +
@@ -867,6 +1016,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY",
     yaml: "kafka.consumer.partitions_concurrently",
+    type: "int",
+    min: 1,
     required: false,
     description:
       "How many assigned partitions a consumer handles in parallel (eachMessage; order within " +
@@ -877,6 +1028,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "WORKER_QUEUE_MAX_WAITING",
     yaml: "worker.queue_max_waiting",
+    type: "int",
+    min: 1,
     required: false,
     description:
       "Waiting jobs in the worker's BullMQ queue above which the Kafka consumer pauses its " +
@@ -887,6 +1040,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_STATISTICS_INTERVAL_MS",
     yaml: "kafka.statistics_interval_ms",
+    type: "int",
+    min: 0,
     required: false,
     description:
       "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
@@ -898,6 +1053,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT",
     yaml: "kafka.consumer.enable_auto_commit",
+    type: "bool",
     required: false,
     description: "Consumer enable.auto.commit (true|false). Default false (commit after handling).",
     usedIn: ["kafka", "apps/worker"],
@@ -906,6 +1062,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_SESSION_TIMEOUT_MS",
     yaml: "kafka.consumer.session_timeout_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Consumer session.timeout.ms. Default 10000.",
     usedIn: ["kafka", "apps/worker"],
@@ -914,6 +1072,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS",
     yaml: "kafka.consumer.max_poll_interval_ms",
+    type: "int",
+    min: 1,
     required: false,
     description: "Consumer max.poll.interval.ms. Default 300000.",
     usedIn: ["kafka", "apps/worker"],
@@ -922,6 +1082,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "KAFKA_EXTRA_PROPERTIES",
     yaml: "kafka.extra_properties",
+    type: "json",
     required: false,
     description:
       "JSON object of extra librdkafka properties, applied last to every client (escape hatch).",
@@ -933,6 +1094,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "OUTBOX_POLL_INTERVAL_MS",
     yaml: "outbox.poll_interval_ms",
+    type: "int",
+    min: 1,
     required: false,
     default: "200",
     description:
@@ -944,6 +1107,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "OUTBOX_BATCH_SIZE",
     yaml: "outbox.batch_size",
+    type: "int",
+    min: 1,
     required: false,
     default: "100",
     description: "Outbox rows one relay pass takes (FOR UPDATE SKIP LOCKED) and publishes.",
@@ -953,6 +1118,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "OUTBOX_MAX_ATTEMPTS",
     yaml: "outbox.max_attempts",
+    type: "int",
+    min: 1,
     required: false,
     default: "10",
     description:
@@ -969,7 +1136,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     required: false,
     description:
       "Service name reported to OTel, in ECS service.name of every log line, and the default " +
-      "Kafka client.id / Postgres application_name. Default: per app (apps/*/src/service-name.ts: " +
+      "Kafka client.id / Postgres application_name. Default: per app (apps/*/src/boot.ts: " +
       "nodejs-basics-api / nodejs-basics-worker)." +
       " Environment only: telemetry starts in instrumentation.ts, before config.yaml is read.",
     usedIn: ["logger", "observability"],
@@ -1047,6 +1214,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "HEAP_OOM_THRESHOLD",
     yaml: "diagnostics.heap_oom_threshold",
+    type: "number",
+    min: 0,
+    max: 1,
     required: false,
     default: "0.85",
     description:
@@ -1058,6 +1228,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "HEAP_OOM_POLL_INTERVAL_MS",
     yaml: "diagnostics.heap_oom_poll_ms",
+    type: "int",
+    min: 1,
     required: false,
     default: "10000",
     description: "Heap usage poll interval in milliseconds.",
@@ -1069,6 +1241,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
   {
     key: "TASK_LIST_PAGE_SIZE",
     yaml: "tasks.list_page_size",
+    type: "int",
+    min: 1,
     required: false,
     default: "50",
     description:

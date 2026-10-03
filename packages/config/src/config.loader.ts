@@ -11,12 +11,18 @@
  *     3. Flat YAML key        (e.g. DATABASE_URL: value)
  *     4. Default values in the registry
  *
- * The loader also calls validateRequiredKeys() which checks that every
- * variable marked `required: true` in the registry is present after merging.
- * Missing required keys are collected and thrown as a single startup error so
- * the full list is visible at once.
+ * Then it validates, and throws ONE startup error listing every problem: a
+ * YAML key no registry entry has (a typo would otherwise be silently
+ * ignored), a value that does not parse as the entry's `type` (an int, a
+ * bool, an enum, …, within its bounds), a missing `required` key.
  *
- * Usage in AppModule:
+ * There are no profiles / layered files and no hot reload, on purpose: one
+ * file per deployment (a ConfigMap) plus env overrides is all a container
+ * needs, and a value that changes under a running process is a restart —
+ * except mounted secrets, which SecretFileWatcher re-reads.
+ *
+ * Usage: the apps call yamlConfigLoader() from their first import
+ * (src/boot.ts), before any other module loads, and wire it into
  *   ConfigModule.forRoot({ load: [yamlConfigLoader] })
  *
  * The loader also remembers where each registered key came from, so
@@ -28,6 +34,7 @@ import { resolve } from "node:path";
 
 import { parse as parseYaml } from "yaml";
 
+import { ConfigValueError, parseConfigValue } from "./config.values.js";
 import { ENV_REGISTRY } from "./env.registry.js";
 
 function serializeValue(value: unknown): string {
@@ -88,51 +95,67 @@ function recordEnvSources(): void {
   }
 }
 
+let loaded: Record<string, unknown> | undefined;
+
+/**
+ * Loads the configuration into process.env once per process and returns the
+ * parsed file; later calls return that result. The apps call it from their
+ * first import (src/boot.ts), so every module — including ones that read
+ * process.env when they load — sees the merged values; ConfigModule's
+ * `load: [yamlConfigLoader]` then reuses the result.
+ *
+ * Throws one error listing every problem: an unknown YAML key (with the
+ * nearest known one), a value that does not parse as its registry type, a
+ * missing required key.
+ */
 export function yamlConfigLoader(): Record<string, unknown> {
+  loaded ??= load();
+  return loaded;
+}
+
+function load(): Record<string, unknown> {
   const configPath = resolve(process.env["APP_CONFIG_FILE"] ?? "config.yaml");
   recordEnvSources();
 
-  if (!existsSync(configPath)) {
-    // Not an error — running without a file is valid in container environments
-    // where every value comes from environment variables.
-    applyDefaults();
-    validateRequiredKeys();
-    return {};
-  }
+  // No file is not an error — in a container every value may come from the environment.
+  const parsed = existsSync(configPath)
+    ? (parseYaml(readFileSync(configPath, "utf-8")) as unknown)
+    : undefined;
+  const file =
+    parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  const problems = unknownKeys(file);
 
-  const raw = readFileSync(configPath, "utf-8");
-  const parsed = parseYaml(raw) as Record<string, unknown> | null;
-
-  if (!parsed || typeof parsed !== "object") {
-    applyDefaults();
-    validateRequiredKeys();
-    return {};
-  }
-
-  // Step 1: structured (nested) YAML paths from the registry.
+  // Structured (nested) YAML paths from the registry.
   for (const entry of ENV_REGISTRY) {
-    if (!entry.yaml) continue;
+    if (entry.yaml === undefined) continue;
     if (process.env[entry.key] !== undefined) continue;
-    const value = getNestedValue(parsed, entry.yaml);
+    const value = getNestedValue(file, entry.yaml);
     if (value !== null && value !== undefined) {
       process.env[entry.key] = serializeValue(value);
       sources.set(entry.key, "yaml");
     }
   }
 
-  // Step 2: back-fill flat top-level scalar keys.
-  for (const [key, value] of Object.entries(parsed)) {
-    if (value === null || value === undefined) continue;
-    if (typeof value === "object" && !Array.isArray(value)) continue;
+  // Flat top-level keys (DATABASE_URL: ...).
+  for (const [key, value] of Object.entries(file)) {
+    if (value === null || value === undefined || !REGISTERED.has(key)) continue;
     if (process.env[key] !== undefined) continue;
     process.env[key] = serializeValue(value);
     sources.set(key, "yaml");
   }
 
   applyDefaults();
-  validateRequiredKeys();
-
-  return parsed;
+  problems.push(...invalidValues(), ...missingRequiredKeys());
+  if (problems.length > 0) {
+    throw new Error(
+      `Invalid configuration (${configPath}):\n` +
+        problems.map((p) => `  - ${p}`).join("\n") +
+        `\n\nEvery key, its YAML path, type and default: ENV_REGISTRY in @base/config.`,
+    );
+  }
+  return file;
 }
 
 /**
@@ -147,16 +170,82 @@ function applyDefaults(): void {
   }
 }
 
-function validateRequiredKeys(): void {
-  const missing = ENV_REGISTRY.filter(
+function missingRequiredKeys(): string[] {
+  return ENV_REGISTRY.filter(
     (e) => e.required && (process.env[e.key] === undefined || process.env[e.key] === ""),
-  ).map((e) => e.key);
+  ).map((e) => `${e.key} is required (set it in the environment or in the YAML file)`);
+}
 
-  if (missing.length === 0) return;
+function invalidValues(): string[] {
+  const problems: string[] = [];
+  for (const entry of ENV_REGISTRY) {
+    const raw = process.env[entry.key];
+    if (raw === undefined || raw === "" || entry.type === undefined) continue;
+    try {
+      parseConfigValue({ ...entry, type: entry.type }, raw);
+    } catch (err) {
+      if (!(err instanceof ConfigValueError)) throw err;
+      const from =
+        sources.get(entry.key) === "yaml" && entry.yaml !== undefined
+          ? ` (yaml: ${entry.yaml})`
+          : "";
+      problems.push(`${err.message}${from}`);
+    }
+  }
+  return problems;
+}
 
-  throw new Error(
-    `Missing required configuration:\n` +
-      missing.map((k) => `  - ${k}`).join("\n") +
-      `\n\nSet them as environment variables or add them to config.yaml.`,
-  );
+const REGISTERED = new Set(ENV_REGISTRY.map((e) => e.key));
+const YAML_PATHS = new Set(ENV_REGISTRY.flatMap((e) => (e.yaml === undefined ? [] : [e.yaml])));
+
+/**
+ * YAML keys nothing reads. Without this check a typo (`databse.url`) leaves
+ * the setting at its default and the service starts as if the line were not
+ * there. Reported per leaf, so the hint can name the intended path. A
+ * registered path is a leaf even when its value is a mapping (the
+ * `*_EXTRA_PROPERTIES` objects); a top-level key may also be a registry key.
+ */
+function unknownKeys(file: Record<string, unknown>): string[] {
+  const unknown: string[] = [];
+  const walk = (node: Record<string, unknown>, prefix: string): void => {
+    for (const [key, value] of Object.entries(node)) {
+      const path = prefix === "" ? key : `${prefix}.${key}`;
+      if (YAML_PATHS.has(path) || (prefix === "" && REGISTERED.has(key))) continue;
+      if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+        walk(value as Record<string, unknown>, path);
+        continue;
+      }
+      const hint = nearest(path, prefix === "" ? [...YAML_PATHS, ...REGISTERED] : [...YAML_PATHS]);
+      unknown.push(`unknown key ${path}${hint === undefined ? "" : ` — did you mean ${hint}?`}`);
+    }
+  };
+  walk(file, "");
+  return unknown;
+}
+
+/** The candidate closest to `word` by edit distance, if it is close enough to be the intended one. */
+function nearest(word: string, candidates: string[]): string | undefined {
+  let best: string | undefined;
+  let bestDistance = Math.max(2, Math.floor(word.length / 4)) + 1;
+  for (const candidate of candidates) {
+    const d = editDistance(word.toLowerCase(), candidate.toLowerCase());
+    if (d < bestDistance) [best, bestDistance] = [candidate, d];
+  }
+  return best;
+}
+
+function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next[j] = Math.min(
+        row[j]! + 1,
+        next[j - 1]! + 1,
+        row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    row = next;
+  }
+  return row[b.length]!;
 }
