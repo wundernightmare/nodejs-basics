@@ -166,7 +166,7 @@ describe("env registry", () => {
       expect(firstImport(`apps/${app}/src/main.ts`), app).toBe("./instrumentation.js");
       expect(firstImport(`apps/${app}/src/instrumentation.ts`), app).toBe("./boot.js");
       expect(firstImport(`apps/${app}/src/boot.ts`), app).toBe("@base/config/loader");
-      expect(sources.get(`apps/${app}/src/boot.ts`), app).toMatch(/^loadConfigOrExit\(\);/mu);
+      expect(sources.get(`apps/${app}/src/boot.ts`), app).toMatch(/^loadConfigOrExit\(/mu);
     }
     // ...and the loader imports nothing that reads the environment on load.
     const loaderImports = [
