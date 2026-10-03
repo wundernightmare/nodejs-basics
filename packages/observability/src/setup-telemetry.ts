@@ -40,10 +40,19 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic
 import Pyroscope from "@pyroscope/nodejs";
 import * as Sentry from "@sentry/nestjs";
 
+import { serviceIdentity } from "@base/logger";
+
 import { registerNodeMetrics } from "./node-metrics.js";
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
 
 export { TELEMETRY_HANDLE, type TelemetryHandle };
+
+/**
+ * The semantic-conventions version the resource and span attributes follow —
+ * the installed @opentelemetry/semantic-conventions (setup-telemetry.spec.ts
+ * keeps the two in step).
+ */
+export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.43.0";
 
 export interface SetupTelemetryOptions {
   serviceName?: string;
@@ -56,8 +65,8 @@ export interface SetupTelemetryOptions {
 }
 
 export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHandle {
-  const serviceName = options.serviceName ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
-  const serviceVersion = options.serviceVersion ?? process.env["npm_package_version"] ?? "0.0.1";
+  const serviceName = options.serviceName ?? serviceIdentity.name;
+  const serviceVersion = options.serviceVersion ?? serviceIdentity.version;
 
   // ─── Sentry ────────────────────────────────────────────────────────────────
   // Initialise before OTel so Sentry captures startup errors too.
@@ -67,17 +76,24 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   // A missing SENTRY_DSN makes Sentry a no-op — safe to call unconditionally.
   Sentry.init({
     dsn: process.env["SENTRY_DSN"],
-    environment: process.env["NODE_ENV"] ?? "development",
-    release: process.env["npm_package_version"],
+    environment: serviceIdentity.environment,
+    release: serviceVersion,
     skipOpenTelemetrySetup: true,
     tracesSampleRate: 0,
   });
 
   // ─── Resource ──────────────────────────────────────────────────────────────
-  const resource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: serviceName,
-    [ATTR_SERVICE_VERSION]: serviceVersion,
-  });
+  // The pod (hostname) tells instances apart; the schema URL pins the
+  // semantic-conventions version the attribute names follow.
+  const resource = resourceFromAttributes(
+    {
+      [ATTR_SERVICE_NAME]: serviceName,
+      [ATTR_SERVICE_VERSION]: serviceVersion,
+      "service.instance.id": hostname(),
+      "deployment.environment.name": serviceIdentity.environment,
+    },
+    { schemaUrl: SEMCONV_SCHEMA_URL },
+  );
 
   // ─── Metrics (Prometheus) ──────────────────────────────────────────────────
   // preventServerStart: AdminServerService serves /metrics, not the exporter.

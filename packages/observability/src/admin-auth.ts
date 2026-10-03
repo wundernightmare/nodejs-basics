@@ -33,6 +33,7 @@ export function requireBearer(token: string, logger: GuardLogger): BearerGuard {
     const path = (req.url ?? "/").split("?")[0] ?? "/";
     logger.warn(
       {
+        "event.action": "admin.auth.rejected",
         "http.request.method": req.method ?? "GET",
         "url.path": path,
         "client.address": req.socket?.remoteAddress ?? "unknown",

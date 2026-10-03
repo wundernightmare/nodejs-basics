@@ -21,7 +21,10 @@ OSV_SCANNER_FLAGS := env("OSV_SCANNER_FLAGS", "")
 # `--load`: with a buildx docker-container builder as the default, a plain
 # `docker build` leaves the result in the build cache only, and the scan /
 # sign / stack recipes would then pick up a stale local image.
-DOCKER_BUILD_ARGS := "--load --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY"
+# The image's identity: service.version in logs and traces, GET /version.
+GIT_DESCRIBE := `git describe --tags --always --dirty 2>/dev/null || echo dev`
+GIT_COMMIT := `git rev-parse HEAD 2>/dev/null || echo unknown`
+DOCKER_BUILD_ARGS := "--load --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY --build-arg SERVICE_VERSION=" + GIT_DESCRIBE + " --build-arg GIT_COMMIT=" + GIT_COMMIT
 
 # List available recipes
 default:

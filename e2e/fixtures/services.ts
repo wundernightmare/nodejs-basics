@@ -21,7 +21,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const STATE_FILE = path.join(ROOT, "e2e", ".e2e-state.json");
-const LOG_DIR = path.join(ROOT, "e2e", "test-results");
+/** Each spawned service writes its stdout and stderr to <name>.log here. */
+export const LOG_DIR = path.join(ROOT, "e2e", "test-results");
 
 export const SPAWN = process.env["E2E_SPAWN"] === "1";
 

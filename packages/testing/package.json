@@ -8,6 +8,11 @@
     "dist"
   ],
   "exports": {
+    "./log-envelope": {
+      "source": "./src/log-envelope.ts",
+      "types": "./src/log-envelope.ts",
+      "import": "./dist/log-envelope.js"
+    },
     ".": {
       "source": "./src/index.ts",
       "types": "./src/index.ts",

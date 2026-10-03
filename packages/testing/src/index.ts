@@ -19,6 +19,7 @@ export {
   type ResolvedOperation,
   type ResponseHeaders,
 } from "./contracts.js";
+export { logEnvelopeProblems } from "./log-envelope.js";
 export { captureLogs, type LogCapture } from "./logs.js";
 export { meta, severity, Severity, testCase, type Meta } from "./meta.js";
 export { metricValue } from "./metrics.js";

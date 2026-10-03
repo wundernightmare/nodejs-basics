@@ -183,6 +183,7 @@ describe("env registry", () => {
         "./env.registry.js",
         "node:fs",
         "node:fs",
+        "node:os",
         "node:path",
         "node:util",
         "yaml",

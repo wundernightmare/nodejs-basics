@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { withDebugLogging, withRequestId } from "@base/common";
 
+import { logEnvelopeProblems } from "@base/testing";
+
 import { LogLevel } from "./log-level.js";
-import { buildPinoOptions } from "./pino.config.js";
+import { buildPinoOptions, ECS_VERSION, ecsError } from "./pino.config.js";
 
 interface Line {
   "log.level": string;
@@ -104,5 +106,19 @@ describe("pino redact", () => {
       req: { url: "/x", headers: { authorization: "Bearer plaintext", cookie: "s=plaintext" } },
     });
     expect(out).not.toMatch(/plaintext/u);
+  });
+});
+
+describe("log envelope", () => {
+  it("every line carries the contracted envelope (docs/log-envelope.schema.json)", () => {
+    const { logger, lines } = sinkLogger(new LogLevel("info"));
+    logger.info({ "event.action": "admin.started" }, "plain");
+    logger.child({ "log.logger": "Child" }).error({ ...ecsError(new Error("boom")) }, "failed");
+    withRequestId("req-1", () => {
+      logger.warn("in a request");
+    });
+    expect(lines).toHaveLength(3);
+    expect(lines.map((line) => logEnvelopeProblems(line))).toEqual([[], [], []]);
+    expect((lines[0] as unknown as Record<string, unknown>)["ecs.version"]).toBe(ECS_VERSION);
   });
 });

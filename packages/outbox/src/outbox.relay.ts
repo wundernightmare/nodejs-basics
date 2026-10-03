@@ -192,6 +192,7 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
         this.logger.warn(
           {
             ...ecsError(worst.error),
+            "event.action": poison.length > 0 ? "outbox.rejected" : "outbox.deferred",
             "error.code": worst.error.kind,
             "outbox.failed": failed.length,
             "outbox.poison": poison.length,
