@@ -38,7 +38,7 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     name: "worker_tasks_processed_total",
     kind: "Counter",
     labels: [],
-    description: "Task jobs processed successfully by the BullMQ worker.",
+    description: "Task jobs processed successfully by the job worker.",
     source: "apps/worker",
   },
   {

@@ -572,7 +572,7 @@ const REGISTRY = [
     required: false,
     description:
       "Valkey/Redis connection URL. Unset: no Valkey — the api keeps Idempotency-Key results " +
-      "in Postgres; the worker does not start (@base/config integrations.ts).",
+      "in Postgres, the worker runs its jobs on pg-boss (@base/config integrations.ts).",
     usedIn: ["cache", "jobs", "idempotency"],
   },
 

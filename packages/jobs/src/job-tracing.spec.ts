@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { captureSpans, meta, testCase } from "@base/testing";
 
-import { addTraced, traceJob } from "./job-tracing.js";
+import { addTraced, traceJob, traceSend } from "./job-tracing.js";
 
 const spans = captureSpans();
 
@@ -74,5 +74,15 @@ describe("job tracing", () => {
     const process = spans.span("process task-events");
     expect(process.parentSpanContext).toBeUndefined();
     expect(process.status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it("a failed send ends its span with the error and rethrows", async () => {
+    await testCase("NB-1014", "an enqueue that fails is an error span, not a silent one");
+    await expect(
+      traceSend("pg-boss", "q", "id-1", () => Promise.reject(new Error("db down"))),
+    ).rejects.toThrow("db down");
+    const send = spans.span("send q");
+    expect(send.status).toMatchObject({ code: SpanStatusCode.ERROR, message: "db down" });
+    expect(send.attributes["messaging.system"]).toBe("pg-boss");
   });
 });

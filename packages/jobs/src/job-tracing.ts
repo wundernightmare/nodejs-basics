@@ -46,62 +46,58 @@ function carrierOf(job: Job): Record<string, string> {
   }
 }
 
-/** `queue.add` inside a PRODUCER span whose context rides along with the job. */
-export function addTraced(
-  queue: Queue,
-  name: string,
-  data: unknown,
-  opts: JobsOptions = {},
-): Promise<Job> {
+/** `send` inside a PRODUCER span; `fn` gets the carrier to store with the job. */
+export function traceSend<T>(
+  system: string,
+  queue: string,
+  id: string | undefined,
+  fn: (carrier: Record<string, string>) => Promise<T>,
+): Promise<T> {
   const attributes: Attributes = {
-    "messaging.system": "bullmq",
+    "messaging.system": system,
     "messaging.operation.type": "send",
     "messaging.operation.name": "send",
-    "messaging.destination.name": queue.name,
+    "messaging.destination.name": queue,
   };
-  if (opts.jobId !== undefined) attributes["messaging.message.id"] = opts.jobId;
+  if (id !== undefined) attributes["messaging.message.id"] = id;
   return trace
     .getTracer(TRACER)
-    .startActiveSpan(
-      `send ${queue.name}`,
-      { kind: SpanKind.PRODUCER, attributes },
-      async (span) => {
-        const carrier: Record<string, string> = {};
-        propagation.inject(context.active(), carrier);
-        try {
-          const job = await queue.add(name, data, {
-            ...opts,
-            telemetry: { ...opts.telemetry, metadata: JSON.stringify(carrier) },
-          });
-          endSpan(span);
-          return job;
-        } catch (err) {
-          endSpan(span, err);
-          throw err;
-        }
-      },
-    );
+    .startActiveSpan(`send ${queue}`, { kind: SpanKind.PRODUCER, attributes }, async (span) => {
+      const carrier: Record<string, string> = {};
+      propagation.inject(context.active(), carrier);
+      try {
+        const result = await fn(carrier);
+        endSpan(span);
+        return result;
+      } catch (err) {
+        endSpan(span, err);
+        throw err;
+      }
+    });
 }
 
-/**
- * Runs a job processor inside a CONSUMER span `process <queue>`, parented on
- * the context `addTraced` stored with the job (a new trace otherwise).
- */
-export function traceJob<T>(job: Job, fn: () => Promise<T>): Promise<T> {
-  const parent = propagation.extract(context.active(), carrierOf(job));
+/** `fn` inside a CONSUMER span parented on the context the producer stored with the job. */
+export function traceProcess<T>(
+  system: string,
+  queue: string,
+  id: string | undefined,
+  carrier: Record<string, string>,
+  extra: Attributes,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const parent = propagation.extract(context.active(), carrier);
   const attributes: Attributes = {
-    "messaging.system": "bullmq",
+    "messaging.system": system,
     "messaging.operation.type": "process",
     "messaging.operation.name": "process",
-    "messaging.destination.name": job.queueName,
-    "bullmq.job.name": job.name,
-    "bullmq.job.attempts_made": job.attemptsMade,
+    "messaging.destination.name": queue,
+    ...extra,
   };
-  if (job.id !== undefined) attributes["messaging.message.id"] = job.id;
+  if (id !== undefined) attributes["messaging.message.id"] = id;
   return trace
     .getTracer(TRACER)
     .startActiveSpan(
-      `process ${job.queueName}`,
+      `process ${queue}`,
       { kind: SpanKind.CONSUMER, attributes },
       parent,
       async (span) => {
@@ -115,4 +111,31 @@ export function traceJob<T>(job: Job, fn: () => Promise<T>): Promise<T> {
         }
       },
     );
+}
+
+/** `queue.add` inside a PRODUCER span whose context rides along with the job. */
+export function addTraced(
+  queue: Queue,
+  name: string,
+  data: unknown,
+  opts: JobsOptions = {},
+): Promise<Job> {
+  return traceSend("bullmq", queue.name, opts.jobId, (carrier) =>
+    queue.add(name, data, {
+      ...opts,
+      telemetry: { ...opts.telemetry, metadata: JSON.stringify(carrier) },
+    }),
+  );
+}
+
+/** Run a BullMQ job's work inside a CONSUMER span parented on its producer. */
+export function traceJob<T>(job: Job, fn: () => Promise<T>): Promise<T> {
+  return traceProcess(
+    "bullmq",
+    job.queueName,
+    job.id,
+    carrierOf(job),
+    { "bullmq.job.name": job.name, "bullmq.job.attempts_made": job.attemptsMade },
+    fn,
+  );
 }
