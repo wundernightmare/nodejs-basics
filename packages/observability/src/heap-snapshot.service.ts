@@ -134,7 +134,11 @@ export class HeapSnapshotService implements OnApplicationBootstrap, OnApplicatio
     // v8.writeHeapSnapshot is synchronous — pauses the event loop briefly.
     const writtenPath = v8.writeHeapSnapshot(localPath);
     this.logger.info(
-      { "file.path": writtenPath, "event.action": trigger },
+      {
+        "event.action": "heap_snapshot.written",
+        "event.reason": trigger,
+        "file.path": writtenPath,
+      },
       "Heap snapshot written",
     );
 

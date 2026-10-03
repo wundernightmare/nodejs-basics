@@ -30,6 +30,7 @@
  * provenance (GET /admin/config on the admin server, secrets redacted there).
  */
 import { existsSync, readFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 
 import { parse as parseYaml } from "yaml";
@@ -146,8 +147,18 @@ export function loadConfigOrExit(options: LoadOptions = {}): void {
       `${JSON.stringify({
         "@timestamp": new Date().toISOString(),
         "log.level": "fatal",
-        "service.name": process.env["OTEL_SERVICE_NAME"] ?? options.defaults?.["OTEL_SERVICE_NAME"],
         message: (err as Error).message,
+        "event.action": "config.invalid",
+        // The envelope every line carries (docs/log-envelope.schema.json) — as
+        // @base/logger writes it, which cannot be loaded yet.
+        "ecs.version": "8.11.0",
+        "service.name":
+          process.env["OTEL_SERVICE_NAME"] ?? options.defaults?.["OTEL_SERVICE_NAME"] ?? "app",
+        "service.version":
+          process.env["SERVICE_VERSION"] ?? process.env["npm_package_version"] ?? "dev",
+        "service.environment": process.env["NODE_ENV"] ?? "development",
+        "process.pid": process.pid,
+        "host.hostname": hostname(),
       })}\n`,
     );
     process.exit(78);

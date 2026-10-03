@@ -132,6 +132,12 @@ high-signal, easy-to-miss bits.
   unit and description — `metrics.registry.spec.ts` enforces it; labels of
   bounded cardinality only. `--metrics-reference` prints it, `docs/RUNBOOK.md`
   says what to do about the `watch` ones.
+- **Logs as a contract**: the envelope is `docs/log-envelope.schema.json`
+  (`logEnvelopeProblems()` from `@base/testing`; checked on the logger and on
+  the spawned apps' output in e2e). A line meant for machines gets an
+  `event.action` from `LOG_EVENTS` (`@base/logger/log-events`) —
+  `log-events.spec.ts` rejects an uncatalogued one. Never put a dynamic value
+  in `event.action`; use `event.reason`.
 - **No patching instrumentations**: in the Vite bundle every import is loaded
   before instrumentation.ts runs, so `@opentelemetry/instrumentation-pg` /
   `-nestjs-core` / `-aws-sdk` / `-ioredis`… silently do nothing (checked in

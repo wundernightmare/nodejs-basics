@@ -6,6 +6,7 @@ binary itself, so they always match the deployed version:
 ```sh
 node dist/main.js --config-reference    # every setting: env key, YAML path, type, default
 node dist/main.js --metrics-reference   # every metric: labels, meaning, when to worry
+node dist/main.js --log-events-reference # the log lines for alerts and audits (event.action)
 node dist/main.js --check-config        # validate this deployment's env + config.yaml (exit 0 / 78)
 ```
 
@@ -29,6 +30,9 @@ is in the same log line's `message`.
 it recovers, no restart needed. `degraded` is an optional one.
 
 ## Something is wrong — where to look
+
+Logs are one JSON object per line (envelope: `docs/log-envelope.schema.json`);
+`service.version` and `host.hostname` say which build and which pod.
 
 Find the request: every error response carries `errorId` and `request_id`;
 both are fields of the matching log line (`error.id`, `http.request.id`), and

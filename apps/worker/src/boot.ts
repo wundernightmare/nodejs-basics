@@ -16,6 +16,7 @@
  * (fs, yaml, the registry) — nothing that reads the environment itself.
  */
 import { bootConfig } from "@base/config/boot";
+import { logEventsReference } from "@base/logger/log-events";
 import { metricsReference } from "@base/observability/metrics-registry";
 
 bootConfig({
@@ -25,6 +26,10 @@ bootConfig({
     "metrics-reference": {
       help: "every metric: name, instrument, unit, labels, meaning, when to worry",
       text: metricsReference,
+    },
+    "log-events-reference": {
+      help: "the log lines meant for machines (event.action): meaning and fields",
+      text: logEventsReference,
     },
   },
 });

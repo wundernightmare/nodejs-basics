@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wundernightmare/nodejs-basics/blob/master/docs/log-envelope.schema.json",
+  "title": "Log line envelope",
+  "description": "The fields every log line of the api and the worker carries (one JSON object per line, ECS field names) — what a log pipeline parses and an incident search relies on. Lines may carry more fields; the ones meant for machines are listed by `--log-events-reference` (event.action). Changing or removing a field here is a breaking change: bump ecs.version's companion, announce it, keep the old field for a release.",
+  "type": "object",
+  "required": [
+    "@timestamp",
+    "log.level",
+    "message",
+    "ecs.version",
+    "service.name",
+    "service.version",
+    "service.environment",
+    "process.pid",
+    "host.hostname"
+  ],
+  "properties": {
+    "@timestamp": { "type": "string", "format": "date-time" },
+    "log.level": { "enum": ["trace", "debug", "info", "warn", "error", "fatal"] },
+    "message": { "type": "string" },
+    "ecs.version": { "const": "8.11.0" },
+    "service.name": { "type": "string", "minLength": 1 },
+    "service.version": { "type": "string", "minLength": 1 },
+    "service.environment": { "type": "string", "minLength": 1 },
+    "process.pid": { "type": "integer" },
+    "host.hostname": { "type": "string", "minLength": 1, "description": "The pod name in Kubernetes." },
+    "log.logger": { "type": "string" },
+    "event.action": { "type": "string", "description": "One of --log-events-reference." },
+    "trace.id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "span.id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "transaction.id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "http.request.id": { "type": "string", "minLength": 1 },
+    "error.type": { "type": "string" },
+    "error.message": { "type": "string" },
+    "error.stack_trace": { "type": "string" },
+    "error.id": { "type": "string" }
+  }
+}

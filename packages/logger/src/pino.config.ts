@@ -33,11 +33,22 @@ import {
   parseLogLevelStrict,
 } from "./log-level.js";
 
-// ─── Static service attributes (set once) ────────────────────────────────────
+// ─── Who writes the line ─────────────────────────────────────────────────────
 
-const serviceName = process.env["OTEL_SERVICE_NAME"] ?? "app";
-const serviceVersion = process.env["npm_package_version"] ?? "0.0.1";
-const serviceEnvironment = process.env["NODE_ENV"] ?? "development";
+/** The ECS version the log lines follow — `ecs.version` in each one. */
+export const ECS_VERSION = "8.11.0";
+
+/**
+ * The service, the same in logs, traces, metrics and /version. The version is
+ * the build's (SERVICE_VERSION, baked into the image), npm's under `pnpm
+ * run`, else "dev".
+ */
+export const serviceIdentity = {
+  name: process.env["OTEL_SERVICE_NAME"] ?? "app",
+  version: process.env["SERVICE_VERSION"] ?? process.env["npm_package_version"] ?? "dev",
+  environment: process.env["NODE_ENV"] ?? "development",
+} as const;
+const serviceEnvironment = serviceIdentity.environment;
 
 // ─── ECS timestamp ───────────────────────────────────────────────────────────
 //
@@ -93,8 +104,9 @@ const formatters: pino.LoggerOptions["formatters"] = {
   bindings: (bindings: pino.Bindings) => ({
     "process.pid": bindings["pid"] as number,
     "host.hostname": bindings["hostname"] as string,
-    "service.name": serviceName,
-    "service.version": serviceVersion,
+    "ecs.version": ECS_VERSION,
+    "service.name": serviceIdentity.name,
+    "service.version": serviceIdentity.version,
     "service.environment": serviceEnvironment,
   }),
 };
@@ -139,7 +151,8 @@ const prettyTransport =
           messageKey: "message",
           timestampKey: "@timestamp",
           levelKey: "log.level",
-          ignore: "process.pid,host.hostname,service.name,service.version,service.environment",
+          ignore:
+            "ecs.version,process.pid,host.hostname,service.name,service.version,service.environment",
         },
       })
     : undefined;
@@ -171,7 +184,7 @@ export const logLevel = new LogLevel(baseLevelFromEnv(), {
     if (reason !== "expired") return;
     withDebugLogging(() => {
       pinoLogger.warn(
-        { "log.level.from": previous, "log.level.to": level, "event.reason": "ttl expired" },
+        { "event.action": "log_level.expired", "log.level.from": previous, "log.level.to": level },
         "Log level reverted to base",
       );
     });
