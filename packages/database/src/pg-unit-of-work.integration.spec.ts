@@ -112,20 +112,24 @@ describe.skipIf(infra.skip)("PgUnitOfWork (integration)", () => {
 
   it("code that outlives its transaction cannot reach the released client", async () => {
     await testCase("NB-954", "no query on a client back in the pool");
+    // A continuation registered inside the transaction, released only after
+    // runInTransaction returned — no timer racing the COMMIT.
+    let release!: () => void;
+    const after = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     let late: Promise<unknown> | undefined;
     await uow.runInTransaction(async () => {
       await insert("x");
-      // scheduled inside, runs after COMMIT
-      late = new Promise((resolve) => {
-        setTimeout(() => {
-          try {
-            resolve(currentTransaction());
-          } catch (err) {
-            resolve(err);
-          }
-        }, 20);
+      late = after.then(() => {
+        try {
+          return currentTransaction();
+        } catch (err) {
+          return err;
+        }
       });
     });
+    release();
     expect(await late).toBeInstanceOf(TransactionEndedError);
   });
 });

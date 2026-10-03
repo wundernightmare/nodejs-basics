@@ -17,6 +17,9 @@ const KEYS = [
   "KAFKA_EXTRA_PROPERTIES",
   "LOG_LEVEL",
   "OUTBOX_BATCH_SIZE",
+  "HEAP_OOM_POLL_INTERVAL_MS",
+  "LOG_LEVEL_MAX_TTL",
+  "OTEL_SERVICE_NAME",
   "ALLOWED_ORIGINS",
 ] as const;
 
@@ -156,6 +159,34 @@ describe("yamlConfigLoader + configSnapshot", () => {
       exit.mockRestore();
       stderr.mockRestore();
     }
+  });
+
+  it("an empty value is no value: it neither shadows config.yaml nor the default", async () => {
+    await testCase("NB-981", "KEY= (compose / helm for an unset knob) behaves as unset");
+    file('app:\n  port: 4000\n  log_level_max_ttl: ""\n');
+    process.env["PORT"] = ""; // would shadow the file
+    process.env["HEAP_OOM_POLL_INTERVAL_MS"] = ""; // would reach parseInt("") → NaN
+    const { yamlConfigLoader, configSnapshot } = await loader();
+    yamlConfigLoader();
+    const snap = configSnapshot();
+    expect([snap.config["PORT"], snap.sources["PORT"]]).toEqual(["4000", "yaml"]);
+    expect([
+      snap.config["HEAP_OOM_POLL_INTERVAL_MS"],
+      snap.sources["HEAP_OOM_POLL_INTERVAL_MS"],
+    ]).toEqual(["10000", "default"]);
+    expect([snap.config["LOG_LEVEL_MAX_TTL"], snap.sources["LOG_LEVEL_MAX_TTL"]]).toEqual([
+      "24h",
+      "default",
+    ]);
+  });
+
+  it("an app's defaults go over the registry's, an empty value included", async () => {
+    await testCase("NB-982", "each app names itself unless OTEL_SERVICE_NAME is set");
+    process.env["APP_CONFIG_FILE"] = join(dir, "absent.yaml");
+    process.env["OTEL_SERVICE_NAME"] = "";
+    const { yamlConfigLoader } = await loader();
+    yamlConfigLoader({ defaults: { OTEL_SERVICE_NAME: "my-app" } });
+    expect(process.env["OTEL_SERVICE_NAME"]).toBe("my-app");
   });
 
   it("joins a YAML list into the comma-separated value the code splits", async () => {
