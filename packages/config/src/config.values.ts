@@ -11,6 +11,8 @@
  *
  *   linger: readInt(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
  */
+import { readFileSync } from "node:fs";
+
 import { ENV_REGISTRY, type EnvEntry, type EnvType } from "./env.registry.js";
 
 /** What a reader needs: ConfigService, or `{ get: (k) => process.env[k] }`. */
@@ -127,4 +129,23 @@ export function readBool(config: ConfigGetter, key: string): boolean | undefined
 /** A JSON object (the escape-hatch `*_EXTRA_PROPERTIES` keys). */
 export function readJson(config: ConfigGetter, key: string): Record<string, unknown> | undefined {
   return read(config, key, "json") as Record<string, unknown> | undefined;
+}
+
+/**
+ * The content of the file a `*_FILE` key points at (a mounted Secret), read
+ * once, trailing newline trimmed; undefined when the key is unset. A file
+ * that cannot be read or is empty throws — a misconfigured secret must not
+ * start the service with no password. Rotation is a rollout restart.
+ */
+export function readSecretFile(config: ConfigGetter, key: string): string | undefined {
+  const path = readString(config, key);
+  if (path === undefined) return undefined;
+  let content = "";
+  try {
+    content = readFileSync(path, "utf8").replace(/\r?\n+$/u, "");
+  } catch {
+    content = "";
+  }
+  if (content === "") throw new ConfigValueError(key, path, "a readable, non-empty file");
+  return content;
 }

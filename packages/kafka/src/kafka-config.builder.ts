@@ -1,11 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 
 import type { ConfigService } from "@nestjs/config";
 
-import { readBool, readInt, readJson, readString } from "@base/config";
-import { pinoLogger } from "@base/logger";
-
-const kafkaLogger = pinoLogger.child({ "log.logger": "KafkaConfigBuilder" });
+import { readBool, readInt, readJson, readSecretFile, readString } from "@base/config";
 
 /**
  * Centralised Kafka client configuration.
@@ -97,24 +94,9 @@ export function buildKafkaClientConfig(
   const saslUser = readString(config, "KAFKA_SASL_USERNAME");
   if (saslUser) out["sasl.username"] = saslUser;
 
-  // KAFKA_SASL_PASSWORD_FILE wins when set — same precedence as DATABASE_*.
-  // librdkafka does NOT support credential rotation at runtime; the file
-  // is read once at boot and the consumer/producer holds the value for
-  // its lifetime. Operators pair this with Stakater Reloader (or a
-  // manual `kubectl rollout restart`) to roll the secret on rotation.
-  const saslPassFile = readString(config, "KAFKA_SASL_PASSWORD_FILE");
-  let saslPass: string | undefined;
-  if (saslPassFile) {
-    try {
-      saslPass = readFileSync(saslPassFile, "utf8").replace(/\r?\n+$/, "");
-    } catch (err) {
-      kafkaLogger.warn(
-        { err, "kafka.sasl_password_file": saslPassFile },
-        "KAFKA_SASL_PASSWORD_FILE could not be read — falling back to KAFKA_SASL_PASSWORD",
-      );
-    }
-  }
-  if (!saslPass) saslPass = readString(config, "KAFKA_SASL_PASSWORD");
+  // The mounted file wins; read once — a new password is a rollout restart.
+  const saslPass =
+    readSecretFile(config, "KAFKA_SASL_PASSWORD_FILE") ?? readString(config, "KAFKA_SASL_PASSWORD");
   if (saslPass) out["sasl.password"] = saslPass;
 
   const caLocation = resolveCaLocation(config);

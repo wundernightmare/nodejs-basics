@@ -126,7 +126,7 @@ describe("kafka config builders", () => {
     );
   });
 
-  it("the SASL password file wins over the inline password, trimmed; unreadable → inline", async () => {
+  it("the SASL password file wins over the inline password, trimmed; unreadable → error", async () => {
     await testCase("NB-792", "KAFKA_SASL_PASSWORD_FILE");
     const dir = mkdtempSync(join(tmpdir(), "nb-kafka-sasl-"));
     try {
@@ -137,7 +137,11 @@ describe("kafka config builders", () => {
           stub({ KAFKA_SASL_PASSWORD_FILE: path, KAFKA_SASL_PASSWORD: "inline" }),
         )["sasl.password"];
       expect(read(file)).toBe("from-file");
-      expect(read(join(dir, "missing"))).toBe("inline");
+      expect(() => read(join(dir, "missing"))).toThrow(
+        "KAFKA_SASL_PASSWORD_FILE=" +
+          JSON.stringify(join(dir, "missing")) +
+          ": expected a readable, non-empty file",
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

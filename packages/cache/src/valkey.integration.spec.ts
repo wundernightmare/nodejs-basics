@@ -10,8 +10,7 @@ import { buildValkeyConfig, toBullMqOptions, toClientOptions } from "./valkey-co
  * The client the provider builds, against a real Valkey (VALKEY_URL from
  * `just deps` or the CI service): the option bag connects, round-trips a
  * value with a TTL, and the BullMQ variant survives a blocking command
- * longer than the command timeout — the regression behind
- * `toBullMqOptions` dropping `commandTimeout`.
+ * longer than the command timeout (`toBullMqOptions` drops `commandTimeout`).
  */
 const infra = integration("valkey");
 

@@ -236,10 +236,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "database.password_file",
     required: false,
     description:
-      "Path to a Secret-mounted file holding the database password. When set it overrides " +
-      "the password in DATABASE_URL and is polled for rotation (SecretFileWatcher), so new " +
-      "connections pick up a rotated secret without a restart.",
-    usedIn: ["database", "config/secret-file-watcher.ts"],
+      "Path to a Secret-mounted file holding the database password; overrides the password " +
+      "in DATABASE_URL. Read once at startup (unreadable or empty → startup error).",
+    usedIn: ["database"],
   },
 
   {
@@ -817,10 +816,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "kafka.sasl.password_file",
     required: false,
     description:
-      "Path to a Secret-mounted file holding the SASL password (alternative to " +
-      "KAFKA_SASL_PASSWORD). librdkafka cannot rotate credentials at runtime; the " +
-      "SecretFileWatcher only detects the rotation so operators can roll the pods.",
-    usedIn: ["kafka", "config/secret-file-watcher.ts"],
+      "Path to a Secret-mounted file holding the SASL password; wins over " +
+      "KAFKA_SASL_PASSWORD. Read once at startup (unreadable or empty → startup error).",
+    usedIn: ["kafka"],
   },
 
   {
