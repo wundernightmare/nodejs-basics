@@ -113,9 +113,16 @@ high-signal, easy-to-miss bits.
 
 ## Conventions & gotchas
 
-- **Telemetry first**: `apps/api/src/main.ts` imports `./instrumentation.js`
-  before anything else, and that file's first import `./service-name.js` sets
-  the app's `OTEL_SERVICE_NAME` default. Same in `apps/worker`.
+- **Config + telemetry first**: `apps/api/src/main.ts` imports
+  `./instrumentation.js` before anything else, and that file's first import
+  `./boot.js` sets the app's `OTEL_SERVICE_NAME` default and runs
+  `yamlConfigLoader()` (from `@base/config/loader`, which imports nothing that
+  reads env) — so modules that read `process.env` on load see `config.yaml`.
+  Same in `apps/worker`. `env.registry.spec.ts` pins the order.
+- **Config values**: give a new registry entry its `type` (+ `min`/`max`) and
+  read it with `readInt/readNumber/readBool/readJson/readString(config, KEY) ??
+  default` from `@base/config` — never `Number(config.get(...))` with a
+  fallback on garbage. Unknown YAML keys and bad values fail the boot.
 - **No patching instrumentations**: in the Vite bundle every import is loaded
   before instrumentation.ts runs, so `@opentelemetry/instrumentation-pg` /
   `-nestjs-core` / `-aws-sdk` / `-ioredis`… silently do nothing (checked in

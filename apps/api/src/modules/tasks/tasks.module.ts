@@ -11,6 +11,8 @@
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
+import { readInt } from "@base/config";
+
 import { TaskQueryService } from "./application/task.query.service.js";
 import { TaskUseCase } from "./application/task.use-case.js";
 import { TASK_REPOSITORY } from "./domain/task.repository.port.js";
@@ -33,11 +35,7 @@ import { TASK_LIST_PAGE_SIZE } from "./tasks.tokens.js";
     {
       provide: TASK_LIST_PAGE_SIZE,
       inject: [ConfigService],
-      useFactory: (config: ConfigService): number => {
-        const raw = config.get<string>("TASK_LIST_PAGE_SIZE");
-        const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : 50;
-      },
+      useFactory: (config: ConfigService): number => readInt(config, "TASK_LIST_PAGE_SIZE") ?? 50,
     },
   ],
 })

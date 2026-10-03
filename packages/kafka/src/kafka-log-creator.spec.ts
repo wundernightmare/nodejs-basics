@@ -95,4 +95,16 @@ describe("kafkaLogger", () => {
     logger.error("b", { fac: "FAIL", name: "p1" });
     expect(lines).toHaveLength(4);
   });
+
+  it("remembers a bounded number of lines: the oldest is forgotten, so it is written again", async () => {
+    await testCase("NB-972", "folding state cannot grow without bound");
+    const { logger, lines } = setup();
+    const ns = logger.namespace("producer");
+    for (let i = 0; i <= 1_000; i++) ns.debug("broker down", { name: `client-${i}` });
+    expect(lines).toHaveLength(1_001);
+    ns.debug("broker down", { name: "client-0" }); // evicted by the 1001st distinct line: written
+    expect(lines).toHaveLength(1_002);
+    ns.debug("broker down", { name: "client-1000" }); // still remembered: folded
+    expect(lines).toHaveLength(1_002);
+  });
 });
