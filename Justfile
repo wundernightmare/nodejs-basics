@@ -50,7 +50,7 @@ check:
 
 # Clean all build artefacts
 clean:
-    pnpm clean
+    pnpm clean:build
 
 # ── Infrastructure ────────────────────────────────────────────────────────────
 
