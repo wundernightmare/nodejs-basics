@@ -138,4 +138,22 @@ describe("yamlConfigLoader + configSnapshot", () => {
     expect(() => yamlConfigLoader()).not.toThrow();
     expect(configSnapshot().sources["DATABASE_URL"]).toBe("yaml");
   });
+
+  it("an entry point exits 78 with one ECS line on a bad configuration", async () => {
+    await testCase("NB-971", "boot.ts: a config error is a clean, machine-readable exit");
+    file("databse:\n  url: x\n");
+    const { loadConfigOrExit } = await loader();
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      loadConfigOrExit();
+      expect(exit).toHaveBeenCalledWith(78);
+      const line = JSON.parse(String(stderr.mock.calls[0]?.[0])) as Record<string, string>;
+      expect(line["log.level"]).toBe("fatal");
+      expect(line["message"]).toContain("unknown key databse.url — did you mean database.url?");
+    } finally {
+      exit.mockRestore();
+      stderr.mockRestore();
+    }
+  });
 });

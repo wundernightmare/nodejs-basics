@@ -113,6 +113,27 @@ export function yamlConfigLoader(): Record<string, unknown> {
   return loaded;
 }
 
+/**
+ * yamlConfigLoader() for a process entry point: a bad configuration ends the
+ * process with one ECS line on stderr (no logger yet — it is configured by
+ * what failed) and exit code 78 (EX_CONFIG, sysexits.h).
+ */
+export function loadConfigOrExit(): void {
+  try {
+    yamlConfigLoader();
+  } catch (err) {
+    process.stderr.write(
+      `${JSON.stringify({
+        "@timestamp": new Date().toISOString(),
+        "log.level": "fatal",
+        "service.name": process.env["OTEL_SERVICE_NAME"],
+        message: (err as Error).message,
+      })}\n`,
+    );
+    process.exit(78);
+  }
+}
+
 function load(): Record<string, unknown> {
   const configPath = resolve(process.env["APP_CONFIG_FILE"] ?? "config.yaml");
   recordEnvSources();
