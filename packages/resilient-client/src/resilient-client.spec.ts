@@ -393,6 +393,23 @@ describe("ResilientClient", () => {
     expect(client.breakerState).toBe("closed");
   });
 
+  it("reports halfOpen once resetTimeout elapses after the circuit opened", async () => {
+    pool.intercept({ path: "/api", method: "GET" }).reply(400, "err");
+    await expect(client.request({ path: "/api", method: "GET" })).rejects.toBeInstanceOf(
+      OutboundError,
+    );
+    await vi.waitFor(() => {
+      expect(client.breakerState).toBe("open");
+    });
+    // resetTimeout: 100 in makeClient — opossum then admits a probe
+    await vi.waitFor(
+      () => {
+        expect(client.breakerState).toBe("halfOpen");
+      },
+      { timeout: 2_000 },
+    );
+  });
+
   // ── adaptiveLimit getter ──────────────────────────────────────────────────
 
   it("returns undefined when adaptive concurrency is disabled", () => {
