@@ -8,6 +8,11 @@
     "dist"
   ],
   "exports": {
+    "./log-events": {
+      "source": "./src/log-events.ts",
+      "types": "./src/log-events.ts",
+      "import": "./dist/log-events.js"
+    },
     ".": {
       "source": "./src/index.ts",
       "types": "./src/index.ts",

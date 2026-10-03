@@ -49,6 +49,7 @@ import {
   parseLogLevelStrict,
   redact,
   REQUEST_ID_HEADER,
+  serviceIdentity,
   withDebugLogging,
   withRequestId,
 } from "@base/logger";
@@ -136,7 +137,11 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
           ([path, methods]) => `${Object.keys(methods).join("|")} ${path}`,
         );
         this.logger.info(
-          { "server.port": this.port, "admin.auth": this.authMode },
+          {
+            "event.action": "admin.started",
+            "server.port": this.port,
+            "admin.auth": this.authMode,
+          },
           `Admin server listening — auth=${this.authMode} — ${routes.join(" · ")}`,
         );
         resolve();
@@ -264,13 +269,13 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
 
   private version(): Record<string, unknown> {
     return {
-      service: process.env["OTEL_SERVICE_NAME"] ?? "app",
-      version: process.env["npm_package_version"] ?? "unknown",
+      service: serviceIdentity.name,
+      version: serviceIdentity.version,
       revision: process.env["GIT_COMMIT"] ?? "unknown",
       node: process.version,
       started_at: STARTED_AT.toISOString(),
       uptime_seconds: Math.floor(process.uptime()),
-      env: process.env["NODE_ENV"] ?? "development",
+      env: serviceIdentity.environment,
     };
   }
 
@@ -311,6 +316,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     withDebugLogging(() => {
       this.logger.warn(
         {
+          "event.action": "log_level.changed",
           "log.level.from": previous,
           "log.level.to": state.level,
           "log.level.ttl_ms": ttlMs,
@@ -328,7 +334,12 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     const state = logLevel.snapshot();
     withDebugLogging(() => {
       this.logger.warn(
-        { "log.level.from": previous, "log.level.to": state.level, "client.address": client },
+        {
+          "event.action": "log_level.reset",
+          "log.level.from": previous,
+          "log.level.to": state.level,
+          "client.address": client,
+        },
         "Log level reset",
       );
     });

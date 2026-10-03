@@ -53,6 +53,13 @@ WORKDIR /repo/apps/worker
 COPY --from=builder --chown=nonroot:nonroot /repo /repo
 
 ENV NODE_ENV=production
+# The build's identity: service.version in every log line and trace, and
+# GET /version. CI passes them (--build-arg); a local build is "dev".
+ARG SERVICE_VERSION=dev
+ARG GIT_COMMIT=unknown
+ENV SERVICE_VERSION=$SERVICE_VERSION GIT_COMMIT=$GIT_COMMIT
+LABEL org.opencontainers.image.version=$SERVICE_VERSION \
+      org.opencontainers.image.revision=$GIT_COMMIT
 # Observability admin server (metrics/livez/readyz)
 EXPOSE 9090
 

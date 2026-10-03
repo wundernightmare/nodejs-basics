@@ -457,9 +457,15 @@ importers:
       '@base/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
+      '@base/logger':
+        specifier: workspace:*
+        version: link:../packages/logger
       '@base/observability':
         specifier: workspace:*
         version: link:../packages/observability
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../packages/testing
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0

@@ -13,7 +13,14 @@ export {
   parseLogLevelStrict,
 } from "./log-level.js";
 export { LoggerModule } from "./logger.module.js";
-export { buildPinoOptions, ecsError, logLevel, pinoLogger } from "./pino.config.js";
+export {
+  buildPinoOptions,
+  ECS_VERSION,
+  ecsError,
+  logLevel,
+  pinoLogger,
+  serviceIdentity,
+} from "./pino.config.js";
 export { isSecretKey, REDACTED, redact, redactUrl } from "./redact.js";
 
 // Request-context switches the logger honours, re-exported so packages that
@@ -30,3 +37,4 @@ export {
   withDebugLogging,
   withRequestId,
 } from "@base/common";
+export { LOG_EVENTS, type LogEvent, logEventsReference } from "./log-events.js";

@@ -401,6 +401,27 @@ this.logger.info({ "task.id": task.id }, "Task archived");
 `http.request.id`, `trace.id`, `span.id` are auto-injected from ALS / the
 active span by the pino mixin in `@base/logger`. Don't pass them explicitly.
 
+What is a contract and what is not:
+
+- **The envelope** — `@timestamp`, `log.level`, `message`, `ecs.version`,
+  `service.name` / `.version` / `.environment`, `process.pid`,
+  `host.hostname` (the pod), and when present `trace.id`, `http.request.id`,
+  `error.*` — is in [`docs/log-envelope.schema.json`](docs/log-envelope.schema.json).
+  A log pipeline parses it and an incident search relies on it; a unit test
+  checks the logger's lines against it, and the e2e suite (spawn mode) every
+  line the running api and worker write.
+- **Events for machines** — the few lines a log-based alert, SIEM rule or
+  audit query matches on — carry `event.action`, catalogued in
+  `@base/logger/log-events` with their fields (`--log-events-reference`);
+  `log-events.spec.ts` keeps the catalog and the code in step.
+- **Everything else** is for people: the message and extra fields change
+  freely.
+
+A field of the envelope or an event is added freely; renaming or removing one
+takes a release with both. `service.version` is the build's (`SERVICE_VERSION`,
+baked into the image like `GIT_COMMIT`); traces carry the same identity plus
+`service.instance.id` and the semantic-conventions schema URL.
+
 ## Patterns NOT included (build per project)
 
 - **Auth (JWT, OAuth, MFA, PATs)** — strongly project-specific.

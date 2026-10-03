@@ -211,12 +211,22 @@ const REGISTRY = [
   },
 
   {
+    key: "SERVICE_VERSION",
+    required: false,
+    description:
+      "The build's version — service.version in every log line, trace and metric target, " +
+      "and GET /version. Baked into the image (--build-arg: the release tag, else the " +
+      'commit); npm\'s package version under `pnpm run`, else "dev".',
+    usedIn: ["logger"],
+  },
+
+  {
     key: "GIT_COMMIT",
     yaml: "app.git_commit",
     required: false,
     description:
       "Build revision reported by GET /version (and /admin/info). Baked into the image " +
-      'at build time; "unknown" when unset.',
+      '(--build-arg); "unknown" when unset.',
     usedIn: ["observability"],
   },
 

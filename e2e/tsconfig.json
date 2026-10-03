@@ -16,6 +16,12 @@
       ],
       "@base/observability/metrics-registry": [
         "../packages/observability/src/metrics.registry.ts"
+      ],
+      "@base/logger/log-events": [
+        "../packages/logger/src/log-events.ts"
+      ],
+      "@base/testing/log-envelope": [
+        "../packages/testing/src/log-envelope.ts"
       ]
     }
   },
