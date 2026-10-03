@@ -248,7 +248,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     min: 1,
     required: false,
     default: "10",
-    description: "Maximum pg pool size (this default wins over the builder's own fallback of 20).",
+    description: "Maximum pg pool size.",
     usedIn: ["database"],
   },
 
