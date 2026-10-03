@@ -8,9 +8,9 @@ import { AdminServerService } from "@base/observability";
 import { integration, meta, testCase } from "@base/testing";
 
 /**
- * The api with DISABLED_INTEGRATIONS=valkey,kafka: Postgres is all it needs.
- * Valkey and Kafka point at a port nothing listens on — the app must not
- * notice, because it never connects to either.
+ * The api with DATABASE_URL alone: no VALKEY_URL, no KAFKA_BROKERS (unset
+ * here even when `just test-integration` passes them) — Postgres is all it
+ * needs.
  */
 const infra = integration("postgres");
 
@@ -27,9 +27,11 @@ describe.skipIf(infra.skip)("apps/api on Postgres alone (integration)", () => {
   const pool = new Pool({ connectionString: infra.url("postgres") });
 
   beforeAll(async () => {
-    process.env["DISABLED_INTEGRATIONS"] = "valkey,kafka";
-    process.env["VALKEY_URL"] = "redis://127.0.0.1:1";
-    process.env["KAFKA_BROKERS"] = "127.0.0.1:1";
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith("VALKEY_") || key.startsWith("KAFKA_"))
+        Reflect.deleteProperty(process.env, key);
+    }
+    process.env["APP_CONFIG_FILE"] = "absent.yaml";
     process.env["ADMIN_PORT"] = "0";
     process.env["LOG_LEVEL"] ??= "warn";
     process.env["NODE_ENV"] ??= "test";

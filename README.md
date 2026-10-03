@@ -393,31 +393,30 @@ concurrently.
 
 ### Optional integrations
 
-Postgres is the api's core; Valkey and Kafka can be switched off, so the api
-runs with a database alone:
+Postgres is the api's core. Valkey and Kafka are on when their address is
+set (`VALKEY_URL`, `KAFKA_BROKERS`), so the api runs with `DATABASE_URL`
+alone. To get that locally, drop the `cache:` and `kafka:` blocks from
+`apps/api/config.yaml`.
 
-```sh
-DISABLED_INTEGRATIONS=valkey,kafka just dev
-```
-
-| Off | What runs instead |
+| Unset | What runs instead |
 |---|---|
-| `valkey` | `Idempotency-Key` results in the `idempotency_keys` table (migrations/0004) |
-| `kafka` | no relay: events wait in the `outbox` table for a process that has one |
+| `VALKEY_URL` | `Idempotency-Key` results in the `idempotency_keys` table (migrations/0004) |
+| `KAFKA_BROKERS` | no relay: events wait in the `outbox` table for a process that has one |
 
-The rules, for adding a module of your own:
+The rules, for adding a module of your own (`@base/config` integrations.ts):
 
+- **The address is the switch.** There is no `*_ENABLED` flag that could
+  disagree with it.
 - **Decided once, at startup, in one place.** `app.module.ts` imports a
   module only when its integration is on (`integrationEnabled()`), and binds
-  the port to the real adapter or the substitute. A disabled integration is
-  never connected to and has no readiness check. Nothing is registered only
-  to throw when called, and no service asks "is X configured?".
-- **On by default.** Production never runs degraded because a variable was
-  forgotten: it fails to start instead. Switching an integration off is an
-  explicit list.
-- **Each app declares what it can do without** (`integrations` in its
-  `boot.ts`). The worker is Kafka → BullMQ and declares nothing, so
-  `DISABLED_INTEGRATIONS=kafka` stops its start with exit 78.
+  the port to the real adapter or the substitute. An integration that is off
+  is never connected to and has no readiness check. Nothing is registered
+  only to throw when called.
+- **Never half-configured.** Another variable of the group set without the
+  address fails the start with exit 78, e.g. `VALKEY_PASSWORD` without
+  `VALKEY_URL` (a typo, a Secret without its ConfigMap). So does an
+  integration the app cannot do without: the worker declares
+  `requires: ["kafka", "valkey"]` in `boot.ts`.
 - **Visible.** Each process logs `integrations.resolved` at startup and
   exports `app_integration_enabled{integration}`; alert on a 0 in production.
 - **A feature that cannot be substituted** (a payment provider) is a module

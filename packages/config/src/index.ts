@@ -19,8 +19,8 @@ export {
 } from "./config.values.js";
 export { ENV_REGISTRY, type EnvEntry, type EnvKey, type EnvType } from "./env.registry.js";
 export {
-  disabledIntegrations,
   type Integration,
+  INTEGRATION_NAMES,
   integrationEnabled,
   INTEGRATIONS,
 } from "./integrations.js";

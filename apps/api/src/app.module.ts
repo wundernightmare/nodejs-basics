@@ -18,9 +18,9 @@ import { HealthModule } from "./modules/health/health.module.js";
 import { TasksModule } from "./modules/tasks/tasks.module.js";
 import { UnitOfWorkModule } from "./unit-of-work.module.js";
 
-// Postgres is the core; Valkey and Kafka can be switched off
-// (DISABLED_INTEGRATIONS, boot.ts): a disabled one is not imported at all,
-// and what needs it runs on a substitute — see README "Optional integrations".
+// Postgres is the core; Valkey and Kafka are on when VALKEY_URL / KAFKA_BROKERS
+// are set. One that is off is not imported at all, and what needs it runs on
+// a substitute — see README "Optional integrations".
 const valkey = integrationEnabled("valkey");
 const kafka = integrationEnabled("kafka");
 

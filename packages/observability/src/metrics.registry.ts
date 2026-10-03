@@ -46,7 +46,7 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     kind: "ObservableGauge",
     labels: ["integration"],
     description:
-      "1 when the integration is on in this process, 0 when DISABLED_INTEGRATIONS switched it off.",
+      "1 when the integration is on in this process, 0 when its connection variable is unset.",
     watch: "0 in production: a process runs without it (kafka: events wait in the outbox table).",
     source: "packages/observability",
   },

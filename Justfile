@@ -100,7 +100,10 @@ dev:
 
 # Start the worker in watch mode
 dev-worker:
-    cd apps/worker && pnpm start:dev
+    cd apps/worker && \
+    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
+    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
+    pnpm start:dev
 
 # Rebuild an app's bundle on every change without running it (APP is api|worker)
 build-watch APP="api":

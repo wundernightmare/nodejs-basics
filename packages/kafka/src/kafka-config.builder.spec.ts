@@ -16,7 +16,8 @@ import {
 // Minimal ConfigService double: the real one reads process.env first, so an
 // ambient KAFKA_BROKERS (`just deps`) would leak into these cases.
 function stub(env: Record<string, string | undefined>): ConfigService {
-  return { get: (key: string) => env[key] } as unknown as ConfigService;
+  const all: Record<string, string | undefined> = { KAFKA_BROKERS: "localhost:9092", ...env };
+  return { get: (key: string) => all[key] } as unknown as ConfigService;
 }
 
 afterEach(() => {
@@ -29,6 +30,9 @@ describe("kafka config builders", () => {
   it("defaults: local plaintext broker, durable lz4 producer, bounded queues, manual commit", async () => {
     await testCase("NB-789", "kafka defaults");
     vi.stubEnv("OTEL_SERVICE_NAME", "svc");
+    expect(() => buildKafkaClientConfig(stub({ KAFKA_BROKERS: undefined }))).toThrow(
+      "KAFKA_BROKERS is not set",
+    );
     const env = stub({});
     expect(buildKafkaClientConfig(env)).toEqual({
       "metadata.broker.list": "localhost:9092",

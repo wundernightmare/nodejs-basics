@@ -165,17 +165,6 @@ const REGISTRY = [
   },
 
   {
-    key: "DISABLED_INTEGRATIONS",
-    yaml: "app.disabled_integrations",
-    required: false,
-    description:
-      "Comma-separated integrations this process runs without: never connected to, what " +
-      "needs them runs on a substitute (the api: valkey,kafka — Postgres alone). Unset: all " +
-      "on. A name the app cannot do without fails the start (@base/config integrations.ts).",
-    usedIn: ["config/integrations.ts", "apps/api/src/app.module.ts"],
-  },
-
-  {
     key: "LOG_LEVEL",
     yaml: "app.log_level",
     type: "enum",
@@ -581,8 +570,9 @@ const REGISTRY = [
     key: "VALKEY_URL",
     yaml: "cache.url",
     required: false,
-    default: "redis://localhost:6379",
-    description: "Valkey/Redis connection URL.",
+    description:
+      "Valkey/Redis connection URL. Unset: no Valkey — the api keeps Idempotency-Key results " +
+      "in Postgres; the worker does not start (@base/config integrations.ts).",
     usedIn: ["cache", "jobs", "idempotency"],
   },
 
@@ -841,7 +831,9 @@ const REGISTRY = [
     key: "KAFKA_BROKERS",
     yaml: "kafka.brokers",
     required: false,
-    description: "Comma-separated list of Kafka bootstrap brokers (host:port,host:port).",
+    description:
+      "Comma-separated list of Kafka bootstrap brokers (host:port,host:port). Unset: no " +
+      "Kafka — the api's events wait in the outbox table; the worker does not start.",
     usedIn: ["kafka"],
   },
 

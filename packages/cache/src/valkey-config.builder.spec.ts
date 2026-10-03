@@ -10,7 +10,8 @@ import {
   toClientOptions,
 } from "./valkey-config.builder.js";
 
-const config = (env: Record<string, string>): ConfigService => new ConfigService(env);
+const config = (env: Record<string, string>): ConfigService =>
+  new ConfigService({ VALKEY_URL: "redis://localhost:6379", ...env });
 
 // ConfigService.get() reads process.env before its own values: an ambient
 // VALKEY_URL (e.g. `just deps` on other ports) would leak into these cases.
@@ -53,8 +54,9 @@ describe("valkey config builder", () => {
     expect(built.password).toBe("fromenv");
   });
 
-  it("defaults to plaintext localhost with three retries per request", async () => {
-    await testCase("NB-312", "no env → dev defaults");
+  it("plaintext with three retries per request by default; no VALKEY_URL, no client", async () => {
+    await testCase("NB-312", "only VALKEY_URL → defaults; without it Valkey is off");
+    expect(() => buildValkeyConfig(new ConfigService({}))).toThrow("VALKEY_URL is not set");
     const built = buildValkeyConfig(config({}));
     expect(built).toMatchObject({ host: "localhost", port: 6379, db: 0, maxRetriesPerRequest: 3 });
     expect(built.tls).toBeUndefined();

@@ -16,17 +16,18 @@ app:
   allowed_origins:
     - http://localhost:3000
     - http://localhost:5173
-  # disabled_integrations: [valkey, kafka]   # run on Postgres alone (README "Optional integrations")
 
 database:
   url: postgresql://app:app@localhost:5432/app
   pool_max: 10
 
+# Valkey and Kafka are on while their address is set; without these two
+# blocks the api runs on Postgres alone (README "Optional integrations").
 cache:
   url: redis://localhost:6379
 
-# kafka:
-#   brokers: localhost:9092
+kafka:
+  brokers: localhost:9092
 #   client_id: my-service      # default: OTEL_SERVICE_NAME
 #   security_protocol: sasl_ssl
 #   sasl:

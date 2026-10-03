@@ -25,8 +25,8 @@ is in the same log line's `message`.
 ## A pod is not ready
 
 `curl :9090/readyz` names the failing check (`db` and `valkey` on the api,
-`kafka` and `valkey` on the worker; an integration in `DISABLED_INTEGRATIONS`
-has none — the startup line `integrations.resolved` says what a pod runs with):
+`kafka` and `valkey` on the worker; an integration whose address is unset has
+none — the startup line `integrations.resolved` says what a pod runs with):
 `503 not_ready` is a critical dependency down — the pod gets no traffic until
 it recovers, no restart needed. `degraded` is an optional one.
 

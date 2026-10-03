@@ -84,7 +84,9 @@ function resolveCa(config: ConfigService): Buffer | undefined {
 }
 
 export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
-  const url = config.get<string>("VALKEY_URL") ?? "redis://localhost:6379";
+  // Set whenever Valkey is on — the loader checks it (@base/config integrations.ts).
+  const url = readString(config, "VALKEY_URL");
+  if (url === undefined) throw new Error("VALKEY_URL is not set: Valkey is off");
   const parsed = new URL(url);
 
   // URL components are the baseline; explicit env vars override (so a

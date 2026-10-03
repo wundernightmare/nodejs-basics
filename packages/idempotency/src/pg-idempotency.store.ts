@@ -1,6 +1,6 @@
 /**
  * IdempotencyStore on Postgres — the substitute for ValkeyIdempotencyStore when
- * the api runs without Valkey (DISABLED_INTEGRATIONS=valkey): the same
+ * the api runs without Valkey (VALKEY_URL unset): the same
  * semantics, shared by every replica, in the table of
  * migrations/0004_create_idempotency_keys.sql.
  */
