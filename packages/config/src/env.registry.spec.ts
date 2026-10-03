@@ -165,42 +165,44 @@ describe("env registry", () => {
     for (const app of ["api", "worker"]) {
       expect(firstImport(`apps/${app}/src/main.ts`), app).toBe("./instrumentation.js");
       expect(firstImport(`apps/${app}/src/instrumentation.ts`), app).toBe("./boot.js");
-      expect(firstImport(`apps/${app}/src/boot.ts`), app).toBe("@base/config/loader");
-      expect(sources.get(`apps/${app}/src/boot.ts`), app).toMatch(/^loadConfigOrExit\(/mu);
+      expect(firstImport(`apps/${app}/src/boot.ts`), app).toBe("@base/config/boot");
+      expect(sources.get(`apps/${app}/src/boot.ts`), app).toMatch(/^bootConfig\(/mu);
     }
     // ...and the loader imports nothing that reads the environment on load.
     const loaderImports = [
       ...(sources.get("packages/config/src/config.loader.ts") ?? "").matchAll(/from "([^"]+)"/gu),
       ...(sources.get("packages/config/src/config.values.ts") ?? "").matchAll(/from "([^"]+)"/gu),
+      ...(sources.get("packages/config/src/config.boot.ts") ?? "").matchAll(/from "([^"]+)"/gu),
     ].map((m) => m[1]);
     expect(loaderImports.toSorted((a, b) => String(a).localeCompare(String(b)))).toEqual(
       [
+        "./config.loader.js",
         "./config.values.js",
+        "./env.registry.js",
         "./env.registry.js",
         "./env.registry.js",
         "node:fs",
         "node:fs",
         "node:path",
+        "node:util",
         "yaml",
       ].toSorted(),
     );
   });
 
-  it("a `?? fallback` after a typed reader equals the key's registry default", async () => {
-    await testCase("NB-980", "code and registry never disagree on a default");
-    const defaults = new Map(ENV_REGISTRY.map((e) => [e.key, e.default]));
-    const differing: string[] = [];
+  it("a key with a registry default is never given a second one in code", async () => {
+    await testCase("NB-980", "one default per key, in the registry");
+    const defaulted = new Set(
+      ENV_REGISTRY.filter((e) => e.default !== undefined).map((e) => e.key),
+    );
+    const doubled: string[] = [];
     for (const [path, text] of sources) {
       for (const m of text.matchAll(
-        /\bread(?:Int|Number|Bool|String)\(\s*(?:this\.)?(?:config|processEnv),\s*"([A-Z0-9_]+)"\)\s*\?\?\s*([\w".-]+)/gu,
+        /\bread(?:Int|Number|Bool|String|Json)\(\s*(?:this\.)?(?:config|processEnv),\s*"([A-Z0-9_]+)"\)\s*\?\?/gu,
       )) {
-        const [, key = "", fallback = ""] = m;
-        const registryDefault = defaults.get(key);
-        const code = fallback.replaceAll("_", "").replaceAll('"', "");
-        if (registryDefault !== undefined && registryDefault !== code)
-          differing.push(`${key}: registry ${registryDefault}, code ${fallback} (${path})`);
+        if (defaulted.has(m[1] ?? "")) doubled.push(`${m[1]} (${path})`);
       }
     }
-    expect(differing).toEqual([]);
+    expect(doubled).toEqual([]);
   });
 });

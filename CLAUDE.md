@@ -115,14 +115,18 @@ high-signal, easy-to-miss bits.
 
 - **Config + telemetry first**: `apps/api/src/main.ts` imports
   `./instrumentation.js` before anything else, and that file's first import
-  `./boot.js` sets the app's `OTEL_SERVICE_NAME` default and runs
-  `yamlConfigLoader()` (from `@base/config/loader`, which imports nothing that
-  reads env) — so modules that read `process.env` on load see `config.yaml`.
-  Same in `apps/worker`. `env.registry.spec.ts` pins the order.
-- **Config values**: give a new registry entry its `type` (+ `min`/`max`) and
-  read it with `readInt/readNumber/readBool/readJson/readString(config, KEY) ??
-  default` from `@base/config` — never `Number(config.get(...))` with a
-  fallback on garbage. Unknown YAML keys and bad values fail the boot.
+  `./boot.js` runs `bootConfig()` (`@base/config/boot`: the `--help` /
+  `--check-config` / `--config-reference` flags, then the load with the app's
+  own `OTEL_SERVICE_NAME`; it imports nothing that reads env) — so modules that
+  read `process.env` on load see `config.yaml`. Same in `apps/worker`.
+  `env.registry.spec.ts` pins the order.
+- **Config values**: a new registry entry gets its `type` (+ `min`/`max`) and
+  its `default` — the only one: read it with
+  `readInt/readNumber/readBool/readJson/readString(config, KEY)` from
+  `@base/config`, typed `T` when the key has a default (no `?? fallback` in
+  code — the registry spec rejects one), `T | undefined` otherwise; the key is
+  checked by the compiler. Never `Number(config.get(...))`. Unknown YAML keys,
+  bad values and empty values (`KEY=` = unset) are handled at boot.
 - **No patching instrumentations**: in the Vite bundle every import is loaded
   before instrumentation.ts runs, so `@opentelemetry/instrumentation-pg` /
   `-nestjs-core` / `-aws-sdk` / `-ioredis`… silently do nothing (checked in

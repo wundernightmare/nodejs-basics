@@ -89,7 +89,7 @@ export class KafkaConsumerRunner {
     private readonly logger: Logger,
     private readonly options: KafkaConsumerOptions,
   ) {
-    this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY") ?? 1;
+    this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY");
     this.reconnect = new Reconnect(
       () => this.connect(),
       (err, delay) => {

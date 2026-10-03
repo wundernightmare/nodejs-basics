@@ -212,11 +212,24 @@ Invalid configuration (config.yaml):
 ```
 
 — a YAML key no entry has, a value (from YAML or the environment) that does
-not parse as its type, a missing `required` key. Code reads values with the
-same rules: `readInt(config, "KEY") ?? default` (also `readNumber`,
-`readBool`, `readJson`, `readString`, from `@base/config`) — unset is
-`undefined`, garbage throws naming the key, never a silent fallback. The spec
-checks each reader matches the key's registry type. Telemetry keys (`OTEL_*`,
+not parse as its type, a missing `required` key. An empty value (`KEY=`) is
+unset. Code reads values with the same rules and the registry's default —
+the only one: `readInt(config, "KEY")` (also `readNumber`, `readBool`,
+`readJson`, `readString`, from `@base/config`) is a `number` for a key with a
+default, `number | undefined` for one without, and the key is checked by the
+compiler; garbage throws naming the key, never a silent fallback.
+
+The app answers the questions of whoever runs it without starting:
+
+```
+node dist/main.js --config-reference   # every setting: env key, YAML path, type, default, description
+node dist/main.js --check-config       # validate env + config.yaml: exit 0, or 78 with every problem
+node dist/main.js --help
+```
+
+`--check-config` against a deployment's rendered environment and
+`config.yaml` (e.g. `docker run --env-file … IMAGE --check-config`) catches a
+bad value before the rollout instead of on the first pod. Telemetry keys (`OTEL_*`,
 `SENTRY_DSN`, `PYROSCOPE_SERVER_ADDRESS`) are environment-only, under the
 names the OpenTelemetry SDKs use.
 

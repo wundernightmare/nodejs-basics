@@ -98,8 +98,8 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   const urlDb = Number(parsed.pathname.replace(/^\//, ""));
   const db = readInt(config, "VALKEY_DB") ?? (Number.isInteger(urlDb) ? urlDb : 0);
 
-  const secure = parsed.protocol === "rediss:" || (readBool(config, "VALKEY_TLS") ?? false);
-  const skipVerify = readBool(config, "VALKEY_SKIP_VERIFY") ?? false;
+  const secure = parsed.protocol === "rediss:" || readBool(config, "VALKEY_TLS");
+  const skipVerify = readBool(config, "VALKEY_SKIP_VERIFY");
   const ca = resolveCa(config);
 
   const tls: TlsConnectionOptions | undefined = secure
@@ -112,7 +112,7 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   const maxRetriesPerRequest: number | null =
     readString(config, "VALKEY_MAX_RETRIES_PER_REQUEST") === "null"
       ? null
-      : (readInt(config, "VALKEY_MAX_RETRIES_PER_REQUEST") ?? 3);
+      : readInt(config, "VALKEY_MAX_RETRIES_PER_REQUEST");
 
   return {
     host: parsed.hostname,
@@ -121,12 +121,12 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
     password,
     db,
     tls,
-    connectTimeoutMs: readInt(config, "VALKEY_CONNECT_TIMEOUT_MS") ?? 5000,
-    commandTimeoutMs: readInt(config, "VALKEY_COMMAND_TIMEOUT_MS") ?? 5000,
-    keepaliveMs: readInt(config, "VALKEY_KEEPALIVE_MS") ?? 0,
+    connectTimeoutMs: readInt(config, "VALKEY_CONNECT_TIMEOUT_MS"),
+    commandTimeoutMs: readInt(config, "VALKEY_COMMAND_TIMEOUT_MS"),
+    keepaliveMs: readInt(config, "VALKEY_KEEPALIVE_MS"),
     reconnect: {
-      baseDelayMs: readInt(config, "VALKEY_RECONNECT_BASE_DELAY_MS") ?? 100,
-      maxDelayMs: readInt(config, "VALKEY_RECONNECT_MAX_DELAY_MS") ?? 5000,
+      baseDelayMs: readInt(config, "VALKEY_RECONNECT_BASE_DELAY_MS"),
+      maxDelayMs: readInt(config, "VALKEY_RECONNECT_MAX_DELAY_MS"),
     },
     maxRetriesPerRequest,
     retry: buildRetryPolicy(config, "VALKEY", {
