@@ -12,12 +12,12 @@
  * id are stored with the row: the relay's `send` span — and the consumer's —
  * continue the request's trace.
  */
-import { Inject, Injectable } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { context, propagation } from "@opentelemetry/api";
-import type { Pool, PoolClient } from "pg";
+import type { PoolClient } from "pg";
 
 import { getRequestId, REQUEST_ID_HEADER } from "@base/common";
-import { PG_POOL, transactionStorage } from "@base/database";
+import { currentTransaction } from "@base/database";
 
 export interface OutboxMessage {
   topic: string;
@@ -27,18 +27,32 @@ export interface OutboxMessage {
   value: unknown;
 }
 
+/** add() called with no ambient transaction — the event would not commit with its change. */
+export class OutboxOutsideTransactionError extends Error {
+  constructor() {
+    super(
+      "OutboxWriter.add() needs the ambient transaction of the state change it announces — " +
+        "call it inside uow.runInTransaction.",
+    );
+    this.name = "OutboxOutsideTransactionError";
+  }
+}
+
 @Injectable()
 export class OutboxWriter {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
-
+  /**
+   * Insert the event in the caller's transaction, so it commits (or not)
+   * with the state change it announces. Refuses to run outside one: a
+   * standalone insert is exactly the non-atomic write an outbox exists to
+   * prevent.
+   */
   async add(message: OutboxMessage): Promise<void> {
+    const db = currentTransaction<PoolClient>();
+    if (db === undefined) throw new OutboxOutsideTransactionError();
     const headers: Record<string, string> = {};
     propagation.inject(context.active(), headers);
     const requestId = getRequestId();
     if (requestId !== undefined) headers[REQUEST_ID_HEADER] = requestId;
-    // The ambient transaction client when there is one (the point of an
-    // outbox); a standalone insert otherwise.
-    const db = (transactionStorage.getStore() as PoolClient | undefined) ?? this.pool;
     await db.query("INSERT INTO outbox (topic, key, payload, headers) VALUES ($1, $2, $3, $4)", [
       message.topic,
       message.key,
