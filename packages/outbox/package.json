@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@base/common": "workspace:*",
+    "@base/config": "workspace:*",
     "@base/database": "workspace:*",
     "@base/kafka": "workspace:*",
     "@base/logger": "workspace:*",

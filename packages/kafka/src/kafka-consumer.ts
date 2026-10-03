@@ -35,6 +35,7 @@
 import { KafkaJS } from "@confluentinc/kafka-javascript";
 import type { ConfigService } from "@nestjs/config";
 
+import { readInt } from "@base/config";
 import {
   type AppLogger,
   ecsError,
@@ -88,8 +89,7 @@ export class KafkaConsumerRunner {
     private readonly logger: Logger,
     private readonly options: KafkaConsumerOptions,
   ) {
-    const n = Number(config.get<string>("KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY"));
-    this.concurrently = Number.isInteger(n) && n > 0 ? n : 1;
+    this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY") ?? 1;
     this.reconnect = new Reconnect(
       () => this.connect(),
       (err, delay) => {

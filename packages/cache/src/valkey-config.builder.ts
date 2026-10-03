@@ -22,13 +22,14 @@ import type { ConnectionOptions as TlsConnectionOptions } from "node:tls";
 
 import type { ConfigService } from "@nestjs/config";
 
-import { computeJitteredDelay } from "@base/resilient-client";
+import { readBool, readInt, readJson, readString } from "@base/config";
 import {
   buildCircuitBreaker,
   buildRetryPolicy,
   type CircuitBreakerConfig,
   type RetryPolicy,
 } from "@base/resilience";
+import { computeJitteredDelay } from "@base/resilient-client";
 
 /**
  * Shared parsed shape — flat enough for both the Valkey provider and the
@@ -74,47 +75,12 @@ export interface ValkeyBuilderResult {
   extra: Record<string, unknown>;
 }
 
-function readStr(config: ConfigService, key: string): string | undefined {
-  const v = config.get<string>(key);
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-
-function readNum(config: ConfigService, key: string, fallback: number): number {
-  const raw = readStr(config, key);
-  if (!raw) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-function readBool(config: ConfigService, key: string, fallback: boolean): boolean {
-  const raw = readStr(config, key);
-  if (raw === undefined) return fallback;
-  return raw === "true" || raw === "1";
-}
-
 function resolveCa(config: ConfigService): Buffer | undefined {
-  const location = readStr(config, "VALKEY_CA_LOCATION");
+  const location = readString(config, "VALKEY_CA_LOCATION");
   if (location) return readFileSync(location);
-  const pem = readStr(config, "VALKEY_CA_PEM");
+  const pem = readString(config, "VALKEY_CA_PEM");
   if (pem) return Buffer.from(pem, "utf8");
   return undefined;
-}
-
-function resolveExtra(config: ConfigService): Record<string, unknown> {
-  const raw = readStr(config, "VALKEY_EXTRA_PROPERTIES");
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`VALKEY_EXTRA_PROPERTIES is not valid JSON: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("VALKEY_EXTRA_PROPERTIES must be a JSON object");
-  }
-  return parsed as Record<string, unknown>;
 }
 
 export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
@@ -127,13 +93,13 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   // undefined) when the component is absent, so drop empties first.
   const urlUser = parsed.username.length > 0 ? parsed.username : undefined;
   const urlPass = parsed.password.length > 0 ? parsed.password : undefined;
-  const username = readStr(config, "VALKEY_USERNAME") ?? urlUser;
-  const password = readStr(config, "VALKEY_PASSWORD") ?? urlPass;
-  const dbStr = readStr(config, "VALKEY_DB") ?? parsed.pathname.replace(/^\//, "");
-  const db = Number.isFinite(Number(dbStr)) && dbStr ? Number(dbStr) : 0;
+  const username = readString(config, "VALKEY_USERNAME") ?? urlUser;
+  const password = readString(config, "VALKEY_PASSWORD") ?? urlPass;
+  const urlDb = Number(parsed.pathname.replace(/^\//, ""));
+  const db = readInt(config, "VALKEY_DB") ?? (Number.isInteger(urlDb) ? urlDb : 0);
 
-  const secure = parsed.protocol === "rediss:" || readBool(config, "VALKEY_TLS", false);
-  const skipVerify = readBool(config, "VALKEY_SKIP_VERIFY", false);
+  const secure = parsed.protocol === "rediss:" || (readBool(config, "VALKEY_TLS") ?? false);
+  const skipVerify = readBool(config, "VALKEY_SKIP_VERIFY") ?? false;
   const ca = resolveCa(config);
 
   const tls: TlsConnectionOptions | undefined = secure
@@ -143,13 +109,10 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
       }
     : undefined;
 
-  const maxRetriesRaw = readStr(config, "VALKEY_MAX_RETRIES_PER_REQUEST");
   const maxRetriesPerRequest: number | null =
-    maxRetriesRaw === "null"
+    readString(config, "VALKEY_MAX_RETRIES_PER_REQUEST") === "null"
       ? null
-      : Number.isFinite(Number(maxRetriesRaw))
-        ? Number(maxRetriesRaw)
-        : 3;
+      : (readInt(config, "VALKEY_MAX_RETRIES_PER_REQUEST") ?? 3);
 
   return {
     host: parsed.hostname,
@@ -158,12 +121,12 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
     password,
     db,
     tls,
-    connectTimeoutMs: readNum(config, "VALKEY_CONNECT_TIMEOUT_MS", 5000),
-    commandTimeoutMs: readNum(config, "VALKEY_COMMAND_TIMEOUT_MS", 5000),
-    keepaliveMs: readNum(config, "VALKEY_KEEPALIVE_MS", 0),
+    connectTimeoutMs: readInt(config, "VALKEY_CONNECT_TIMEOUT_MS") ?? 5000,
+    commandTimeoutMs: readInt(config, "VALKEY_COMMAND_TIMEOUT_MS") ?? 5000,
+    keepaliveMs: readInt(config, "VALKEY_KEEPALIVE_MS") ?? 0,
     reconnect: {
-      baseDelayMs: readNum(config, "VALKEY_RECONNECT_BASE_DELAY_MS", 100),
-      maxDelayMs: readNum(config, "VALKEY_RECONNECT_MAX_DELAY_MS", 5000),
+      baseDelayMs: readInt(config, "VALKEY_RECONNECT_BASE_DELAY_MS") ?? 100,
+      maxDelayMs: readInt(config, "VALKEY_RECONNECT_MAX_DELAY_MS") ?? 5000,
     },
     maxRetriesPerRequest,
     retry: buildRetryPolicy(config, "VALKEY", {
@@ -185,7 +148,7 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
       volumeThreshold: 20,
       resetTimeoutMs: 15_000,
     }),
-    extra: resolveExtra(config),
+    extra: readJson(config, "VALKEY_EXTRA_PROPERTIES") ?? {},
   };
 }
 

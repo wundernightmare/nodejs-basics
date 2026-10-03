@@ -176,13 +176,18 @@ apps/api  →  @base/* packages  →  third-party (NestJS, OTel, Fastify, ...)
 upgrade. The split matters because `apps/api/src/main.ts` and `app.module.ts`
 are the only files that need bespoke wiring per project.
 
-### Telemetry must be first
+### Configuration and telemetry must be first
 
 `apps/api/src/instrumentation.ts` calls `setupTelemetry()` and is imported as
-the very first line of `main.ts`; its own first import (`service-name.ts`)
-sets the app's default `OTEL_SERVICE_NAME` (`nodejs-basics-api` /
-`nodejs-basics-worker`) before any module reads it. Don't move either. Which
-instrumentations work in the bundle: see "How spans are made" below.
+the very first line of `main.ts`; its own first import (`boot.ts`) sets the
+app's default `OTEL_SERVICE_NAME` (`nodejs-basics-api` /
+`nodejs-basics-worker`) and loads the configuration, before any other module
+is evaluated. Don't move either: ESM runs every import before `main()`, and
+@base/logger (`LOG_LEVEL`, `NODE_ENV`), the heap-snapshot service and
+`createApp()` read `process.env` while loading — a value they read before the
+loader is a `config.yaml` line that silently does nothing.
+`env.registry.spec.ts` pins the order. Which instrumentations work in the
+bundle: see "How spans are made" below.
 
 ### Config priority
 
@@ -192,12 +197,34 @@ process.env  >  YAML structured (database.url)  >  YAML flat (DATABASE_URL)  >  
 
 Defined once in `packages/config/src/env.registry.ts`. Every config knob your
 app reads must be added there — `env.registry.spec.ts` scans the runtime
-sources and fails on a key read through `config.get`, a builder's reader or
+sources and fails on a key read through `config.get`, a typed reader or
 `process.env` that is not registered (only a registered key has a YAML path and
-shows up in `GET /admin/config`). The loader fails fast at startup if a
-`required: true` entry is missing. Telemetry keys (`OTEL_*`, `SENTRY_DSN`,
-`PYROSCOPE_SERVER_ADDRESS`) are environment-only: tracing starts before the
-YAML file is read.
+shows up in `GET /admin/config`). An entry has a `type` (`int`, `number`,
+`bool`, `duration`, `json`, `enum`; `string` when omitted) and, for numbers,
+`min` / `max`. At startup the loader fails with **one error listing every
+problem** (exit 78, a single ECS line):
+
+```
+Invalid configuration (config.yaml):
+  - unknown key databse.url — did you mean database.url?
+  - KAFKA_PRODUCER_LINGER_MS="10ms": expected an integer (yaml: kafka.producer.linger_ms)
+  - OUTBOX_BATCH_SIZE="-5": expected an integer >= 1 (yaml: outbox.batch_size)
+```
+
+— a YAML key no entry has, a value (from YAML or the environment) that does
+not parse as its type, a missing `required` key. Code reads values with the
+same rules: `readInt(config, "KEY") ?? default` (also `readNumber`,
+`readBool`, `readJson`, `readString`, from `@base/config`) — unset is
+`undefined`, garbage throws naming the key, never a silent fallback. The spec
+checks each reader matches the key's registry type. Telemetry keys (`OTEL_*`,
+`SENTRY_DSN`, `PYROSCOPE_SERVER_ADDRESS`) are environment-only, under the
+names the OpenTelemetry SDKs use.
+
+No profiles, layered files or hot reload, on purpose: one file per deployment
+(a ConfigMap) plus environment overrides is all a container needs, and a
+changed value means a rollout — a restart is the reload that every component
+honours. The exception is mounted secrets, which `SecretFileWatcher` re-reads
+(password rotation without a restart).
 
 ### Domain errors → HTTP
 

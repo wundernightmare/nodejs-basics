@@ -116,12 +116,14 @@ describe("kafka config builders", () => {
     });
   });
 
-  it("keeps the default on an unparseable value instead of guessing", async () => {
-    await testCase("NB-791", "garbage env falls back to defaults");
-    const cfg = buildProducerConfig(
-      stub({ KAFKA_PRODUCER_ENABLE_IDEMPOTENCE: "maybe", KAFKA_PRODUCER_LINGER_MS: "soon" }),
+  it("fails on an unparseable value, naming the key — never runs on a default nobody chose", async () => {
+    await testCase("NB-791", "garbage config is an error, not a silent default");
+    expect(() => buildProducerConfig(stub({ KAFKA_PRODUCER_ENABLE_IDEMPOTENCE: "maybe" }))).toThrow(
+      'KAFKA_PRODUCER_ENABLE_IDEMPOTENCE="maybe": expected true or false',
     );
-    expect(cfg).toMatchObject({ "enable.idempotence": true, "linger.ms": 10 });
+    expect(() => buildProducerConfig(stub({ KAFKA_PRODUCER_LINGER_MS: "soon" }))).toThrow(
+      'KAFKA_PRODUCER_LINGER_MS="soon": expected an integer',
+    );
   });
 
   it("the SASL password file wins over the inline password, trimmed; unreadable → inline", async () => {
@@ -170,7 +172,7 @@ describe("kafka config builders", () => {
     async (key) => {
       await testCase("NB-798", "malformed extras are rejected");
       expect(() => buildConsumerConfig(stub({ [key]: "{oops" }), "g")).toThrow(
-        new RegExp(`${key} is not valid JSON`, "u"),
+        `${key}="{oops": expected a JSON object`,
       );
       expect(() => buildConsumerConfig(stub({ [key]: "[1]" }), "g")).toThrow(/JSON object/u);
     },

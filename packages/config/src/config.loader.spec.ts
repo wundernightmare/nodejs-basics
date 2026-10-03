@@ -2,15 +2,44 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { configSnapshot, yamlConfigLoader } from "./config.loader.js";
+import { meta, testCase, workspaceRoot } from "@base/testing";
 
-const KEYS = ["PORT", "ADMIN_PORT", "APP_CONFIG_FILE", "DATABASE_URL", "ADMIN_TOKEN"] as const;
+const KEYS = [
+  "PORT",
+  "ADMIN_PORT",
+  "APP_CONFIG_FILE",
+  "DATABASE_URL",
+  "DATABASE_POOL_MAX",
+  "ADMIN_TOKEN",
+  "KAFKA_PRODUCER_LINGER_MS",
+  "KAFKA_EXTRA_PROPERTIES",
+  "LOG_LEVEL",
+  "OUTBOX_BATCH_SIZE",
+] as const;
+
+/** A fresh loader module: it loads once per process, these tests need one per case. */
+function loader(): Promise<typeof import("./config.loader.js")> {
+  vi.resetModules();
+  return import("./config.loader.js");
+}
 
 describe("yamlConfigLoader + configSnapshot", () => {
+  meta({
+    epic: "nodejs-basics",
+    feature: "config",
+    owner: "@team-platform",
+    tags: ["config", "unit"],
+  });
+
   let dir: string;
   const saved: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
+  const file = (yaml: string): void => {
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, yaml);
+    process.env["APP_CONFIG_FILE"] = path;
+  };
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "config-spec-"));
@@ -27,12 +56,12 @@ describe("yamlConfigLoader + configSnapshot", () => {
     }
   });
 
-  it("reports env > yaml > default provenance per registered key", () => {
-    const file = join(dir, "config.yaml");
-    writeFileSync(file, "app:\n  port: 4000\n  admin_port: 9999\n");
-    process.env["APP_CONFIG_FILE"] = file;
+  it("reports env > yaml > default provenance per registered key", async () => {
+    await testCase("NB-960", "every key shows its value and where it came from");
+    file("app:\n  port: 4000\n  admin_port: 9999\nDATABASE_POOL_MAX: 7\n");
     process.env["PORT"] = "3333"; // env wins over yaml
 
+    const { yamlConfigLoader, configSnapshot } = await loader();
     yamlConfigLoader();
     const snap = configSnapshot();
 
@@ -40,9 +69,91 @@ describe("yamlConfigLoader + configSnapshot", () => {
     expect(snap.sources["PORT"]).toBe("env");
     expect(snap.config["ADMIN_PORT"]).toBe("9999");
     expect(snap.sources["ADMIN_PORT"]).toBe("yaml");
+    expect(snap.config["DATABASE_POOL_MAX"]).toBe("7"); // a flat registry key
     expect(snap.config["DATABASE_URL"]).toBe("postgresql://app:app@localhost:5432/app");
     expect(snap.sources["DATABASE_URL"]).toBe("default");
     expect(snap.config["ADMIN_TOKEN"]).toBeNull();
     expect(snap.sources["ADMIN_TOKEN"]).toBe("unset");
+  });
+
+  it("fails the boot with every problem at once: unknown keys with a hint, bad values", async () => {
+    await testCase("NB-961", "a typo or garbage in config.yaml is a startup error, not a default");
+    file(
+      [
+        "databse:",
+        "  url: postgresql://elsewhere/db",
+        "kafka:",
+        "  producer:",
+        "    linger_ms: 10ms",
+        "app:",
+        "  log_level: verbose",
+        "outbox:",
+        "  batch_size: -5",
+        "SOMETHING_ELSE: 1",
+      ].join("\n"),
+    );
+    process.env["PORT"] = "eighty"; // the environment is checked too
+
+    const { yamlConfigLoader } = await loader();
+    let message = "";
+    try {
+      yamlConfigLoader();
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message.split("\n").filter((l) => l.startsWith("  - "))).toEqual([
+      "  - unknown key databse.url — did you mean database.url?",
+      "  - unknown key SOMETHING_ELSE",
+      '  - PORT="eighty": expected an integer',
+      '  - LOG_LEVEL="verbose": expected one of trace|debug|info|warn|error|fatal|silent (yaml: app.log_level)',
+      '  - KAFKA_PRODUCER_LINGER_MS="10ms": expected an integer (yaml: kafka.producer.linger_ms)',
+      '  - OUTBOX_BATCH_SIZE="-5": expected an integer >= 1 (yaml: outbox.batch_size)',
+    ]);
+  });
+
+  it("takes a mapping at a JSON key's path, and loads once per process", async () => {
+    await testCase("NB-962", "extra properties as YAML; ConfigModule reuses the boot-time load");
+    file("kafka:\n  extra_properties:\n    debug: broker\n");
+    const { yamlConfigLoader } = await loader();
+    const first = yamlConfigLoader();
+    expect(process.env["KAFKA_EXTRA_PROPERTIES"]).toBe('{"debug":"broker"}');
+
+    file("kafka:\n  extra_properties: {}\nbogus: 1\n");
+    expect(yamlConfigLoader()).toBe(first);
+  });
+
+  it("without a file still applies the defaults and checks the environment", async () => {
+    await testCase("NB-963", "env-only containers get the same defaults and validation");
+    process.env["APP_CONFIG_FILE"] = join(dir, "absent.yaml");
+    process.env["OUTBOX_BATCH_SIZE"] = "0";
+    const { yamlConfigLoader } = await loader();
+    expect(() => yamlConfigLoader()).toThrow('OUTBOX_BATCH_SIZE="0": expected an integer >= 1');
+    expect(process.env["DATABASE_URL"]).toBe("postgresql://app:app@localhost:5432/app");
+  });
+
+  it("loads the shipped example config without a problem", async () => {
+    await testCase("NB-970", "config.example.yaml stays valid as the registry changes");
+    process.env["APP_CONFIG_FILE"] = join(workspaceRoot(), "apps/api/config.example.yaml");
+    const { yamlConfigLoader, configSnapshot } = await loader();
+    expect(() => yamlConfigLoader()).not.toThrow();
+    expect(configSnapshot().sources["DATABASE_URL"]).toBe("yaml");
+  });
+
+  it("an entry point exits 78 with one ECS line on a bad configuration", async () => {
+    await testCase("NB-971", "boot.ts: a config error is a clean, machine-readable exit");
+    file("databse:\n  url: x\n");
+    const { loadConfigOrExit } = await loader();
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      loadConfigOrExit();
+      expect(exit).toHaveBeenCalledWith(78);
+      const line = JSON.parse(String(stderr.mock.calls[0]?.[0])) as Record<string, string>;
+      expect(line["log.level"]).toBe("fatal");
+      expect(line["message"]).toContain("unknown key databse.url — did you mean database.url?");
+    } finally {
+      exit.mockRestore();
+      stderr.mockRestore();
+    }
   });
 });

@@ -41,6 +41,7 @@ import { ConfigService } from "@nestjs/config";
 import { context, metrics, propagation, ROOT_CONTEXT } from "@opentelemetry/api";
 import type { Pool } from "pg";
 
+import { readInt } from "@base/config";
 import { PG_POOL } from "@base/database";
 import { KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
@@ -57,11 +58,6 @@ const MAX_BACKOFF_MS = 30_000;
 // Upper bound on how long shutdown waits for a batch in flight; after it the
 // pool closes anyway and the batch rolls back (sent again by the next relay).
 const DRAIN_TIMEOUT_MS = 5_000;
-
-function positiveInt(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
-}
 
 @Injectable()
 export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShutdown {
@@ -83,9 +79,9 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(OutboxRelay.name);
-    this.intervalMs = positiveInt(config.get<string>("OUTBOX_POLL_INTERVAL_MS"), 200);
-    this.batchSize = positiveInt(config.get<string>("OUTBOX_BATCH_SIZE"), 100);
-    this.maxAttempts = positiveInt(config.get<string>("OUTBOX_MAX_ATTEMPTS"), 10);
+    this.intervalMs = readInt(config, "OUTBOX_POLL_INTERVAL_MS") ?? 200;
+    this.batchSize = readInt(config, "OUTBOX_BATCH_SIZE") ?? 100;
+    this.maxAttempts = readInt(config, "OUTBOX_MAX_ATTEMPTS") ?? 10;
     // The numbers to alert on: rows waiting to be published, rows given up on.
     const meter = metrics.getMeter("outbox");
     const pending = meter.createObservableGauge("outbox.pending", {

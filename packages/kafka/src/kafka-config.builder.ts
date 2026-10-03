@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 import type { ConfigService } from "@nestjs/config";
 
+import { readBool, readInt, readJson, readString } from "@base/config";
 import { pinoLogger } from "@base/logger";
 
 const kafkaLogger = pinoLogger.child({ "log.logger": "KafkaConfigBuilder" });
@@ -34,26 +35,6 @@ export type KafkaRdKafkaConfig = Record<string, unknown>;
 
 const KAFKA_CA_PEM_FILE = "/tmp/kafka-ca.pem";
 
-function readString(config: ConfigService, key: string): string | undefined {
-  const v = config.get<string>(key);
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-
-function readNumber(config: ConfigService, key: string): number | undefined {
-  const raw = readString(config, key);
-  if (!raw) return undefined;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-function readBool(config: ConfigService, key: string): boolean | undefined {
-  const raw = readString(config, key);
-  if (raw === undefined) return undefined;
-  if (raw === "true" || raw === "1") return true;
-  if (raw === "false" || raw === "0") return false;
-  return undefined;
-}
-
 /**
  * Resolve the CA bundle path librdkafka should use.
  *
@@ -77,31 +58,6 @@ function resolveCaLocation(config: ConfigService): string | undefined {
   // Safe to call repeatedly — the contents are identical per boot.
   writeFileSync(KAFKA_CA_PEM_FILE, inline, { encoding: "utf8", mode: 0o600 });
   return KAFKA_CA_PEM_FILE;
-}
-
-/**
- * Parse the KAFKA_EXTRA_PROPERTIES JSON escape hatch. Invalid JSON is ignored
- * with a thrown error at boot — silently swallowing it would make it impossible
- * to discover that a typo disabled a custom knob.
- */
-function readExtraProperties(
-  config: ConfigService,
-  key = "KAFKA_EXTRA_PROPERTIES",
-): KafkaRdKafkaConfig {
-  const raw = readString(config, key);
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`${key} is not valid JSON: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`${key} must be a JSON object of librdkafka string properties`);
-  }
-  return parsed as KafkaRdKafkaConfig;
 }
 
 /**
@@ -170,16 +126,16 @@ export function buildKafkaClientConfig(
   // Socket / connection tunables — applied only when explicitly set so that
   // librdkafka's own defaults (30s request timeout, 5min metadata refresh,
   // 100ms reconnect backoff) remain the implicit fallback.
-  const reqTimeout = readNumber(config, "KAFKA_REQUEST_TIMEOUT_MS");
+  const reqTimeout = readInt(config, "KAFKA_REQUEST_TIMEOUT_MS");
   if (reqTimeout !== undefined) out["socket.timeout.ms"] = reqTimeout;
 
-  const metadataAge = readNumber(config, "KAFKA_METADATA_MAX_AGE_MS");
+  const metadataAge = readInt(config, "KAFKA_METADATA_MAX_AGE_MS");
   if (metadataAge !== undefined) out["topic.metadata.refresh.interval.ms"] = metadataAge;
 
-  const reconnect = readNumber(config, "KAFKA_RECONNECT_BACKOFF_MS");
+  const reconnect = readInt(config, "KAFKA_RECONNECT_BACKOFF_MS");
   if (reconnect !== undefined) out["reconnect.backoff.ms"] = reconnect;
 
-  const reconnectMax = readNumber(config, "KAFKA_RECONNECT_BACKOFF_MAX_MS");
+  const reconnectMax = readInt(config, "KAFKA_RECONNECT_BACKOFF_MAX_MS");
   if (reconnectMax !== undefined) out["reconnect.backoff.max.ms"] = reconnectMax;
 
   // TCP keepalive on: cloud load balancers and NAT gateways drop idle
@@ -189,10 +145,10 @@ export function buildKafkaClientConfig(
 
   // librdkafka statistics (JSON every N ms) feed the client metrics — see
   // kafka-metrics.ts. 0 turns them off.
-  out["statistics.interval.ms"] = readNumber(config, "KAFKA_STATISTICS_INTERVAL_MS") ?? 15_000;
+  out["statistics.interval.ms"] = readInt(config, "KAFKA_STATISTICS_INTERVAL_MS") ?? 15_000;
 
   // Escape hatch is applied last so it can tune anything above on purpose.
-  return { ...out, ...readExtraProperties(config) };
+  return { ...out, ...readJson(config, "KAFKA_EXTRA_PROPERTIES") };
 }
 
 /**
@@ -210,20 +166,20 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
     acks: readString(config, "KAFKA_PRODUCER_ACKS") ?? "all",
     "enable.idempotence": readBool(config, "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE") ?? true,
     "compression.type": readString(config, "KAFKA_PRODUCER_COMPRESSION_TYPE") ?? "lz4",
-    "linger.ms": readNumber(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
-    "message.timeout.ms": readNumber(config, "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS") ?? 30_000,
+    "linger.ms": readInt(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
+    "message.timeout.ms": readInt(config, "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS") ?? 30_000,
     // The local send queue. librdkafka's default holds up to 1 GiB per
     // producer: with the broker down and acks=all, that is where the pod's
     // memory goes. 64 MiB bounds it; a full queue fails send() with
     // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
-    "queue.buffering.max.kbytes": readNumber(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES") ?? 65_536,
+    "queue.buffering.max.kbytes": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES") ?? 65_536,
   };
   // Re-apply the escape hatches so they win over role flags too: the shared
   // one, then the producer-only one.
   return {
     ...out,
-    ...readExtraProperties(config),
-    ...readExtraProperties(config, "KAFKA_PRODUCER_EXTRA_PROPERTIES"),
+    ...readJson(config, "KAFKA_EXTRA_PROPERTIES"),
+    ...readJson(config, "KAFKA_PRODUCER_EXTRA_PROPERTIES"),
   };
 }
 
@@ -251,8 +207,8 @@ export function buildConsumerConfig(
     // message sits on an empty assignment until the next metadata refresh.
     "allow.auto.create.topics": true,
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
-    "session.timeout.ms": readNumber(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
-    "max.poll.interval.ms": readNumber(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
+    "session.timeout.ms": readInt(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
+    "max.poll.interval.ms": readInt(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
     // Bounded prefetch. librdkafka's defaults size the local queue for raw
     // throughput (100k messages, up to 64 MiB per partition): a consumer that
     // handles one message at a time and wakes up to a deep backlog pulls
@@ -263,7 +219,7 @@ export function buildConsumerConfig(
   };
   return {
     ...out,
-    ...readExtraProperties(config),
-    ...readExtraProperties(config, "KAFKA_CONSUMER_EXTRA_PROPERTIES"),
+    ...readJson(config, "KAFKA_EXTRA_PROPERTIES"),
+    ...readJson(config, "KAFKA_CONSUMER_EXTRA_PROPERTIES"),
   };
 }

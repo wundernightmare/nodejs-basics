@@ -4,7 +4,18 @@ export {
   configSnapshot,
   yamlConfigLoader,
 } from "./config.loader.js";
-export { ENV_REGISTRY, type EnvEntry } from "./env.registry.js";
+export {
+  type ConfigGetter,
+  ConfigValueError,
+  parseConfigValue,
+  processEnv,
+  readBool,
+  readInt,
+  readJson,
+  readNumber,
+  readString,
+} from "./config.values.js";
+export { ENV_REGISTRY, type EnvEntry, type EnvType } from "./env.registry.js";
 export {
   SecretFileWatcher,
   type SecretFileWatcherOptions,

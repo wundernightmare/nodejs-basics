@@ -16,6 +16,7 @@ import { ConfigService } from "@nestjs/config";
 import { metrics } from "@opentelemetry/api";
 import { type Queue } from "bullmq";
 
+import { readInt } from "@base/config";
 import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
 import { KafkaBackpressureError, KafkaConsumerRunner } from "@base/kafka";
@@ -59,8 +60,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
-    const maxWaiting = Number(config.get<string>("WORKER_QUEUE_MAX_WAITING"));
-    this.maxWaiting = Number.isInteger(maxWaiting) && maxWaiting > 0 ? maxWaiting : 10_000;
+    this.maxWaiting = readInt(config, "WORKER_QUEUE_MAX_WAITING") ?? 10_000;
     this.runner = new KafkaConsumerRunner(config, this.logger, {
       groupId: GROUP_ID,
       topics: [TASK_EVENTS_TOPIC],
