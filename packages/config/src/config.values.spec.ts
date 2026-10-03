@@ -70,7 +70,7 @@ describe("typed config values", () => {
     );
   });
 
-  it("readers: unset is undefined (the caller's default), bounds come from the registry", async () => {
+  it("readers: unset is the registry default (or undefined), bounds come from the registry", async () => {
     await testCase("NB-967", "builders read typed values with the boot-time rules");
     const env: Record<string, string> = {
       OUTBOX_BATCH_SIZE: "0",
@@ -83,7 +83,8 @@ describe("typed config values", () => {
     expect(() => readInt(config, "OUTBOX_BATCH_SIZE")).toThrow(
       'OUTBOX_BATCH_SIZE="0": expected an integer >= 1',
     );
-    expect(readInt(config, "OUTBOX_MAX_ATTEMPTS")).toBeUndefined();
+    expect(readInt(config, "OUTBOX_MAX_ATTEMPTS")).toBe(10); // registry default
+    expect(readInt(config, "KAFKA_REQUEST_TIMEOUT_MS")).toBeUndefined(); // none: librdkafka's
     expect(readNumber(config, "HEAP_OOM_THRESHOLD")).toBe(0.9);
     expect(readBool(config, "DATABASE_KEEPALIVE")).toBe(false);
     expect(readJson(config, "KAFKA_EXTRA_PROPERTIES")).toEqual({ debug: "all" });

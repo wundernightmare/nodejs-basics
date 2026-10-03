@@ -118,7 +118,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     fingerprint: string,
   ): Promise<unknown> {
     const reply = context.switchToHttp().getResponse<FastifyReply>();
-    const ttl = readInt(this.config, "IDEMPOTENCY_TTL_SECONDS") ?? 86_400;
+    const ttl = readInt(this.config, "IDEMPOTENCY_TTL_SECONDS");
     const statusCode =
       (Reflect.getMetadata(HTTP_CODE_METADATA, context.getHandler()) as number | undefined) ?? 200;
 

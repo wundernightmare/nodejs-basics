@@ -17,6 +17,11 @@
       "source": "./src/config.loader.ts",
       "types": "./src/config.loader.ts",
       "import": "./dist/config.loader.js"
+    },
+    "./boot": {
+      "source": "./src/config.boot.ts",
+      "types": "./src/config.boot.ts",
+      "import": "./dist/config.boot.js"
     }
   },
   "scripts": {

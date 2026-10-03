@@ -127,7 +127,7 @@ export function buildKafkaClientConfig(
 
   // librdkafka statistics (JSON every N ms) feed the client metrics — see
   // kafka-metrics.ts. 0 turns them off.
-  out["statistics.interval.ms"] = readInt(config, "KAFKA_STATISTICS_INTERVAL_MS") ?? 15_000;
+  out["statistics.interval.ms"] = readInt(config, "KAFKA_STATISTICS_INTERVAL_MS");
 
   // Escape hatch is applied last so it can tune anything above on purpose.
   return { ...out, ...readJson(config, "KAFKA_EXTRA_PROPERTIES") };
@@ -145,16 +145,16 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
 
   const out: KafkaRdKafkaConfig = {
     ...base,
-    acks: readString(config, "KAFKA_PRODUCER_ACKS") ?? "all",
-    "enable.idempotence": readBool(config, "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE") ?? true,
-    "compression.type": readString(config, "KAFKA_PRODUCER_COMPRESSION_TYPE") ?? "lz4",
-    "linger.ms": readInt(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
-    "message.timeout.ms": readInt(config, "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS") ?? 30_000,
+    acks: readString(config, "KAFKA_PRODUCER_ACKS"),
+    "enable.idempotence": readBool(config, "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE"),
+    "compression.type": readString(config, "KAFKA_PRODUCER_COMPRESSION_TYPE"),
+    "linger.ms": readInt(config, "KAFKA_PRODUCER_LINGER_MS"),
+    "message.timeout.ms": readInt(config, "KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS"),
     // The local send queue. librdkafka's default holds up to 1 GiB per
     // producer: with the broker down and acks=all, that is where the pod's
     // memory goes. 64 MiB bounds it; a full queue fails send() with
     // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
-    "queue.buffering.max.kbytes": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES") ?? 65_536,
+    "queue.buffering.max.kbytes": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES"),
   };
   // Re-apply the escape hatches so they win over role flags too: the shared
   // one, then the producer-only one.
@@ -182,15 +182,15 @@ export function buildConsumerConfig(
   const out: KafkaRdKafkaConfig = {
     ...base,
     "group.id": groupId,
-    "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET") ?? "latest",
+    "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET"),
     // Topics are the broker's call: a dev broker auto-creates them
     // (docker/deps.yml), a provisioned cluster refuses — so the client may
     // always ask. Without it a consumer that subscribes before the first
     // message sits on an empty assignment until the next metadata refresh.
     "allow.auto.create.topics": true,
-    "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT") ?? false,
-    "session.timeout.ms": readInt(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS") ?? 10_000,
-    "max.poll.interval.ms": readInt(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS") ?? 300_000,
+    "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT"),
+    "session.timeout.ms": readInt(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS"),
+    "max.poll.interval.ms": readInt(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS"),
     // Bounded prefetch. librdkafka's defaults size the local queue for raw
     // throughput (100k messages, up to 64 MiB per partition): a consumer that
     // handles one message at a time and wakes up to a deep backlog pulls

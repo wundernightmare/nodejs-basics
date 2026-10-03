@@ -56,10 +56,10 @@ export interface EnvEntry {
   /** Human-readable description of what the variable controls. */
   description: string;
   /** Source files / modules that read this variable. */
-  usedIn: string[];
+  usedIn: readonly string[];
 }
 
-export const ENV_REGISTRY: readonly EnvEntry[] = [
+const REGISTRY = [
   // ─── Config file ──────────────────────────────────────────────────────────
 
   {
@@ -267,7 +267,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Minimum pg pool size kept open. Default 0.",
+    default: "0",
+    description: "Minimum pg pool size kept open.",
     usedIn: ["database"],
   },
 
@@ -277,7 +278,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Close a pooled connection idle this long. Default 30000.",
+    default: "30000",
+    description: "Close a pooled connection idle this long.",
     usedIn: ["database"],
   },
 
@@ -287,7 +289,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Recycle a connection after this many checkouts (0 = never). Default 0.",
+    default: "0",
+    description: "Recycle a connection after this many checkouts (0 = never).",
     usedIn: ["database"],
   },
 
@@ -297,7 +300,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "TCP + auth connect timeout (libpq connect_timeout). Default 5000.",
+    default: "5000",
+    description: "TCP + auth connect timeout (libpq connect_timeout).",
     usedIn: ["database"],
   },
 
@@ -307,7 +311,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Server-side statement_timeout set on every connection. Default 30000.",
+    default: "30000",
+    description: "Server-side statement_timeout set on every connection.",
     usedIn: ["database"],
   },
 
@@ -317,8 +322,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description:
-      "Server-side idle_in_transaction_session_timeout set on every connection. Default 60000.",
+    default: "60000",
+    description: "Server-side idle_in_transaction_session_timeout set on every connection.",
     usedIn: ["database"],
   },
 
@@ -338,7 +343,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "database.keepalive",
     type: "bool",
     required: false,
-    description: "TCP keepalive on pool connections (true|false). Default true.",
+    default: "true",
+    description: "TCP keepalive on pool connections (true|false).",
     usedIn: ["database"],
   },
 
@@ -348,7 +354,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Delay before the first TCP keepalive probe. Default 10000.",
+    default: "10000",
+    description: "Delay before the first TCP keepalive probe.",
     usedIn: ["database"],
   },
 
@@ -388,8 +395,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "database.use_native",
     type: "bool",
     required: false,
-    description:
-      "Use pg-native (libpq) instead of pure-JS pg — needed for multi-host URLs. Default false.",
+    default: "false",
+    description: "Use pg-native (libpq) instead of pure-JS pg — needed for multi-host URLs.",
     usedIn: ["database"],
   },
 
@@ -425,7 +432,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "database.ssl.skip_verify",
     type: "bool",
     required: false,
-    description: "Accept any server certificate (true|false). Default false — never in production.",
+    default: "false",
+    description: "Accept any server certificate (true|false). Never in production.",
     usedIn: ["database"],
   },
 
@@ -444,7 +452,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Attempts per Postgres operation incl. the first. Default 3.",
+    default: "3",
+    description: "Attempts per Postgres operation incl. the first.",
     usedIn: ["database"],
   },
 
@@ -454,7 +463,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "First backoff delay (full jitter, doubling). Default 100.",
+    default: "100",
+    description: "First backoff delay (full jitter, doubling).",
     usedIn: ["database"],
   },
 
@@ -464,7 +474,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Backoff delay cap. Default 5000.",
+    default: "5000",
+    description: "Backoff delay cap.",
     usedIn: ["database"],
   },
 
@@ -474,7 +485,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Total time one operation may spend retrying. Default 10000.",
+    default: "10000",
+    description: "Total time one operation may spend retrying.",
     usedIn: ["database"],
   },
 
@@ -483,7 +495,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "database.circuit_breaker.enabled",
     type: "bool",
     required: false,
-    description: "Circuit breaker around Postgres calls (true|false). Default true.",
+    default: "true",
+    description: "Circuit breaker around Postgres calls (true|false).",
     usedIn: ["database"],
   },
 
@@ -493,7 +506,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "A call slower than this counts as a failure. Default 30000.",
+    default: "30000",
+    description: "A call slower than this counts as a failure.",
     usedIn: ["database"],
   },
 
@@ -504,7 +518,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     min: 0,
     max: 100,
     required: false,
-    description: "Failure percentage that opens the breaker. Default 50.",
+    default: "50",
+    description: "Failure percentage that opens the breaker.",
     usedIn: ["database"],
   },
 
@@ -514,7 +529,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Calls in the window before the breaker may open. Default 10.",
+    default: "10",
+    description: "Calls in the window before the breaker may open.",
     usedIn: ["database"],
   },
 
@@ -524,7 +540,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Time open before a half-open probe. Default 30000.",
+    default: "30000",
+    description: "Time open before a half-open probe.",
     usedIn: ["database"],
   },
 
@@ -570,7 +587,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Logical database number. Overrides the path of VALKEY_URL. Default 0.",
+    description:
+      "Logical database number; overrides the path of VALKEY_URL (unset: that path, else 0).",
     usedIn: ["cache"],
   },
 
@@ -579,7 +597,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "cache.tls",
     type: "bool",
     required: false,
-    description: "TLS without a rediss:// URL (true|false). Default false.",
+    default: "false",
+    description: "TLS without a rediss:// URL (true|false).",
     usedIn: ["cache"],
   },
 
@@ -588,7 +607,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "cache.skip_verify",
     type: "bool",
     required: false,
-    description: "Accept any server certificate (true|false). Default false — never in production.",
+    default: "false",
+    description: "Accept any server certificate (true|false). Never in production.",
     usedIn: ["cache"],
   },
 
@@ -614,7 +634,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Connect timeout. Default 5000.",
+    default: "5000",
+    description: "Connect timeout.",
     usedIn: ["cache"],
   },
 
@@ -624,8 +645,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description:
-      "Per-command timeout of the shared client (never applied to BullMQ connections). Default 5000.",
+    default: "5000",
+    description: "Per-command timeout of the shared client (never applied to BullMQ connections).",
     usedIn: ["cache"],
   },
 
@@ -635,7 +656,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "TCP keepalive initial delay (0 = off). Default 0.",
+    default: "0",
+    description: "TCP keepalive initial delay (0 = off).",
     usedIn: ["cache"],
   },
 
@@ -646,6 +668,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     min: 0,
     values: ["null"],
     required: false,
+    default: "3",
     description: 'iovalkey maxRetriesPerRequest ("null" = retry forever). Default 3.',
     usedIn: ["cache"],
   },
@@ -656,7 +679,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "First reconnect delay (exponential). Default 100.",
+    default: "100",
+    description: "First reconnect delay (exponential).",
     usedIn: ["cache"],
   },
 
@@ -666,7 +690,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Reconnect delay cap. Default 5000.",
+    default: "5000",
+    description: "Reconnect delay cap.",
     usedIn: ["cache"],
   },
 
@@ -685,7 +710,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Attempts per Valkey operation incl. the first. Default 3.",
+    default: "3",
+    description: "Attempts per Valkey operation incl. the first.",
     usedIn: ["cache"],
   },
 
@@ -695,7 +721,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "First backoff delay (full jitter, doubling). Default 50.",
+    default: "50",
+    description: "First backoff delay (full jitter, doubling).",
     usedIn: ["cache"],
   },
 
@@ -705,7 +732,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Backoff delay cap. Default 1000.",
+    default: "1000",
+    description: "Backoff delay cap.",
     usedIn: ["cache"],
   },
 
@@ -715,7 +743,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Total time one operation may spend retrying. Default 5000.",
+    default: "5000",
+    description: "Total time one operation may spend retrying.",
     usedIn: ["cache"],
   },
 
@@ -724,7 +753,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "cache.circuit_breaker.enabled",
     type: "bool",
     required: false,
-    description: "Circuit breaker around Valkey calls (true|false). Default false.",
+    default: "false",
+    description: "Circuit breaker around Valkey calls (true|false).",
     usedIn: ["cache"],
   },
 
@@ -734,7 +764,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "A call slower than this counts as a failure. Default 5000.",
+    default: "5000",
+    description: "A call slower than this counts as a failure.",
     usedIn: ["cache"],
   },
 
@@ -745,7 +776,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     min: 0,
     max: 100,
     required: false,
-    description: "Failure percentage that opens the breaker. Default 50.",
+    default: "50",
+    description: "Failure percentage that opens the breaker.",
     usedIn: ["cache"],
   },
 
@@ -755,7 +787,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Calls in the window before the breaker may open. Default 20.",
+    default: "20",
+    description: "Calls in the window before the breaker may open.",
     usedIn: ["cache"],
   },
 
@@ -765,7 +798,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Time open before a half-open probe. Default 15000.",
+    default: "15000",
+    description: "Time open before a half-open probe.",
     usedIn: ["cache"],
   },
 
@@ -775,7 +809,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "How long a stored Idempotency-Key result is replayed. Default 86400 (24 h).",
+    default: "86400",
+    description: "How long a stored Idempotency-Key result is replayed. 86400 = 24 h.",
     usedIn: ["idempotency"],
   },
 
@@ -932,7 +967,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "enum",
     values: ["all", "-1", "0", "1"],
     required: false,
-    description: "Producer acks. Default all.",
+    default: "all",
+    description: "Producer acks.",
     usedIn: ["kafka"],
   },
 
@@ -941,7 +977,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "kafka.producer.enable_idempotence",
     type: "bool",
     required: false,
-    description: "Producer enable.idempotence (true|false). Default true.",
+    default: "true",
+    description: "Producer enable.idempotence (true|false).",
     usedIn: ["kafka"],
   },
 
@@ -951,8 +988,9 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "enum",
     values: ["none", "gzip", "snappy", "lz4", "zstd"],
     required: false,
+    default: "lz4",
     description:
-      "Producer compression.type (none|gzip|snappy|lz4|zstd). Default lz4 — cheapest in CPU and " +
+      "Producer compression.type (none|gzip|snappy|lz4|zstd). lz4: cheapest in CPU and " +
       "latency; zstd when bandwidth or broker disk is the constraint.",
     usedIn: ["kafka"],
   },
@@ -963,7 +1001,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
-    description: "Producer linger.ms (batching window). Default 10.",
+    default: "10",
+    description: "Producer linger.ms (batching window).",
     usedIn: ["kafka"],
   },
 
@@ -973,7 +1012,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Producer message.timeout.ms (delivery deadline). Default 30000.",
+    default: "30000",
+    description: "Producer message.timeout.ms (delivery deadline).",
     usedIn: ["kafka"],
   },
 
@@ -983,6 +1023,7 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
+    default: "65536",
     description:
       "Producer queue.buffering.max.kbytes — memory bound of the local send queue. Default 65536 " +
       "(64 MiB; librdkafka's own is 1 GiB). A full queue fails send() with QUEUE_FULL.",
@@ -1017,9 +1058,10 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
+    default: "1",
     description:
       "How many assigned partitions a consumer handles in parallel (eachMessage; order within " +
-      "a partition holds). Default 1 — raise it when one consumer serves many partitions/topics.",
+      "a partition holds). Raise it when one consumer serves many partitions/topics.",
     usedIn: ["apps/worker"],
   },
 
@@ -1029,9 +1071,10 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
+    default: "10000",
     description:
       "Waiting jobs in the worker's BullMQ queue above which the Kafka consumer pauses its " +
-      "partitions (back-pressure: the backlog stays in Kafka, not in Valkey). Default 10000.",
+      "partitions (back-pressure: the backlog stays in Kafka, not in Valkey).",
     usedIn: ["apps/worker"],
   },
 
@@ -1041,9 +1084,10 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 0,
     required: false,
+    default: "15000",
     description:
       "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
-      "metrics. Default 15000; 0 disables them. The report lists every topic and partition " +
+      "metrics. 0 disables them. The report lists every topic and partition " +
       "(~2.4 MB / ~5 ms to parse at 300 topics × 12 partitions): raise it for thousands of topics.",
     usedIn: ["kafka"],
   },
@@ -1053,7 +1097,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     yaml: "kafka.consumer.enable_auto_commit",
     type: "bool",
     required: false,
-    description: "Consumer enable.auto.commit (true|false). Default false (commit after handling).",
+    default: "false",
+    description: "Consumer enable.auto.commit (true|false). Commits after handling.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1063,7 +1108,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Consumer session.timeout.ms. Default 10000.",
+    default: "10000",
+    description: "Consumer session.timeout.ms.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1073,7 +1119,8 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
     type: "int",
     min: 1,
     required: false,
-    description: "Consumer max.poll.interval.ms. Default 300000.",
+    default: "300000",
+    description: "Consumer max.poll.interval.ms.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1248,4 +1295,16 @@ export const ENV_REGISTRY: readonly EnvEntry[] = [
       "Belongs to the example tasks module — drop this entry when you replace it.",
     usedIn: ["modules/tasks"],
   },
-];
+] as const satisfies readonly EnvEntry[];
+
+/** Every entry, for code that walks the registry. */
+export const ENV_REGISTRY: readonly EnvEntry[] = REGISTRY;
+
+/** Every configuration key the application knows. */
+export type EnvKey = (typeof REGISTRY)[number]["key"];
+
+/** The keys with a registry default — reading one never yields undefined. */
+export type DefaultedEnvKey = Extract<
+  (typeof REGISTRY)[number],
+  { readonly default: string }
+>["key"];

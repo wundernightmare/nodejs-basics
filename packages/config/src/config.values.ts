@@ -4,16 +4,26 @@
  *
  * The loader runs parseConfigValue() over every set registry key at startup,
  * so a typo fails the boot with the full list. The readers below parse the
- * same way, with the same registry bounds, for code that builds its clients
- * from a ConfigService: an unset value is `undefined` (the caller supplies
- * its default), a bad one throws — never a silent fallback that runs
- * production on a value nobody chose.
+ * same way, with the same registry bounds and defaults, for code that builds
+ * its clients from a ConfigService: an unset value is the registry default
+ * (typed `T` for a key that has one, `T | undefined` otherwise — the key
+ * itself is checked against the registry by the compiler), a bad one throws
+ * — never a silent fallback that runs production on a value nobody chose.
  *
- *   linger: readInt(config, "KAFKA_PRODUCER_LINGER_MS") ?? 10,
+ *   linger: readInt(config, "KAFKA_PRODUCER_LINGER_MS"), // number
  */
 import { readFileSync } from "node:fs";
 
-import { ENV_REGISTRY, type EnvEntry, type EnvType } from "./env.registry.js";
+import {
+  type DefaultedEnvKey,
+  ENV_REGISTRY,
+  type EnvEntry,
+  type EnvKey,
+  type EnvType,
+} from "./env.registry.js";
+
+/** `T` for a key with a registry default, `T | undefined` for one without. */
+export type ConfigValue<K extends EnvKey, T> = K extends DefaultedEnvKey ? T : T | undefined;
 
 /** What a reader needs: ConfigService, or `{ get: (k) => process.env[k] }`. */
 export interface ConfigGetter {
@@ -96,39 +106,44 @@ export function parseConfigValue(rule: Rule, raw: string): Parsed {
   return PARSERS[rule.type](rule, raw, value);
 }
 
-const RULES = new Map(ENV_REGISTRY.map((e) => [e.key, e]));
+const RULES = new Map<string, EnvEntry>(ENV_REGISTRY.map((e) => [e.key, e]));
 
-function read(config: ConfigGetter, key: string, type: EnvType): unknown {
-  const raw = config.get(key);
-  if (raw === undefined || raw === null || raw === "") return undefined;
+function read(config: ConfigGetter, key: EnvKey, type: EnvType): unknown {
+  const entry = RULES.get(key);
+  let raw = config.get(key);
+  if (raw === undefined || raw === null || raw === "") raw = entry?.default;
+  if (raw === undefined) return undefined;
   // ConfigService hands back what a test put in it; process.env only strings.
   if (typeof raw !== "string") return raw;
-  return parseConfigValue({ ...RULES.get(key), key, type }, raw);
+  return parseConfigValue({ ...entry, key, type }, raw);
 }
 
-/** A non-empty string, or undefined. */
-export function readString(config: ConfigGetter, key: string): string | undefined {
-  return read(config, key, "string") as string | undefined;
+/** A non-empty string. */
+export function readString<K extends EnvKey>(config: ConfigGetter, key: K): ConfigValue<K, string> {
+  return read(config, key, "string") as ConfigValue<K, string>;
 }
 
 /** A whole number within the key's registry bounds. */
-export function readInt(config: ConfigGetter, key: string): number | undefined {
-  return read(config, key, "int") as number | undefined;
+export function readInt<K extends EnvKey>(config: ConfigGetter, key: K): ConfigValue<K, number> {
+  return read(config, key, "int") as ConfigValue<K, number>;
 }
 
 /** A number within the key's registry bounds. */
-export function readNumber(config: ConfigGetter, key: string): number | undefined {
-  return read(config, key, "number") as number | undefined;
+export function readNumber<K extends EnvKey>(config: ConfigGetter, key: K): ConfigValue<K, number> {
+  return read(config, key, "number") as ConfigValue<K, number>;
 }
 
 /** true|false|1|0. */
-export function readBool(config: ConfigGetter, key: string): boolean | undefined {
-  return read(config, key, "bool") as boolean | undefined;
+export function readBool<K extends EnvKey>(config: ConfigGetter, key: K): ConfigValue<K, boolean> {
+  return read(config, key, "bool") as ConfigValue<K, boolean>;
 }
 
 /** A JSON object (the escape-hatch `*_EXTRA_PROPERTIES` keys). */
-export function readJson(config: ConfigGetter, key: string): Record<string, unknown> | undefined {
-  return read(config, key, "json") as Record<string, unknown> | undefined;
+export function readJson<K extends EnvKey>(
+  config: ConfigGetter,
+  key: K,
+): ConfigValue<K, Record<string, unknown>> {
+  return read(config, key, "json") as ConfigValue<K, Record<string, unknown>>;
 }
 
 /**
@@ -137,7 +152,7 @@ export function readJson(config: ConfigGetter, key: string): Record<string, unkn
  * that cannot be read or is empty throws — a misconfigured secret must not
  * start the service with no password. Rotation is a rollout restart.
  */
-export function readSecretFile(config: ConfigGetter, key: string): string | undefined {
+export function readSecretFile(config: ConfigGetter, key: EnvKey): string | undefined {
   const path = readString(config, key);
   if (path === undefined) return undefined;
   let content = "";
