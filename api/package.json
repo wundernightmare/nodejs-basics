@@ -7,8 +7,7 @@
   "scripts": {
     "compile": "tsp compile tsp/main.tsp",
     "types": "openapi-typescript openapi3/tasks.openapi.yaml -o ../packages/contracts/src/tasksapi.gen.ts && node scripts/event-types.mjs",
-    "generate": "pnpm compile && pnpm types",
-    "clean": "rm -rf openapi3 jsonschema"
+    "generate": "pnpm compile && pnpm types"
   },
   "devDependencies": {
     "@typespec/compiler": "1.16.0",
