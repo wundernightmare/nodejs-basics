@@ -192,7 +192,7 @@ export const pgBreakerProvider: FactoryProvider<DependencyCircuitBreaker> = {
         // violation or syntax error is a caller bug, not a broker outage.
         const code = (err as NodeJS.ErrnoException | undefined)?.code;
         if (typeof code === "string") {
-          return !/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE)$/.test(code);
+          return !/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE)$/u.test(code);
         }
         // Anything without a Node error code is a Postgres-level error;
         // exclude from the breaker budget.

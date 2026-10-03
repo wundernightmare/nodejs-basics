@@ -41,8 +41,8 @@ function runtimeSources(): Map<string, string> {
 interface Created {
   name: string;
   kind: string;
-  unit?: string;
-  description?: string;
+  unit: string | undefined;
+  description: string | undefined;
   file: string;
 }
 

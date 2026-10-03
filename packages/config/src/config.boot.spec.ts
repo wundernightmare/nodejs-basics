@@ -35,7 +35,8 @@ async function run(
     );
     return { out, err };
   } catch (e) {
-    return { code: (e as { exitCode?: number }).exitCode, out, err };
+    const { exitCode } = e as { exitCode?: number };
+    return exitCode === undefined ? { out, err } : { code: exitCode, out, err };
   } finally {
     exit.mockRestore();
   }

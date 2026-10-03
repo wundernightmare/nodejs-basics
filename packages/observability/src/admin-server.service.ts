@@ -39,6 +39,7 @@ import {
   Optional,
 } from "@nestjs/common";
 
+import { processEnv, readInt } from "@base/config";
 import {
   AppLogger,
   ecsError,
@@ -71,7 +72,7 @@ export interface ConfigView {
 
 export interface AdminServerOptions {
   /** Raw effective config for GET /admin/config (configSnapshot from @base/config). */
-  configSnapshot?: () => ConfigView;
+  configSnapshot?: (() => ConfigView) | undefined;
 }
 
 /** Process start, for /version. */
@@ -124,7 +125,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    const port = parseInt(process.env["ADMIN_PORT"] ?? "9090", 10);
+    const port = readInt(processEnv, "ADMIN_PORT");
 
     this.server = http.createServer((req, res) => {
       this.handleRequest(req, res);
@@ -158,7 +159,10 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     if (!this.server) return;
     this.logger.info({ "process.signal": signal ?? null }, "Admin server shutting down");
     await new Promise<void>((resolve, reject) => {
-      this.server!.close((err) => (err ? reject(err) : resolve()));
+      this.server!.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
     this.server = null;
   }
@@ -174,11 +178,19 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         },
       },
     });
-    const live: RouteEntry = { handler: ({ res }) => this.sendJson(res, 200, { status: "ok" }) };
+    const live: RouteEntry = {
+      handler: ({ res }) => {
+        this.sendJson(res, 200, { status: "ok" });
+      },
+    };
     routes.set("/livez", { GET: live });
     routes.set("/healthz", { GET: live });
     routes.set("/readyz", { GET: { handler: (ctx) => this.readyz(ctx) } });
-    const version: RouteEntry = { handler: ({ res }) => this.sendJson(res, 200, this.version()) };
+    const version: RouteEntry = {
+      handler: ({ res }) => {
+        this.sendJson(res, 200, this.version());
+      },
+    };
     routes.set("/version", { GET: version });
     routes.set("/admin/info", { GET: version });
     if (this.options.configSnapshot !== undefined) {
@@ -193,9 +205,18 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       });
     }
     routes.set("/admin/log-level", {
-      GET: { handler: ({ res }) => this.sendJson(res, 200, logLevel.snapshot()) },
+      GET: {
+        handler: ({ res }) => {
+          this.sendJson(res, 200, logLevel.snapshot());
+        },
+      },
       PUT: { handler: (ctx) => this.putLogLevel(ctx), auth: true },
-      DELETE: { handler: (ctx) => this.deleteLogLevel(ctx), auth: true },
+      DELETE: {
+        handler: (ctx) => {
+          this.deleteLogLevel(ctx);
+        },
+        auth: true,
+      },
     });
     if (this.heapSnapshot) {
       routes.set("/debug/heapdump", { POST: { handler: (ctx) => this.heapdump(ctx), auth: true } });
@@ -407,7 +428,9 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   private readBody(req: http.IncomingMessage): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
       req.on("end", () => {
         resolve(Buffer.concat(chunks).toString("utf8"));
       });

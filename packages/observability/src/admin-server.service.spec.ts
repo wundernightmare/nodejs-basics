@@ -93,7 +93,7 @@ describe("AdminServerService (auth=off)", () => {
       version: expect.any(String),
       revision: expect.any(String),
       node: process.version,
-      started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
       uptime_seconds: expect.any(Number),
       env: expect.any(String),
     });
@@ -139,7 +139,7 @@ describe("AdminServerService (auth=off)", () => {
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET");
     const id = res.headers.get("x-request-id");
-    expect(id).toMatch(/^[0-9A-Z]{8}$/);
+    expect(id).toMatch(/^[0-9A-Z]{8}$/u);
     expect(await res.json()).toMatchObject({
       title: "Method Not Allowed",
       status: 405,

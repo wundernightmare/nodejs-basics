@@ -17,6 +17,7 @@
  * The helper is RNG-injectable for deterministic tests. Production callers
  * omit the third argument and get `Math.random`.
  */
+import { setTimeout as delay } from "node:timers/promises";
 
 export interface BackoffSpec {
   /**
@@ -67,5 +68,5 @@ export function computeJitteredDelay(
  */
 export function sleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return delay(ms);
 }

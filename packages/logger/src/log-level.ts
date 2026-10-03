@@ -70,14 +70,14 @@ const DURATION_UNITS: Readonly<Record<string, number>> = {
  */
 export function parseDuration(raw: string): number {
   const input = raw.trim();
-  if (/^\d+(\.\d+)?$/.test(input)) {
+  if (/^\d+(\.\d+)?$/u.test(input)) {
     const ms = Math.round(Number(input) * 1_000);
     if (!Number.isFinite(ms))
       throw new Error(`invalid duration ${JSON.stringify(raw)} (too large)`);
     if (ms > 0) return ms;
     throw new Error(`duration must be positive: ${JSON.stringify(raw)}`);
   }
-  const re = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/gy;
+  const re = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/guy;
   let total = 0;
   let matched = 0;
   for (let m = re.exec(input); m !== null; m = re.exec(input)) {

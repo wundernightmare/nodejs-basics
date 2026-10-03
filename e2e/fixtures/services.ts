@@ -17,9 +17,9 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const STATE_FILE = path.join(ROOT, "e2e", ".e2e-state.json");
 /** Each spawned service writes its stdout and stderr to <name>.log here. */
 export const LOG_DIR = path.join(ROOT, "e2e", "test-results");
@@ -118,7 +118,7 @@ export async function stopServices(): Promise<void> {
         process.kill(pid, "SIGKILL");
         break;
       }
-      await new Promise((r) => setTimeout(r, 100));
+      await delay(100);
     }
   }
 }

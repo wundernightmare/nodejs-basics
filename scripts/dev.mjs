@@ -82,7 +82,7 @@ vite.stdout.on("data", (chunk) => {
   const text = chunk.toString();
   process.stdout.write(text);
   // Vite prints "built in <n>ms" after every successful (re)build.
-  if (/built in/.test(text)) restartApp();
+  if (/built in/u.test(text)) restartApp();
 });
 
 function stop(signal) {
@@ -92,8 +92,12 @@ function stop(signal) {
   vite.kill(signal);
   setTimeout(() => process.exit(0), 3000).unref();
 }
-process.on("SIGINT", () => stop("SIGINT"));
-process.on("SIGTERM", () => stop("SIGTERM"));
+process.on("SIGINT", () => {
+  stop("SIGINT");
+});
+process.on("SIGTERM", () => {
+  stop("SIGTERM");
+});
 vite.on("exit", (code) => {
   if (!stopping) {
     console.error(`dev: vite exited with ${code}`);

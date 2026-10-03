@@ -42,7 +42,7 @@ export function pgTarget(options: PoolConfig): Attributes {
   const match =
     url === undefined
       ? null
-      : /^[a-z]+:\/\/(?:[^@/]*@)?([^:/,?]+)(?::(\d+))?[^/]*\/([^?]*)/i.exec(url);
+      : /^[a-z]+:\/\/(?:[^@/]*@)?([^:/,?]+)(?::(\d+))?[^/]*\/([^?]*)/iu.exec(url);
   const host = match?.[1] ?? (typeof options.host === "string" ? options.host : undefined);
   const port = match?.[2] ?? options.port;
   const database = match?.[3] ?? options.database;
@@ -66,7 +66,7 @@ function queryText(arg: unknown): string | undefined {
 }
 
 function startQuerySpan(text: string, target: Attributes): Span {
-  const operation = /^\s*([a-z]+)/i.exec(text)?.[1]?.toUpperCase();
+  const operation = /^\s*([a-z]+)/iu.exec(text)?.[1]?.toUpperCase();
   const namespace = target["db.namespace"];
   const attributes: Attributes = {
     ...target,
@@ -80,7 +80,10 @@ function startQuerySpan(text: string, target: Attributes): Span {
 function endSpan(span: Span, err?: unknown): void {
   if (err !== undefined && err !== null) {
     span.recordException(err instanceof Error ? err : JSON.stringify(err));
-    span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error | undefined)?.message });
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      ...(err instanceof Error ? { message: err.message } : {}),
+    });
     const code = (err as { code?: unknown }).code;
     if (typeof code === "string") span.setAttribute("db.response.status_code", code);
   }

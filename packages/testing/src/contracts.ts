@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
@@ -72,7 +71,7 @@ const METHODS = new Set(["get", "put", "post", "delete", "options", "head", "pat
 
 /** The repository root: the directory holding pnpm-workspace.yaml above this file. */
 export function workspaceRoot(): string {
-  let dir = dirname(fileURLToPath(import.meta.url));
+  let dir = import.meta.dirname;
   for (let i = 0; i < 6; i++) {
     if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
     dir = dirname(dir);
@@ -129,7 +128,7 @@ export function loadOpenAPI(rel: string): OpenAPIContract {
       const params = matchTemplate(template, target);
       if (!params) continue;
       const op = item[m];
-      if (!op || !METHODS.has(m)) continue;
+      if (op === undefined || op === null || !METHODS.has(m)) continue;
       // Prefer the template with the most literal segments ("/tasks/all" over "/tasks/{id}").
       const literals = splitPath(template).filter((s) => !isParam(s)).length;
       if (literals > bestLiterals) {
@@ -246,7 +245,7 @@ function safeDecode(s: string): string {
  * nullable `allOf`/`$ref`); everything else passes through, recursively.
  */
 export function toJsonSchema(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(toJsonSchema);
+  if (Array.isArray(schema)) return schema.map((item) => toJsonSchema(item));
   if (typeof schema !== "object" || schema === null) return schema;
   const out: Record<string, unknown> = {};
   let nullable = false;
@@ -261,7 +260,7 @@ export function toJsonSchema(schema: unknown): unknown {
   if (typeof out["type"] === "string" && !("allOf" in out) && !("$ref" in out)) {
     out["type"] = [out["type"], "null"];
     if (Array.isArray(out["enum"]) && !out["enum"].includes(null))
-      out["enum"] = [...out["enum"], null];
+      out["enum"] = [...(out["enum"] as unknown[]), null];
     return out;
   }
   return { anyOf: [out, { type: "null" }] };
@@ -290,7 +289,7 @@ function isNonEmpty(body: unknown): boolean {
 function decodeBody(body: unknown, mediaType: string, label: string, status: number): unknown {
   if (Buffer.isBuffer(body)) body = body.toString("utf8");
   if (typeof body !== "string") return body;
-  if (!/[/+]json$/.test(mediaType)) return body;
+  if (!/[/+]json$/u.test(mediaType)) return body;
   try {
     return JSON.parse(body) as unknown;
   } catch {

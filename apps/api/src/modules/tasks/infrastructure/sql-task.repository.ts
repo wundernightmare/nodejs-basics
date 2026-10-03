@@ -140,8 +140,7 @@ export class SqlTaskRepository implements TaskRepository {
         sets.push(`description = $${i++}`);
         values.push(patch.description);
       }
-      sets.push(`updated_at = NOW()`);
-      sets.push(`version = version + 1`);
+      sets.push(`updated_at = NOW()`, `version = version + 1`);
 
       values.push(id, expectedVersion);
 

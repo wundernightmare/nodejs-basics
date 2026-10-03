@@ -26,6 +26,7 @@
 import { createReadStream, unlink } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import v8 from "node:v8";
 
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -113,7 +114,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
    * Safe to call from the admin server on demand.
    */
   async writeDiagnosticReport(trigger: CrashReportTrigger = "manual"): Promise<CrashReportResult> {
-    const ts = new Date().toISOString().replaceAll(/[:.]/g, "-");
+    const ts = new Date().toISOString().replaceAll(/[:.]/gu, "-");
     const base = `crash-${ts}-${trigger}`;
 
     const reportLocalPath = join(tmpdir(), `${base}.json`);
@@ -167,7 +168,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
       "uncaughtException",
     );
 
-    const ts = new Date().toISOString().replaceAll(/[:.]/g, "-");
+    const ts = new Date().toISOString().replaceAll(/[:.]/gu, "-");
     const base = `crash-${ts}-uncaught`;
     const reportLocalPath = join(tmpdir(), `${base}.json`);
     const snapshotLocalPath = join(tmpdir(), `${base}.heapsnapshot`);
@@ -200,10 +201,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
         ).catch(() => null),
       ]);
 
-      await Promise.race([
-        uploadPromise,
-        new Promise<void>((resolve) => setTimeout(resolve, UPLOAD_TIMEOUT_MS)),
-      ]);
+      await Promise.race([uploadPromise, delay(UPLOAD_TIMEOUT_MS)]);
     }
 
     process.exit(1);

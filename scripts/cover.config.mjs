@@ -30,15 +30,15 @@ export default {
 
   /** Files never counted (regex on the repo-relative path). */
   exclude: [
-    /^packages\/testing\//, // the harness itself
-    /\.spec\.ts$/,
-    /\/index\.ts$/, // re-export barrels
-    /^apps\/[^/]+\/src\/instrumentation\.ts$/, // side-effect-only OTel bootstrap
+    /^packages\/testing\//u, // the harness itself
+    /\.spec\.ts$/u,
+    /\/index\.ts$/u, // re-export barrels
+    /^apps\/[^/]+\/src\/instrumentation\.ts$/u, // side-effect-only OTel bootstrap
   ],
 
   /** Per-package overrides for the parts that are pure logic and must stay high. */
   override: [
-    { path: /^packages\/resilient-client$/, threshold: 80 },
-    { path: /^packages\/common$/, threshold: 70 },
+    { path: /^packages\/resilient-client$/u, threshold: 80 },
+    { path: /^packages\/common$/u, threshold: 70 },
   ],
 };

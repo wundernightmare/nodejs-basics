@@ -18,7 +18,7 @@
 export const REDACTED = "[redacted]";
 
 const SECRET_KEY =
-  /(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|extra[_-]?properties)/i;
+  /(password|passwd|secret|token|api[_-]?key|private[_-]?key|credential|extra[_-]?properties)/iu;
 
 /** Whether a key names a secret by convention. */
 export function isSecretKey(key: string): boolean {

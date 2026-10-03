@@ -206,7 +206,7 @@ describe("DependencyCircuitBreaker", () => {
     await testCase("NB-766", "per-action watchdog timeout");
     const b = make({ timeoutMs: 20 });
     await expect(b.execute(() => new Promise((r) => setTimeout(r, 200)))).rejects.toThrow(
-      /timed out/i,
+      /timed out/iu,
     );
   });
 });
