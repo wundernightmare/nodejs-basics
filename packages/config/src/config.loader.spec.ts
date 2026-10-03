@@ -21,6 +21,7 @@ const KEYS = [
   "LOG_LEVEL_MAX_TTL",
   "OTEL_SERVICE_NAME",
   "ALLOWED_ORIGINS",
+  "DISABLED_INTEGRATIONS",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -191,6 +192,28 @@ describe("yamlConfigLoader + configSnapshot", () => {
     const { yamlConfigLoader } = await loader();
     yamlConfigLoader({ defaults: { OTEL_SERVICE_NAME: "my-app" } });
     expect(process.env["OTEL_SERVICE_NAME"]).toBe("my-app");
+  });
+
+  it("lets an app run without only the integrations it declares", async () => {
+    await testCase(
+      "NB-1003",
+      "DISABLED_INTEGRATIONS: what the app cannot do without fails the start",
+    );
+    file("app:\n  disabled_integrations: [Valkey, kafka]\n");
+    let { yamlConfigLoader } = await loader();
+    expect(() => yamlConfigLoader({ integrations: ["valkey"] })).toThrow(
+      "DISABLED_INTEGRATIONS: this app cannot run without kafka (it can without: valkey)",
+    );
+    ({ yamlConfigLoader } = await loader());
+    expect(() => yamlConfigLoader({ integrations: ["valkey", "kafka"] })).not.toThrow();
+    const { integrationEnabled } = await import("./integrations.js");
+    expect([integrationEnabled("valkey"), integrationEnabled("kafka")]).toEqual([false, false]);
+
+    process.env["DISABLED_INTEGRATIONS"] = "kafak";
+    ({ yamlConfigLoader } = await loader());
+    expect(() => yamlConfigLoader({ integrations: ["kafka"] })).toThrow(
+      'unknown integration "kafak" (known: valkey, kafka)',
+    );
   });
 
   it("joins a YAML list into the comma-separated value the code splits", async () => {

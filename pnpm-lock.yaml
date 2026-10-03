@@ -597,6 +597,9 @@ importers:
       '@base/config':
         specifier: workspace:*
         version: link:../config
+      '@base/database':
+        specifier: workspace:*
+        version: link:../database
       '@base/logger':
         specifier: workspace:*
         version: link:../logger
@@ -612,6 +615,9 @@ importers:
       iovalkey:
         specifier: 0.4.0
         version: 0.4.0(supports-color@10.2.2)
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
       rxjs:
         specifier: 7.8.2
         version: 7.8.2
@@ -619,6 +625,9 @@ importers:
       '@base/testing':
         specifier: workspace:*
         version: link:../testing
+      '@types/pg':
+        specifier: ^8.23.1
+        version: 8.23.1
 
   packages/jobs:
     dependencies:
@@ -706,9 +715,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 3.1136.0
         version: 3.1136.0
-      '@base/cache':
+      '@base/config':
         specifier: workspace:*
-        version: link:../cache
+        version: link:../config
       '@base/database':
         specifier: workspace:*
         version: link:../database
@@ -760,9 +769,6 @@ importers:
       fastify:
         specifier: ^5.12.5
         version: 5.12.5
-      iovalkey:
-        specifier: 0.4.0
-        version: 0.4.0(supports-color@10.2.2)
       pg:
         specifier: 8.23.0
         version: 8.23.0

@@ -42,6 +42,15 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "apps/worker",
   },
   {
+    name: "app.integration.enabled",
+    kind: "ObservableGauge",
+    labels: ["integration"],
+    description:
+      "1 when the integration is on in this process, 0 when DISABLED_INTEGRATIONS switched it off.",
+    watch: "0 in production: a process runs without it (kafka: events wait in the outbox table).",
+    source: "packages/observability",
+  },
+  {
     name: "valkey.client.connected",
     kind: "ObservableGauge",
     labels: ["client_id"],
@@ -172,7 +181,7 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     unit: "{command}",
     labels: [],
     description: "Commands dispatched to Valkey that are awaiting a reply from the server",
-    source: "packages/observability",
+    source: "packages/cache",
   },
   {
     name: "db.client.connection.count",

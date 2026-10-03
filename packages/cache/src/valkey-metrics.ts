@@ -3,6 +3,7 @@
  *
  * What we measure:
  *   valkey.client.connected             gauge 1/0   {client_id}
+ *   valkey.client.command_queue_size    gauge       commands awaiting a reply
  *   valkey.client.errors_total          counter     {client_id, type}
  *   valkey.client.reconnects_total      counter     {client_id}
  *
@@ -16,6 +17,10 @@ import type { Redis as Valkey } from "iovalkey";
 export interface ValkeyMetricsHandle {
   dispose(): void;
 }
+
+// iovalkey exposes commandQueue as a public property but does not re-export its
+// internal Deque type.  Access it via a structural alias to stay type-safe.
+type ValkeyWithQueue = Valkey & { commandQueue?: { length: number } };
 
 export function registerValkeyMetrics(client: Valkey, attrs: Attributes = {}): ValkeyMetricsHandle {
   // Tests sometimes substitute a plain-object mock without an EventEmitter
@@ -32,6 +37,10 @@ export function registerValkeyMetrics(client: Valkey, attrs: Attributes = {}): V
   const connectedGauge: ObservableGauge = meter.createObservableGauge("valkey.client.connected", {
     description: "1 when the Valkey client is in the ready state, 0 otherwise.",
   });
+  const commandQueueSize = meter.createObservableGauge("valkey.client.command_queue_size", {
+    description: "Commands dispatched to Valkey that are awaiting a reply from the server",
+    unit: "{command}",
+  });
   const errorsCounter: Counter = meter.createCounter("valkey.client.errors_total", {
     description: "Total number of errors emitted by the Valkey client.",
   });
@@ -43,8 +52,9 @@ export function registerValkeyMetrics(client: Valkey, attrs: Attributes = {}): V
     observe: (g: ObservableGauge, v: number, a?: Attributes) => void;
   }): void => {
     result.observe(connectedGauge, connected, attrs);
+    result.observe(commandQueueSize, (client as ValkeyWithQueue).commandQueue?.length ?? 0);
   };
-  meter.addBatchObservableCallback(observer, [connectedGauge]);
+  meter.addBatchObservableCallback(observer, [connectedGauge, commandQueueSize]);
 
   const onReady = (): void => {
     connected = 1;
@@ -67,7 +77,7 @@ export function registerValkeyMetrics(client: Valkey, attrs: Attributes = {}): V
 
   return {
     dispose: (): void => {
-      meter.removeBatchObservableCallback(observer, [connectedGauge]);
+      meter.removeBatchObservableCallback(observer, [connectedGauge, commandQueueSize]);
       client.off("ready", onReady);
       client.off("end", onClose);
       client.off("close", onClose);
