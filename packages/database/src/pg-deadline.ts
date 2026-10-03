@@ -21,7 +21,7 @@ const QUERY_CANCELED = "57014";
 /**
  * Cleanup always goes out, budget or not: blocking a ROLLBACK after a
  * cancelled statement would hand the connection back to the pool inside an
- * aborted transaction (found by pg-deadline.integration.spec.ts).
+ * aborted transaction.
  */
 const ALWAYS = /^\s*ROLLBACK\b/iu;
 

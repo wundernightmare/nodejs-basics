@@ -24,7 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
-    "lint": "oxlint --max-warnings=8 src",
+    "lint": "oxlint --max-warnings=0 src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
@@ -32,7 +32,6 @@
     "clean": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
-    "@base/logger": "workspace:*",
     "yaml": "2.9.1"
   },
   "devDependencies": {

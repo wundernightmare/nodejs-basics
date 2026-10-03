@@ -2,7 +2,6 @@ import type { FactoryProvider } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import pgDefault, { Pool, type PoolClient } from "pg";
 
-import { SecretFileWatcher } from "@base/config";
 import { pinoLogger } from "@base/logger";
 import { DependencyCircuitBreaker } from "@base/resilience";
 
@@ -28,14 +27,6 @@ export const PG_CONFIG = Symbol("PG_CONFIG");
 
 /** DI token for the postgres circuit breaker (shared across all call sites). */
 export const PG_BREAKER = Symbol("PG_BREAKER");
-
-/**
- * DI token for the optional DATABASE_PASSWORD_FILE SecretFileWatcher —
- * `null` when the env key is unset. DatabaseLifecycleService
- * calls .stop() on shutdown so the polling timer doesn't leak across
- * test suites.
- */
-export const PG_PASSWORD_WATCHER = Symbol("PG_PASSWORD_WATCHER");
 
 const logger = pinoLogger.child({ "log.logger": "PgPool" });
 
@@ -70,24 +61,9 @@ function resolvePoolCtor(useNative: boolean): typeof Pool {
  * Shared pool constructor. Both the primary (read-write) and the read-only
  * provider funnel through this to keep session-init + error handling
  * identical.
- *
- * `passwordWatcher` is optional — when provided, the cached secret value
- * is wired into pg.Pool's `password` callback so new connections pick up
- * Secret rotations without a pod restart. Both pool variants share the
- * same watcher so they rotate atomically. Limitation: pg-native delegates
- * to libpq, which does NOT re-resolve the password on reconnect; with
- * DATABASE_USE_NATIVE=true, rotation needs a pod restart.
  */
-function buildPool(
-  built: PostgresBuilderResult,
-  label: "primary" | "readonly",
-  passwordWatcher: SecretFileWatcher | null,
-): Pool {
-  const PoolCtor = resolvePoolCtor(built.useNative);
-  const opts = passwordWatcher
-    ? { ...built.poolOptions, password: (): string => passwordWatcher.current() }
-    : built.poolOptions;
-  const pool = new PoolCtor(opts);
+function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"): Pool {
+  const pool = new (resolvePoolCtor(built.useNative))(built.poolOptions);
   // CLIENT spans for every query (pg-tracing.ts), tagged with this pool's target.
   tracePgPool(pool, { ...pgTarget(built.poolOptions), "db.client.connection.pool.name": label });
   // The request budget (pg-deadline.ts); registered after tracing so it runs first.
@@ -144,9 +120,8 @@ function buildPool(
  */
 export const pgPoolProvider: FactoryProvider<Pool> = {
   provide: PG_POOL,
-  inject: [ConfigService, PG_PASSWORD_WATCHER],
-  useFactory: (config: ConfigService, watcher: SecretFileWatcher | null): Pool =>
-    buildPool(buildPostgresConfig(config), "primary", watcher),
+  inject: [ConfigService],
+  useFactory: (config: ConfigService): Pool => buildPool(buildPostgresConfig(config), "primary"),
 };
 
 /**
@@ -168,8 +143,8 @@ export const pgPoolProvider: FactoryProvider<Pool> = {
  */
 export const pgReadonlyPoolProvider: FactoryProvider<Pool> = {
   provide: PG_POOL_READONLY,
-  inject: [ConfigService, PG_POOL, PG_PASSWORD_WATCHER],
-  useFactory: (config: ConfigService, primary: Pool, watcher: SecretFileWatcher | null): Pool => {
+  inject: [ConfigService, PG_POOL],
+  useFactory: (config: ConfigService, primary: Pool): Pool => {
     const readonlyUrl = config.get<string>("DATABASE_READONLY_URL");
     if (typeof readonlyUrl !== "string" || readonlyUrl.length === 0) {
       // Alias the primary pool. pg.Pool has no "clone" — returning the
@@ -177,7 +152,7 @@ export const pgReadonlyPoolProvider: FactoryProvider<Pool> = {
       // primary/replica topology still work against the single node.
       return primary;
     }
-    return buildPool(buildPostgresConfig(config, { variant: "readonly" }), "readonly", watcher);
+    return buildPool(buildPostgresConfig(config, { variant: "readonly" }), "readonly");
   },
 };
 
@@ -191,24 +166,6 @@ export const pgConfigProvider: FactoryProvider<PostgresBuilderResult> = {
   provide: PG_CONFIG,
   inject: [ConfigService],
   useFactory: (config: ConfigService): PostgresBuilderResult => buildPostgresConfig(config),
-};
-
-/**
- * Owns the SecretFileWatcher for DATABASE_PASSWORD_FILE. Returns `null`
- * when the env key is unset so downstream providers can short-circuit
- * with no allocation. Started immediately so the polling loop is live by
- * the time pool factories run.
- */
-export const pgPasswordWatcherProvider: FactoryProvider<SecretFileWatcher | null> = {
-  provide: PG_PASSWORD_WATCHER,
-  inject: [ConfigService],
-  useFactory: (config: ConfigService): SecretFileWatcher | null => {
-    const passwordFile = config.get<string>("DATABASE_PASSWORD_FILE");
-    if (typeof passwordFile !== "string" || passwordFile.length === 0) return null;
-    const watcher = new SecretFileWatcher({ path: passwordFile, name: "DATABASE_PASSWORD" });
-    watcher.start();
-    return watcher;
-  },
 };
 
 /**
