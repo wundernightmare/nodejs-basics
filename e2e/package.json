@@ -19,7 +19,9 @@
   },
   "devDependencies": {
     "@base/contracts": "workspace:*",
+    "@base/logger": "workspace:*",
     "@base/observability": "workspace:*",
+    "@base/testing": "workspace:*",
     "@playwright/test": "1.63.0",
     "@types/node": "26.6.2",
     "allure-js-commons": "3.12.2",

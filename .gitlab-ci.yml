@@ -455,6 +455,7 @@ docker-build-scan:
     # HTTPS_PROXY / NO_PROXY from the job variables.
     - |
       docker build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
+        --build-arg "SERVICE_VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHA}" --build-arg "GIT_COMMIT=$CI_COMMIT_SHA" \
         -f "apps/$APP/Dockerfile" -t "nodejs-basics-$APP:ci" .
     - docker save -o "image-$APP.tar" "nodejs-basics-$APP:ci"
     - |

@@ -74,6 +74,11 @@ jobs:
           # patched (or a newly vulnerable) upstream image.
           pull: true
           tags: nodejs-basics-${{ matrix.app }}:ci
+          # The image's identity (service.version, /version): the tag of a
+          # release, the commit otherwise.
+          build-args: |
+            SERVICE_VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+            GIT_COMMIT=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.app }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app }}
 

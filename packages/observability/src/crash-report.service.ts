@@ -123,11 +123,19 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
     v8.writeHeapSnapshot(snapshotLocalPath);
 
     this.logger.info(
-      { "file.path": reportLocalPath, "event.action": trigger },
+      {
+        "event.action": "diagnostic_report.written",
+        "event.reason": trigger,
+        "file.path": reportLocalPath,
+      },
       "Diagnostic report written",
     );
     this.logger.info(
-      { "file.path": snapshotLocalPath, "event.action": trigger },
+      {
+        "event.action": "heap_snapshot.written",
+        "event.reason": trigger,
+        "file.path": snapshotLocalPath,
+      },
       "Heap snapshot written for crash report",
     );
 

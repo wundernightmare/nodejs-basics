@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { meta, testCase, workspaceRoot } from "@base/testing";
+import { logEnvelopeProblems, meta, testCase, workspaceRoot } from "@base/testing";
 
 const KEYS = [
   "PORT",
@@ -155,6 +155,8 @@ describe("yamlConfigLoader + configSnapshot", () => {
       const line = JSON.parse(String(stderr.mock.calls[0]?.[0])) as Record<string, string>;
       expect(line["log.level"]).toBe("fatal");
       expect(line["message"]).toContain("unknown key databse.url — did you mean database.url?");
+      expect(line["event.action"]).toBe("config.invalid");
+      expect(logEnvelopeProblems(line)).toEqual([]); // the same envelope as every other line
     } finally {
       exit.mockRestore();
       stderr.mockRestore();
