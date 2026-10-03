@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { METRIC_REGISTRY } from "@base/observability/metrics-registry";
+
 import { E2E, meta, testCase } from "../fixtures/meta.js";
 import { API_ADMIN_URL, WORKER_ADMIN_URL } from "../helpers/env.js";
 
@@ -38,5 +40,30 @@ test.describe("health & observability", () => {
     expect((await request.get(`${WORKER_ADMIN_URL}/livez`)).status()).toBe(200);
     const metrics = await request.get(`${WORKER_ADMIN_URL}/metrics`);
     expect(metrics.status()).toBe(200);
+  });
+
+  test("every exported metric is in the metrics registry", async ({ request }) => {
+    await meta(FEATURE);
+    await testCase("NB-994", "/metrics never shows a metric --metrics-reference does not explain");
+    // The exporter renames (dots → _, unit and _total suffixes); HELP keeps the description.
+    const documented = new Set(METRIC_REGISTRY.map((m) => m.description));
+    await request.get("/health"); // some HTTP traffic first
+    const undocumented: string[] = [];
+    let families = 0;
+    const scrapes = await Promise.all(
+      [`${API_ADMIN_URL}/metrics`, `${WORKER_ADMIN_URL}/metrics`].map(async (url) =>
+        (await request.get(url)).text(),
+      ),
+    );
+    for (const text of scrapes) {
+      for (const m of text.matchAll(/^# HELP (\S+) (.*)$/gmu)) {
+        const [, family = "", help = ""] = m;
+        families++;
+        if (family !== "target_info" && !documented.has(help))
+          undocumented.push(`${family}: ${help}`);
+      }
+    }
+    expect(families).toBeGreaterThan(20); // the scrape itself still works
+    expect(undocumented).toEqual([]);
   });
 });
