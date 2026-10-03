@@ -148,18 +148,20 @@ describe("yamlConfigLoader + configSnapshot", () => {
     file("databse:\n  url: x\n");
     const { loadConfigOrExit } = await loader();
     const exit = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const written: [number, string][] = [];
     try {
-      loadConfigOrExit();
+      loadConfigOrExit({}, (fd, text) => {
+        written.push([fd, text]);
+      });
       expect(exit).toHaveBeenCalledWith(78);
-      const line = JSON.parse(String(stderr.mock.calls[0]?.[0])) as Record<string, string>;
+      expect(written.map(([fd]) => fd)).toEqual([2]);
+      const line = JSON.parse(written[0]?.[1] ?? "") as Record<string, string>;
       expect(line["log.level"]).toBe("fatal");
       expect(line["message"]).toContain("unknown key databse.url — did you mean database.url?");
       expect(line["event.action"]).toBe("config.invalid");
       expect(logEnvelopeProblems(line)).toEqual([]); // the same envelope as every other line
     } finally {
       exit.mockRestore();
-      stderr.mockRestore();
     }
   });
 

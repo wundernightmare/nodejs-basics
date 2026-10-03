@@ -20,26 +20,23 @@ async function run(
   const { bootConfig } = await boot();
   let out = "";
   let err = "";
-  const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
-    out += String(chunk);
-    return true;
-  });
-  const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-    err += String(chunk);
-    return true;
-  });
   // process.exit must stop bootConfig, as the real one does.
   const exit = vi.spyOn(process, "exit").mockImplementation((code) => {
     throw Object.assign(new Error("exit"), { exitCode: code });
   });
   try {
-    bootConfig({ name: "test-app", defaults: { OTEL_SERVICE_NAME: "test-app" }, references }, argv);
+    bootConfig(
+      { name: "test-app", defaults: { OTEL_SERVICE_NAME: "test-app" }, references },
+      argv,
+      (fd, text) => {
+        if (fd === 1) out += text;
+        else err += text;
+      },
+    );
     return { out, err };
   } catch (e) {
     return { code: (e as { exitCode?: number }).exitCode, out, err };
   } finally {
-    stdout.mockRestore();
-    stderr.mockRestore();
     exit.mockRestore();
   }
 }
