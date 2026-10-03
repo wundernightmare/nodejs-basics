@@ -15,17 +15,14 @@ function harness(env: Record<string, string> = {}): {
   consumer: TaskEventsConsumer;
   add: ReturnType<typeof vi.fn>;
   waiting: ReturnType<typeof vi.fn>;
+  readiness: ReadinessService;
 } {
   const add = vi.fn(() => Promise.resolve({}));
   const waiting = vi.fn(() => Promise.resolve(0));
   const queue = { name: "task-events", add, getWaitingCount: waiting } as unknown as Queue;
-  const consumer = new TaskEventsConsumer(
-    new ConfigService(env),
-    queue,
-    appLogger,
-    new ReadinessService([], appLogger),
-  );
-  return { consumer, add, waiting };
+  const readiness = new ReadinessService([], appLogger);
+  const consumer = new TaskEventsConsumer(new ConfigService(env), queue, appLogger, readiness);
+  return { consumer, add, waiting, readiness };
 }
 
 const event = (s: string): Buffer => Buffer.from(s);
@@ -42,6 +39,14 @@ describe("TaskEventsConsumer.handle", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("is not ready until its Kafka consumer runs", async () => {
+    await testCase("NB-975", "a worker that cannot consume is taken out of rotation");
+    vi.useRealTimers();
+    const result = await harness().readiness.check();
+    expect(result.status).toBe("not_ready");
+    expect(result.checks["kafka"]).toBe("consumer not running");
   });
 
   it("enqueues a task.created event as a job keyed by the task id", async () => {

@@ -25,6 +25,7 @@ import {
   registerRequestContext,
   type ErrorMap,
 } from "@base/common";
+import { processEnv, readInt } from "@base/config";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { registerHttpInstrumentation } from "@base/observability";
 
@@ -58,19 +59,13 @@ export const DOMAIN_ERRORS: Array<new (...args: never[]) => Error> = [
 ];
 
 /** Build the app (not listening). Call `app.listen(...)` or `app.init()` on it. */
-/** A positive integer from the environment (ENV_REGISTRY supplies the defaults), else `fallback`. */
-function envInt(key: string, fallback: number): number {
-  const n = Number(process.env[key]);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
-}
-
 export async function createApp(): Promise<NestFastifyApplication> {
   // Limits of one request — see ENV_REGISTRY: a body over the limit is a 413
   // problem; the request budget bounds both receiving the request (slow
   // clients) and every Postgres / Valkey / HTTP call made while handling it
   // (the deadline, registerRequestContext below), after which the answer is 504.
-  const bodyLimit = envInt("HTTP_BODY_LIMIT_BYTES", 1_048_576);
-  const requestTimeoutMs = envInt("HTTP_REQUEST_TIMEOUT_MS", 10_000);
+  const bodyLimit = readInt(processEnv, "HTTP_BODY_LIMIT_BYTES") ?? 1_048_576;
+  const requestTimeoutMs = readInt(processEnv, "HTTP_REQUEST_TIMEOUT_MS") ?? 10_000;
   const adapter = new FastifyAdapter({
     bodyLimit,
     requestTimeout: requestTimeoutMs,
