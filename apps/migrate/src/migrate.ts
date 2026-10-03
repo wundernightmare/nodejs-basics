@@ -1,8 +1,8 @@
 /**
  * A forward-only SQL migration runner — the whole of it.
  *
- *   migrations/0001_create_tasks.sql
- *   migrations/0002_create_outbox.sql
+ *   migrations/0001_init.sql
+ *   migrations/0002_<next change>.sql
  *
  * - A file is `<4+ digit version>_<name>.sql`, applied in version order, each
  *   in its own transaction together with its row in `schema_migrations`.

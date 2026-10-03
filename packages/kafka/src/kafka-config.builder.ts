@@ -71,7 +71,9 @@ export function buildKafkaClientConfig(
   config: ConfigService,
   clientIdSuffix?: string,
 ): KafkaRdKafkaConfig {
-  const brokers = config.get<string>("KAFKA_BROKERS") ?? "localhost:9092";
+  // Set whenever Kafka is on — the loader checks it (@base/config integrations.ts).
+  const brokers = readString(config, "KAFKA_BROKERS");
+  if (brokers === undefined) throw new Error("KAFKA_BROKERS is not set: Kafka is off");
   const clientId =
     config.get<string>("KAFKA_CLIENT_ID") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
 

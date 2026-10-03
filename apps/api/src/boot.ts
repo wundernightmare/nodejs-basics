@@ -22,8 +22,6 @@ import { metricsReference } from "@base/observability/metrics-registry";
 bootConfig({
   name: "nodejs-basics-api",
   defaults: { OTEL_SERVICE_NAME: "nodejs-basics-api" },
-  // DISABLED_INTEGRATIONS=valkey,kafka runs it on Postgres alone (app.module.ts).
-  integrations: ["valkey", "kafka"],
   references: {
     "metrics-reference": {
       help: "every metric: name, instrument, unit, labels, meaning, when to worry",

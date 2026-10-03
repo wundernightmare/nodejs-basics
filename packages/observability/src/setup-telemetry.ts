@@ -106,10 +106,7 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   metrics.setGlobalMeterProvider(meterProvider);
 
   // ─── Tracing (OTLP gRPC) ──────────────────────────────────────────────────
-  const otlpEndpoint =
-    process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] ??
-    process.env["OTLP_ENDPOINT"] ??
-    "http://localhost:4317";
+  const otlpEndpoint = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317";
 
   const traceExporter = new OTLPTraceExporter({ url: otlpEndpoint });
   const tracerProvider = new BasicTracerProvider({

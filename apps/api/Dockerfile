@@ -55,7 +55,7 @@ RUN pnpm build
 # allure-commandline's Java jars. The running service (`node dist/main.js`)
 # never invokes them, but grype flags their bundled Go stdlib / jar deps. Removing the .pnpm packages
 # leaves every runtime dependency and the emitted dist untouched, so the image
-# still boots; it just no longer carries unreachable dev-tool CVEs.
+# still boots, without the unreachable dev-tool CVEs.
 # (A full pnpm-workspace prod prune is unreliable in Docker — `pnpm prune --prod`
 # drops prod deps it can't see from the root manifest, and `pnpm install --prod`
 # is a no-op once the dev tree exists — so we target the offenders directly.)

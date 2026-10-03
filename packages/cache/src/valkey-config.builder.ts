@@ -84,7 +84,9 @@ function resolveCa(config: ConfigService): Buffer | undefined {
 }
 
 export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
-  const url = config.get<string>("VALKEY_URL") ?? "redis://localhost:6379";
+  // Set whenever Valkey is on — the loader checks it (@base/config integrations.ts).
+  const url = readString(config, "VALKEY_URL");
+  if (url === undefined) throw new Error("VALKEY_URL is not set: Valkey is off");
   const parsed = new URL(url);
 
   // URL components are the baseline; explicit env vars override (so a
@@ -176,9 +178,8 @@ export function buildRetryStrategy(
 
 /**
  * Shape the parsed config into the option bag the regular Valkey client
- * expects. Adds `lazyConnect` + `enableOfflineQueue=false` so the
- * legacy semantics survive (commands fail-fast when disconnected, no
- * silent buffering).
+ * expects. Adds `lazyConnect` + `enableOfflineQueue=false`: commands fail
+ * fast when disconnected, no silent buffering.
  */
 export function toClientOptions(result: ValkeyBuilderResult): Record<string, unknown> {
   return {
