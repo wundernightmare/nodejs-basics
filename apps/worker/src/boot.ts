@@ -11,9 +11,13 @@
  *    before the Nest container exists, and a value they read before the
  *    loader is a config.yaml line that silently does nothing.
  *
- * Imports only the loader (fs, yaml, the registry) — nothing that reads the
- * environment itself.
+ * Command-line flags (--help, --check-config, --config-reference) are
+ * handled here too, before anything else loads. Imports only the loader
+ * (fs, yaml, the registry) — nothing that reads the environment itself.
  */
-import { loadConfigOrExit } from "@base/config/loader";
+import { bootConfig } from "@base/config/boot";
 
-loadConfigOrExit({ defaults: { OTEL_SERVICE_NAME: "nodejs-basics-worker" } });
+bootConfig({
+  name: "nodejs-basics-worker",
+  defaults: { OTEL_SERVICE_NAME: "nodejs-basics-worker" },
+});

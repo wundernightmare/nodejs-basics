@@ -6,6 +6,7 @@ export {
 } from "./config.loader.js";
 export {
   type ConfigGetter,
+  type ConfigValue,
   ConfigValueError,
   parseConfigValue,
   processEnv,
@@ -16,4 +17,4 @@ export {
   readSecretFile,
   readString,
 } from "./config.values.js";
-export { ENV_REGISTRY, type EnvEntry, type EnvType } from "./env.registry.js";
+export { ENV_REGISTRY, type EnvEntry, type EnvKey, type EnvType } from "./env.registry.js";

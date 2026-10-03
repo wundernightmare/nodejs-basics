@@ -119,7 +119,7 @@ export function buildPostgresConfig(
     throw new Error(`${urlKey} is required — the postgres pool cannot be built without it`);
   }
 
-  const useNative = readBool(config, "DATABASE_USE_NATIVE") ?? false;
+  const useNative = readBool(config, "DATABASE_USE_NATIVE");
 
   // ── Libpq-layer params decorated into the URL ────────────────────────────
   //
@@ -128,7 +128,7 @@ export function buildPostgresConfig(
   // inherits them for every host in a CSV multi-host list. Pure-JS pg
   // picks them up too via pg-connection-string — same semantic, single
   // source of truth.
-  const connectTimeoutMs = readInt(config, "DATABASE_CONNECT_TIMEOUT_MS") ?? 5000;
+  const connectTimeoutMs = readInt(config, "DATABASE_CONNECT_TIMEOUT_MS");
   // pg_stat_activity shows which service holds a connection: the OTel service
   // name (nodejs-basics-api / -worker) unless set explicitly.
   const baseAppName =
@@ -164,7 +164,7 @@ export function buildPostgresConfig(
   // sslmode — use both: the URL param tells libpq to enable TLS, the
   // pool option fills in CA + skipVerify so Node's TLS path has what it
   // needs. No-op when no CA is configured AND sslmode is absent.
-  const skipVerify = readBool(config, "DATABASE_SSL_SKIP_VERIFY") ?? false;
+  const skipVerify = readBool(config, "DATABASE_SSL_SKIP_VERIFY");
   const ca = resolveCa(config);
   const sslMode = readString(config, "DATABASE_SSL_MODE");
   const sslEnabled =
@@ -188,9 +188,9 @@ export function buildPostgresConfig(
   // SET on every new connection so they apply to every host in a
   // multi-host / primary-failover pool. Setting them as pg PoolConfig
   // fields would lose them across libpq-native failover.
-  const statementTimeoutMs = readInt(config, "DATABASE_STATEMENT_TIMEOUT_MS") ?? 30_000;
+  const statementTimeoutMs = readInt(config, "DATABASE_STATEMENT_TIMEOUT_MS");
   const queryTimeoutMs = readInt(config, "DATABASE_QUERY_TIMEOUT_MS");
-  const idleInTxTimeoutMs = readInt(config, "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS") ?? 60_000;
+  const idleInTxTimeoutMs = readInt(config, "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS");
   const sessionInit: string[] = [];
   if (statementTimeoutMs > 0) {
     sessionInit.push(`SET statement_timeout = ${statementTimeoutMs}`);
@@ -204,13 +204,13 @@ export function buildPostgresConfig(
     connectionString: decorated,
     // TCP keepalive defaults to on — managed LBs (AWS NLB, GCP, Yandex)
     // silently drop idle conns otherwise.
-    keepAlive: readBool(config, "DATABASE_KEEPALIVE") ?? true,
-    keepAliveInitialDelayMillis: readInt(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS") ?? 10_000,
+    keepAlive: readBool(config, "DATABASE_KEEPALIVE"),
+    keepAliveInitialDelayMillis: readInt(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS"),
     // Pool size
-    max: readInt(config, "DATABASE_POOL_MAX") ?? 10,
-    min: readInt(config, "DATABASE_POOL_MIN") ?? 0,
-    idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS") ?? 30_000,
-    maxUses: readInt(config, "DATABASE_POOL_MAX_USES") ?? 0,
+    max: readInt(config, "DATABASE_POOL_MAX"),
+    min: readInt(config, "DATABASE_POOL_MIN"),
+    idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS"),
+    maxUses: readInt(config, "DATABASE_POOL_MAX_USES"),
     connectionTimeoutMillis: connectTimeoutMs,
     // Application name is redundant-set (URL + option) because pg-native
     // reads it from libpq params and pure-JS pg writes it via the option
