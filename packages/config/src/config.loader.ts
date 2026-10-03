@@ -29,7 +29,7 @@
  * configSnapshot() can show an operator the effective configuration with its
  * provenance (GET /admin/config on the admin server, secrets redacted there).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
 
@@ -134,16 +134,37 @@ export interface LoadOptions {
   defaults?: Readonly<Record<string, string>>;
 }
 
+/** Where output goes: stdout (1) or stderr (2). */
+export type Write = (fd: 1 | 2, text: string) => void;
+
+/**
+ * The whole text to fd, synchronously. process.exit follows at once, and an
+ * asynchronous write into a full pipe (`… --config-reference | less`) is cut
+ * at 64 KiB.
+ */
+export function writeAll(fd: 1 | 2, text: string): void {
+  const buf = Buffer.from(text);
+  for (let off = 0; off < buf.length;) {
+    try {
+      off += writeSync(fd, buf, off);
+    } catch (err) {
+      // A non-blocking pipe that is full: wait for the reader.
+      if ((err as NodeJS.ErrnoException).code !== "EAGAIN") throw err;
+    }
+  }
+}
+
 /**
  * yamlConfigLoader() for a process entry point: a bad configuration ends the
  * process with one ECS line on stderr (no logger yet — it is configured by
  * what failed) and exit code 78 (EX_CONFIG, sysexits.h).
  */
-export function loadConfigOrExit(options: LoadOptions = {}): void {
+export function loadConfigOrExit(options: LoadOptions = {}, write: Write = writeAll): void {
   try {
     yamlConfigLoader(options);
   } catch (err) {
-    process.stderr.write(
+    write(
+      2,
       `${JSON.stringify({
         "@timestamp": new Date().toISOString(),
         "log.level": "fatal",
