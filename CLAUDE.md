@@ -127,6 +127,11 @@ high-signal, easy-to-miss bits.
   code — the registry spec rejects one), `T | undefined` otherwise; the key is
   checked by the compiler. Never `Number(config.get(...))`. Unknown YAML keys,
   bad values and empty values (`KEY=` = unset) are handled at boot.
+- **Metrics**: every instrument is an entry of `METRIC_REGISTRY`
+  (`@base/observability/metrics-registry`, data only) with the same name,
+  unit and description — `metrics.registry.spec.ts` enforces it; labels of
+  bounded cardinality only. `--metrics-reference` prints it, `docs/RUNBOOK.md`
+  says what to do about the `watch` ones.
 - **No patching instrumentations**: in the Vite bundle every import is loaded
   before instrumentation.ts runs, so `@opentelemetry/instrumentation-pg` /
   `-nestjs-core` / `-aws-sdk` / `-ioredis`… silently do nothing (checked in

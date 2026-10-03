@@ -16,8 +16,15 @@
  * (fs, yaml, the registry) — nothing that reads the environment itself.
  */
 import { bootConfig } from "@base/config/boot";
+import { metricsReference } from "@base/observability/metrics-registry";
 
 bootConfig({
   name: "nodejs-basics-worker",
   defaults: { OTEL_SERVICE_NAME: "nodejs-basics-worker" },
+  references: {
+    "metrics-reference": {
+      help: "every metric: name, instrument, unit, labels, meaning, when to worry",
+      text: metricsReference,
+    },
+  },
 });
