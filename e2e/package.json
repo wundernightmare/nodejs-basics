@@ -14,7 +14,7 @@
     "format": "oxfmt \"**/*.ts\"",
     "format:check": "oxfmt --check \"**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "rm -rf playwright-report test-results allure-results .e2e-state.json",
+    "clean:build": "rm -rf playwright-report test-results allure-results .e2e-state.json",
     "test:smoke": "playwright test --grep @smoke"
   },
   "devDependencies": {
