@@ -120,9 +120,17 @@ let loaded: Record<string, unknown> | undefined;
  * nearest known one), a value that does not parse as its registry type, a
  * missing required key.
  */
-export function yamlConfigLoader(): Record<string, unknown> {
-  loaded ??= load();
+export function yamlConfigLoader(options: LoadOptions = {}): Record<string, unknown> {
+  loaded ??= load(options.defaults ?? {});
   return loaded;
+}
+
+export interface LoadOptions {
+  /**
+   * This app's defaults, over the registry's — e.g. its own
+   * OTEL_SERVICE_NAME, so the api and the worker never share one name.
+   */
+  defaults?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -130,15 +138,15 @@ export function yamlConfigLoader(): Record<string, unknown> {
  * process with one ECS line on stderr (no logger yet — it is configured by
  * what failed) and exit code 78 (EX_CONFIG, sysexits.h).
  */
-export function loadConfigOrExit(): void {
+export function loadConfigOrExit(options: LoadOptions = {}): void {
   try {
-    yamlConfigLoader();
+    yamlConfigLoader(options);
   } catch (err) {
     process.stderr.write(
       `${JSON.stringify({
         "@timestamp": new Date().toISOString(),
         "log.level": "fatal",
-        "service.name": process.env["OTEL_SERVICE_NAME"],
+        "service.name": process.env["OTEL_SERVICE_NAME"] ?? options.defaults?.["OTEL_SERVICE_NAME"],
         message: (err as Error).message,
       })}\n`,
     );
@@ -146,7 +154,7 @@ export function loadConfigOrExit(): void {
   }
 }
 
-function load(): Record<string, unknown> {
+function load(appDefaults: Readonly<Record<string, string>>): Record<string, unknown> {
   dropEmptyValues();
   const configPath = resolve(process.env["APP_CONFIG_FILE"] ?? "config.yaml");
   recordEnvSources();
@@ -181,7 +189,7 @@ function load(): Record<string, unknown> {
     sources.set(key, "yaml");
   }
 
-  applyDefaults();
+  applyDefaults(appDefaults);
   problems.push(...invalidValues(), ...missingRequiredKeys());
   if (problems.length > 0) {
     throw new Error(
@@ -196,10 +204,11 @@ function load(): Record<string, unknown> {
 /**
  * Apply registry defaults for keys that are still unset after YAML + env merge.
  */
-function applyDefaults(): void {
+function applyDefaults(appDefaults: Readonly<Record<string, string>>): void {
   for (const entry of ENV_REGISTRY) {
-    if (process.env[entry.key] === undefined && entry.default !== undefined) {
-      process.env[entry.key] = entry.default;
+    const value = appDefaults[entry.key] ?? entry.default;
+    if (process.env[entry.key] === undefined && value !== undefined) {
+      process.env[entry.key] = value;
       sources.set(entry.key, "default");
     }
   }

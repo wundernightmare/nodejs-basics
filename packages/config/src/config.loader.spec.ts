@@ -19,6 +19,7 @@ const KEYS = [
   "OUTBOX_BATCH_SIZE",
   "HEAP_OOM_POLL_INTERVAL_MS",
   "LOG_LEVEL_MAX_TTL",
+  "OTEL_SERVICE_NAME",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -176,5 +177,14 @@ describe("yamlConfigLoader + configSnapshot", () => {
       "24h",
       "default",
     ]);
+  });
+
+  it("an app's defaults go over the registry's, an empty value included", async () => {
+    await testCase("NB-982", "each app names itself unless OTEL_SERVICE_NAME is set");
+    process.env["APP_CONFIG_FILE"] = join(dir, "absent.yaml");
+    process.env["OTEL_SERVICE_NAME"] = "";
+    const { yamlConfigLoader } = await loader();
+    yamlConfigLoader({ defaults: { OTEL_SERVICE_NAME: "my-app" } });
+    expect(process.env["OTEL_SERVICE_NAME"]).toBe("my-app");
   });
 });
