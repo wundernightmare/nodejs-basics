@@ -18,7 +18,7 @@
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "rm -rf dist coverage"
+    "clean": "rm -rf dist coverage tsconfig.tsbuildinfo"
   },
   "dependencies": {
     "pg": "8.23.0"
