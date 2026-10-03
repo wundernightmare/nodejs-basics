@@ -155,8 +155,13 @@ high-signal, easy-to-miss bits.
   (ResilientClient `getRemainingMs` → AbortSignal + header). Spent →
   `DeadlineExceededError` → 504. New dependency client → apply the budget the
   same way (`callBudgetMs` / `remainingMs` from @base/common).
+- **Transactions**: repositories read the ambient client with
+  `currentTransaction()` (`@base/database`). Never catch a DB error inside a
+  transaction and carry on — Postgres aborted it, and `runInTransaction`
+  rejects with `TransactionAbortedError` at COMMIT. Await everything inside
+  (`TransactionEndedError` for code that outlives it).
 - **Events go through the outbox**: `OutboxWriter.add()` inside
-  `uow.runInTransaction` (same transaction as the write), `OutboxRelay`
+  `uow.runInTransaction` (same transaction as the write — it throws outside one), `OutboxRelay`
   publishes (SKIP LOCKED, at least once — consumers must be idempotent). Do
   not call `kafka.send()` from a request path for an event that must not be
   lost. The relay keeps the request's trace (context stored per row). Only a

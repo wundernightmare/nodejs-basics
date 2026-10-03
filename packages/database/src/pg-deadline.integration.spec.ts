@@ -6,7 +6,7 @@ import { integration, meta, testCase } from "@base/testing";
 
 import { guardPgPool } from "./pg-deadline.js";
 import { PgUnitOfWork } from "./pg-unit-of-work.service.js";
-import { transactionStorage } from "./transaction.storage.js";
+import { currentTransaction } from "./transaction.storage.js";
 
 /** The server really cancels a statement that would outlive the request. */
 const infra = integration("postgres");
@@ -35,7 +35,7 @@ describe.skipIf(infra.skip)("pg deadline (integration)", () => {
     await expect(
       withDeadline(300, () =>
         uow.runInTransaction(async () => {
-          const client = transactionStorage.getStore() as Pool;
+          const client = currentTransaction<Pool>()!;
           await client.query("SELECT pg_sleep(5)");
         }),
       ),
