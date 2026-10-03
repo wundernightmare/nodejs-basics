@@ -27,3 +27,4 @@ export {
 } from "./readiness.service.js";
 export { setupTelemetry, type SetupTelemetryOptions } from "./setup-telemetry.js";
 export { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
+export { METRIC_REGISTRY, type MetricEntry, metricsReference } from "./metrics.registry.js";

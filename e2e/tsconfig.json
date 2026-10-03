@@ -13,6 +13,9 @@
     "paths": {
       "@base/contracts": [
         "../packages/contracts/src/index.ts"
+      ],
+      "@base/observability/metrics-registry": [
+        "../packages/observability/src/metrics.registry.ts"
       ]
     }
   },

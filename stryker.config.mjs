@@ -22,7 +22,6 @@ export default {
     "!**/*.spec.ts",
     // OTel instrument wiring (observable gauges over process stats): no
     // decision logic, no unit test — every mutant would be "no coverage".
-    "!packages/resilient-client/src/node-metrics.ts",
   ],
   // Per-test coverage: a mutant is run only against the tests that executed
   // the mutated line in the initial dry run.

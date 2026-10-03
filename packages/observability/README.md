@@ -7,6 +7,24 @@ for free on `ADMIN_PORT` (default 9090), separate from the API port.
 The admin server is the Node counterpart of `libs/httpx` in golang-basics: same
 routes, same auth model, same runtime-debugging tools, same problem+json errors.
 
+## Metrics
+
+Every instrument the services create is listed in
+[`src/metrics.registry.ts`](src/metrics.registry.ts) — name, instrument, unit,
+labels (bounded cardinality only), description and, for the ones worth an
+alert, what a bad value means. `metrics.registry.spec.ts` fails on an
+instrument that is missing there or differs from it; `node dist/main.js
+--metrics-reference` prints the list. New metric → add the entry, create the
+instrument with the same name, unit and description. The e2e suite checks the
+other direction on the running apps: every `# HELP` on `/metrics` is a
+registry description.
+
+Names, labels and units are a contract — alerts and dashboards depend on them
+and break silently. Adding a metric or a label value is free; renaming or
+removing one is not: emit the old and the new name side by side for a release
+(both in the registry, the old one's `watch` saying "deprecated, use …"), move
+the alerts and dashboards, then drop the old one.
+
 ## Admin server endpoints
 
 | Route                      | Auth | Purpose                                                                                  |

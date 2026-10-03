@@ -219,10 +219,12 @@ the only one: `readInt(config, "KEY")` (also `readNumber`, `readBool`,
 default, `number | undefined` for one without, and the key is checked by the
 compiler; garbage throws naming the key, never a silent fallback.
 
-The app answers the questions of whoever runs it without starting:
+The app answers the questions of whoever runs it without starting (the
+operator's side of all this is in [docs/RUNBOOK.md](docs/RUNBOOK.md)):
 
 ```
 node dist/main.js --config-reference   # every setting: env key, YAML path, type, default, description
+node dist/main.js --metrics-reference  # every metric: instrument, unit, labels, meaning, when to worry
 node dist/main.js --check-config       # validate env + config.yaml: exit 0, or 78 with every problem
 node dist/main.js --help
 ```
