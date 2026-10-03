@@ -184,4 +184,22 @@ describe("env registry", () => {
       ].toSorted(),
     );
   });
+
+  it("a `?? fallback` after a typed reader equals the key's registry default", async () => {
+    await testCase("NB-980", "code and registry never disagree on a default");
+    const defaults = new Map(ENV_REGISTRY.map((e) => [e.key, e.default]));
+    const differing: string[] = [];
+    for (const [path, text] of sources) {
+      for (const m of text.matchAll(
+        /\bread(?:Int|Number|Bool|String)\(\s*(?:this\.)?(?:config|processEnv),\s*"([A-Z0-9_]+)"\)\s*\?\?\s*([\w".-]+)/gu,
+      )) {
+        const [, key = "", fallback = ""] = m;
+        const registryDefault = defaults.get(key);
+        const code = fallback.replaceAll("_", "").replaceAll('"', "");
+        if (registryDefault !== undefined && registryDefault !== code)
+          differing.push(`${key}: registry ${registryDefault}, code ${fallback} (${path})`);
+      }
+    }
+    expect(differing).toEqual([]);
+  });
 });

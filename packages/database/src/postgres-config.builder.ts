@@ -216,7 +216,7 @@ export function buildPostgresConfig(
     keepAlive: readBool(config, "DATABASE_KEEPALIVE") ?? true,
     keepAliveInitialDelayMillis: readInt(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS") ?? 10_000,
     // Pool size
-    max: readInt(config, "DATABASE_POOL_MAX") ?? 20,
+    max: readInt(config, "DATABASE_POOL_MAX") ?? 10,
     min: readInt(config, "DATABASE_POOL_MIN") ?? 0,
     idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS") ?? 30_000,
     maxUses: readInt(config, "DATABASE_POOL_MAX_USES") ?? 0,

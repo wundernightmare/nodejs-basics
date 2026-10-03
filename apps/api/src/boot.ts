@@ -16,6 +16,8 @@
  */
 import { loadConfigOrExit } from "@base/config/loader";
 
-process.env["OTEL_SERVICE_NAME"] ??= "nodejs-basics-api";
+// An empty value counts as unset, as everywhere in the configuration.
+if ((process.env["OTEL_SERVICE_NAME"] ?? "") === "")
+  process.env["OTEL_SERVICE_NAME"] = "nodejs-basics-api";
 
 loadConfigOrExit();

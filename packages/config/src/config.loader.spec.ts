@@ -17,6 +17,8 @@ const KEYS = [
   "KAFKA_EXTRA_PROPERTIES",
   "LOG_LEVEL",
   "OUTBOX_BATCH_SIZE",
+  "HEAP_OOM_POLL_INTERVAL_MS",
+  "LOG_LEVEL_MAX_TTL",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -155,5 +157,24 @@ describe("yamlConfigLoader + configSnapshot", () => {
       exit.mockRestore();
       stderr.mockRestore();
     }
+  });
+
+  it("an empty value is no value: it neither shadows config.yaml nor the default", async () => {
+    await testCase("NB-981", "KEY= (compose / helm for an unset knob) behaves as unset");
+    file('app:\n  port: 4000\n  log_level_max_ttl: ""\n');
+    process.env["PORT"] = ""; // would shadow the file
+    process.env["HEAP_OOM_POLL_INTERVAL_MS"] = ""; // would reach parseInt("") → NaN
+    const { yamlConfigLoader, configSnapshot } = await loader();
+    yamlConfigLoader();
+    const snap = configSnapshot();
+    expect([snap.config["PORT"], snap.sources["PORT"]]).toEqual(["4000", "yaml"]);
+    expect([
+      snap.config["HEAP_OOM_POLL_INTERVAL_MS"],
+      snap.sources["HEAP_OOM_POLL_INTERVAL_MS"],
+    ]).toEqual(["10000", "default"]);
+    expect([snap.config["LOG_LEVEL_MAX_TTL"], snap.sources["LOG_LEVEL_MAX_TTL"]]).toEqual([
+      "24h",
+      "default",
+    ]);
   });
 });
