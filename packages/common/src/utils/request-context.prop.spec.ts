@@ -13,7 +13,7 @@ const numRuns = propertyRuns();
 
 /** Printable, non-space ASCII: 0x21 '!' … 0x7e '~'. */
 const printable = fc.constantFrom(
-  ...Array.from({ length: 94 }, (_, i) => String.fromCharCode(0x21 + i)),
+  ...Array.from({ length: 94 }, (_, i) => String.fromCodePoint(0x21 + i)),
 );
 const validId = fc.string({ unit: printable, minLength: 1, maxLength: 128 });
 /** Space, controls, DEL, NUL, NBSP, non-ASCII, an astral character. */
@@ -22,9 +22,9 @@ const intruder = fc.constantFrom(
   "\t",
   "\n",
   "\r",
-  String.fromCharCode(0x7f),
-  String.fromCharCode(0x00),
-  String.fromCharCode(0xa0),
+  String.fromCodePoint(0x7f),
+  String.fromCodePoint(0x00),
+  String.fromCodePoint(0xa0),
   "é",
   "→",
   String.fromCodePoint(0x1f600),

@@ -26,10 +26,12 @@ function harness(env: Record<string, string> = {}): {
 }
 
 const event = (s: string): Buffer => Buffer.from(s);
+const TASK_ID = "V1StGXR8_Z5jdHi6B-myT";
 const created = JSON.stringify({
   type: "task.created",
-  id: "01J0000000000000000000000",
+  id: TASK_ID,
   title: "t",
+  createdAt: "2026-01-01T00:00:00Z",
 });
 
 describe("TaskEventsConsumer.handle", () => {
@@ -54,14 +56,22 @@ describe("TaskEventsConsumer.handle", () => {
     const h = harness();
     await h.consumer.handle(event(created));
     expect(h.add).toHaveBeenCalledOnce();
-    expect(h.add.mock.calls[0]?.[2]).toMatchObject({ jobId: "01J0000000000000000000000" });
+    expect(h.add.mock.calls[0]?.[2]).toMatchObject({ jobId: TASK_ID });
+  });
+
+  it("skips a task.created that breaks the contract instead of enqueuing it", async () => {
+    await testCase("NB-1008", "an event without a valid id never becomes a job with a random id");
+    const h = harness();
+    const broken = { type: "task.created", title: "t", createdAt: "2026-01-01T00:00:00Z" };
+    await h.consumer.handle(event(JSON.stringify(broken)));
+    await h.consumer.handle(event(JSON.stringify({ ...broken, id: "not-a-nanoid" })));
+    expect(h.add).not.toHaveBeenCalled();
   });
 
   it("returns (so the runner commits and skips) for anything that is not a task.created", async () => {
     await testCase("NB-901", "kafka consumer skips poison messages");
     const h = harness();
     for (const value of ["not json", "null", "42", JSON.stringify({ type: "task.deleted" })]) {
-      // oxlint-disable-next-line no-await-in-loop -- one message after another
       await h.consumer.handle(event(value));
     }
     await h.consumer.handle(null);

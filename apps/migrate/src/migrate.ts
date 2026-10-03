@@ -113,9 +113,12 @@ export async function migrate(
           await client.query("COMMIT");
         } catch (err) {
           await client.query("ROLLBACK");
-          throw new Error(`migrate: ${m.version}_${m.name}.sql failed: ${(err as Error).message}`, {
-            cause: err,
-          });
+          throw new Error(
+            `migrate: ${m.version}_${m.name}.sql failed: ${err instanceof Error ? err.message : String(err)}`,
+            {
+              cause: err,
+            },
+          );
         }
       } else {
         await client.query(m.sql);

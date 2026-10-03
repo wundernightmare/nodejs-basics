@@ -47,7 +47,7 @@ const family: fc.Arbitrary<Family> = fc.uniqueArray(labelName, { maxLength: 3 })
 
 /** The exposition format's label-value escaping: backslash, quote, newline. */
 const escape = (v: string): string =>
-  v.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"').replace(/\n/gu, "\\n");
+  v.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n");
 
 /** One family with a single `route` label — the shape of the parser's two findings. */
 const route = (value: string): Family => ({
@@ -117,7 +117,7 @@ describe("metricValue (property)", () => {
         // A value no row carries, or a name no line carries, is absent.
         if (f.names.length > 0) {
           const used = new Set(f.rows.map(([row]) => row[0]));
-          const unused = [...Array(f.rows.length + 1).keys()]
+          const unused = Array.from({ length: f.rows.length + 1 }, (_, i) => i)
             .map(String)
             .find((s) => !used.has(s))!;
           expect(metricValue(text, f.name, { [f.names[0]!]: unused })).toBe(-1);

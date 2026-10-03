@@ -4,14 +4,26 @@ import { AppLogger, ecsError } from "@base/logger";
 
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
 
+/** Shut a provider down even when its flush fails (collector unreachable); the flush error still surfaces. */
+async function flushThenShutdown(provider: {
+  forceFlush(): Promise<void>;
+  shutdown(): Promise<void>;
+}): Promise<void> {
+  try {
+    await provider.forceFlush();
+  } finally {
+    await provider.shutdown();
+  }
+}
+
 function withShutdownTimeout<T>(p: Promise<T>): Promise<T> {
   return Promise.race([
     p,
-    new Promise<T>((_, reject) =>
+    new Promise<T>((_, reject) => {
       setTimeout(() => {
         reject(new Error("telemetry shutdown timeout"));
-      }, 5_000),
-    ),
+      }, 5_000);
+    }),
   ]);
 }
 
@@ -34,11 +46,9 @@ export class OtelShutdownService implements OnApplicationShutdown {
     this.logger.info({ "process.signal": signal ?? null }, "Flushing telemetry on shutdown");
 
     const { tracerProvider, meterProvider, stopPyroscope } = this.handle;
-    // `finally`: a provider is shut down even when its flush fails (collector
-    // unreachable) — the flush error is still reported below.
     const results = await Promise.allSettled([
-      withShutdownTimeout(tracerProvider.forceFlush().finally(() => tracerProvider.shutdown())),
-      withShutdownTimeout(meterProvider.forceFlush().finally(() => meterProvider.shutdown())),
+      withShutdownTimeout(flushThenShutdown(tracerProvider)),
+      withShutdownTimeout(flushThenShutdown(meterProvider)),
       withShutdownTimeout(stopPyroscope()),
     ]);
 

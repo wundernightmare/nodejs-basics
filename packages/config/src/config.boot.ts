@@ -84,7 +84,10 @@ export function bootConfig(
       },
     }) as { values: Record<string, boolean | undefined> });
   } catch (err) {
-    write(2, `${(err as Error).message}\n\n${USAGE(options.name, references)}`);
+    write(
+      2,
+      `${err instanceof Error ? err.message : String(err)}\n\n${USAGE(options.name, references)}`,
+    );
     // 64 = EX_USAGE (sysexits.h).
     process.exit(64);
   }

@@ -110,7 +110,7 @@ export function buildCircuitBreaker(
 export class DependencyCircuitBreaker {
   readonly #name: string;
   readonly #enabled: boolean;
-  readonly #breaker?: CircuitBreaker<[() => Promise<unknown>], unknown>;
+  readonly #breaker?: CircuitBreaker<[() => Promise<unknown>]>;
 
   constructor(
     name: string,
@@ -153,7 +153,7 @@ export class DependencyCircuitBreaker {
       // but rejects with a custom shape when the breaker short-circuits
       // ('Breaker is open' string). Translate the latter to a typed
       // ServiceUnavailable so HTTP handlers surface it as a clean 503.
-      if (err instanceof Error && /breaker is open/i.test(err.message)) {
+      if (err instanceof Error && /breaker is open/iu.test(err.message)) {
         throw new ServiceUnavailableException(`${this.#name} circuit breaker open`);
       }
       throw err;

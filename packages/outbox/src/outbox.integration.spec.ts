@@ -199,7 +199,6 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     await testCase("NB-956", "replicas never send the same outbox row");
     const keys = Array.from({ length: 40 }, (_, i) => `concurrent-${i}`);
     await uow.runInTransaction(async () => {
-      // oxlint-disable-next-line no-await-in-loop -- one transaction, rows in order
       for (const key of keys) await writer.add({ topic, key, value: {} });
     });
     const sentBefore = sent.length;
@@ -208,7 +207,6 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
       new OutboxRelay(pool, kafka, new ConfigService({ OUTBOX_BATCH_SIZE: "5" }), logger);
     const a = small();
     const b = small();
-    // oxlint-disable-next-line no-await-in-loop -- passes until the table is drained
     while ((await mine()) > 0) await Promise.all([a.relayOnce(), b.relayOnce()]);
     const ours = sent
       .slice(sentBefore)

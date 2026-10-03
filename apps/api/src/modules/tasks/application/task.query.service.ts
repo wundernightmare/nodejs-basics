@@ -84,7 +84,7 @@ export class TaskQueryService {
         status: r.status,
         createdAt: r.created_at,
       })),
-      total: parseInt(count.rows[0]?.count ?? "0", 10),
+      total: Number(count.rows[0]?.count ?? "0"),
     };
   }
 }

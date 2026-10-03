@@ -29,7 +29,7 @@ export class DatabaseLifecycleService implements OnApplicationShutdown {
     const results = await Promise.allSettled(pools.map((pool) => pool.end()));
     for (const r of results) {
       if (r.status === "rejected")
-        logger.warn({ ...ecsError(r.reason as Error) }, "Postgres pool end failed");
+        logger.warn({ ...ecsError(r.reason) }, "Postgres pool end failed");
     }
   }
 }

@@ -5,8 +5,5 @@
   ],
   "ignorePatterns": [
     "src/*.gen.ts"
-  ],
-  "rules": {
-    "no-underscore-dangle": "off"
-  }
+  ]
 }

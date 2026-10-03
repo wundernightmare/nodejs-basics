@@ -9,7 +9,7 @@
     "test:ui": "playwright test --ui",
     "report": "playwright show-report",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint --max-warnings=26 .",
+    "lint": "oxlint --max-warnings=0 .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt \"**/*.ts\"",
     "format:check": "oxfmt --check \"**/*.ts\"",

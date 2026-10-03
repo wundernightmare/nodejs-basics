@@ -17,14 +17,16 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..");
 const STATE_FILE = path.join(ROOT, "e2e", ".e2e-state.json");
 /** Each spawned service writes its stdout and stderr to <name>.log here. */
 export const LOG_DIR = path.join(ROOT, "e2e", "test-results");
 
 export const SPAWN = process.env["E2E_SPAWN"] === "1";
+
+export const API_ENTRY = path.join(ROOT, "apps/api/dist/main.js");
 
 interface ServiceSpec {
   name: string;
@@ -32,7 +34,7 @@ interface ServiceSpec {
   env: Record<string, string>;
 }
 
-const deps = {
+export const deps = {
   DATABASE_URL: process.env["DATABASE_URL"] ?? "postgresql://app:app@localhost:5432/app",
   VALKEY_URL: process.env["VALKEY_URL"] ?? "redis://localhost:6379",
   KAFKA_BROKERS: process.env["KAFKA_BROKERS"] ?? "localhost:9092",
@@ -43,7 +45,7 @@ const deps = {
 const SERVICES: ServiceSpec[] = [
   {
     name: "api",
-    entry: path.join(ROOT, "apps/api/dist/main.js"),
+    entry: API_ENTRY,
     env: { ...deps, PORT: "3000", ADMIN_PORT: "9091", OTEL_SERVICE_NAME: "api" },
   },
   {
@@ -118,7 +120,7 @@ export async function stopServices(): Promise<void> {
         process.kill(pid, "SIGKILL");
         break;
       }
-      await new Promise((r) => setTimeout(r, 100));
+      await delay(100);
     }
   }
 }

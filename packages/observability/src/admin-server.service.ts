@@ -39,6 +39,7 @@ import {
   Optional,
 } from "@nestjs/common";
 
+import { processEnv, readInt } from "@base/config";
 import {
   AppLogger,
   ecsError,
@@ -71,7 +72,7 @@ export interface ConfigView {
 
 export interface AdminServerOptions {
   /** Raw effective config for GET /admin/config (configSnapshot from @base/config). */
-  configSnapshot?: () => ConfigView;
+  configSnapshot?: (() => ConfigView) | undefined;
 }
 
 /** Process start, for /version. */
@@ -124,15 +125,16 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   }
 
   async onApplicationBootstrap(): Promise<void> {
-    const port = parseInt(process.env["ADMIN_PORT"] ?? "9090", 10);
+    const port = readInt(processEnv, "ADMIN_PORT");
 
-    this.server = http.createServer((req, res) => {
+    const server = http.createServer((req, res) => {
       this.handleRequest(req, res);
     });
+    this.server = server;
 
     await new Promise<void>((resolve, reject) => {
-      this.server!.once("error", reject);
-      this.server!.listen(port, "0.0.0.0", () => {
+      server.once("error", reject);
+      server.listen(port, "0.0.0.0", () => {
         const routes = [...this.routes.entries()].map(
           ([path, methods]) => `${Object.keys(methods).join("|")} ${path}`,
         );
@@ -155,10 +157,14 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
    * answering "not_ready" while the API drains — see ReadinessService.
    */
   async onApplicationShutdown(signal?: string): Promise<void> {
-    if (!this.server) return;
+    const server = this.server;
+    if (!server) return;
     this.logger.info({ "process.signal": signal ?? null }, "Admin server shutting down");
     await new Promise<void>((resolve, reject) => {
-      this.server!.close((err) => (err ? reject(err) : resolve()));
+      server.close((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
     });
     this.server = null;
   }
@@ -174,11 +180,19 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         },
       },
     });
-    const live: RouteEntry = { handler: ({ res }) => this.sendJson(res, 200, { status: "ok" }) };
+    const live: RouteEntry = {
+      handler: ({ res }) => {
+        this.sendJson(res, 200, { status: "ok" });
+      },
+    };
     routes.set("/livez", { GET: live });
     routes.set("/healthz", { GET: live });
     routes.set("/readyz", { GET: { handler: (ctx) => this.readyz(ctx) } });
-    const version: RouteEntry = { handler: ({ res }) => this.sendJson(res, 200, this.version()) };
+    const version: RouteEntry = {
+      handler: ({ res }) => {
+        this.sendJson(res, 200, this.version());
+      },
+    };
     routes.set("/version", { GET: version });
     routes.set("/admin/info", { GET: version });
     if (this.options.configSnapshot !== undefined) {
@@ -193,15 +207,29 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       });
     }
     routes.set("/admin/log-level", {
-      GET: { handler: ({ res }) => this.sendJson(res, 200, logLevel.snapshot()) },
+      GET: {
+        handler: ({ res }) => {
+          this.sendJson(res, 200, logLevel.snapshot());
+        },
+      },
       PUT: { handler: (ctx) => this.putLogLevel(ctx), auth: true },
-      DELETE: { handler: (ctx) => this.deleteLogLevel(ctx), auth: true },
+      DELETE: {
+        handler: (ctx) => {
+          this.deleteLogLevel(ctx);
+        },
+        auth: true,
+      },
     });
-    if (this.heapSnapshot) {
-      routes.set("/debug/heapdump", { POST: { handler: (ctx) => this.heapdump(ctx), auth: true } });
+    const { heapSnapshot, crashReport } = this;
+    if (heapSnapshot) {
+      routes.set("/debug/heapdump", {
+        POST: { handler: (ctx) => this.heapdump(ctx, heapSnapshot), auth: true },
+      });
     }
-    if (this.crashReport) {
-      routes.set("/debug/report", { POST: { handler: (ctx) => this.report(ctx), auth: true } });
+    if (crashReport) {
+      routes.set("/debug/report", {
+        POST: { handler: (ctx) => this.report(ctx, crashReport), auth: true },
+      });
     }
     return routes;
   }
@@ -292,7 +320,11 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     try {
       level = parseLogLevelStrict(params.level);
     } catch (err) {
-      writeProblem(res, { status: 400, detail: (err as Error).message, instance: url.pathname });
+      writeProblem(res, {
+        status: 400,
+        detail: err instanceof Error ? err.message : String(err),
+        instance: url.pathname,
+      });
       return;
     }
 
@@ -352,8 +384,10 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   ): Promise<{ level?: string; ttl?: string }> {
     const params: { level?: string; ttl?: string } = {};
     const q = url.searchParams;
-    if (q.has("level")) params.level = q.get("level")!;
-    if (q.has("ttl")) params.ttl = q.get("ttl")!;
+    const level = q.get("level");
+    const ttl = q.get("ttl");
+    if (level !== null) params.level = level;
+    if (ttl !== null) params.ttl = ttl;
     if (params.level !== undefined) return params;
 
     const body = (await this.readBody(req)).trim();
@@ -366,17 +400,22 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     }
     if (body.includes("=")) {
       const form = new URLSearchParams(body);
-      if (form.has("level")) params.level = form.get("level")!;
-      if (form.has("ttl") && params.ttl === undefined) params.ttl = form.get("ttl")!;
+      const formLevel = form.get("level");
+      const formTtl = form.get("ttl");
+      if (formLevel !== null) params.level = formLevel;
+      if (formTtl !== null && params.ttl === undefined) params.ttl = formTtl;
       return params;
     }
     params.level = body; // bare level, e.g. `--data debug`
     return params;
   }
 
-  private async heapdump({ res, url }: AdminContext): Promise<void> {
+  private async heapdump(
+    { res, url }: AdminContext,
+    heapSnapshot: HeapSnapshotService,
+  ): Promise<void> {
     try {
-      const location = await this.heapSnapshot!.capture("manual");
+      const location = await heapSnapshot.capture("manual");
       if (location === null) {
         writeProblem(res, {
           status: 409,
@@ -388,17 +427,25 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       this.sendJson(res, 200, { triggered: true, location });
     } catch (err) {
       this.logger.error({ ...ecsError(err) }, "Heapdump request failed");
-      writeProblem(res, { status: 500, detail: (err as Error).message, instance: url.pathname });
+      writeProblem(res, {
+        status: 500,
+        detail: err instanceof Error ? err.message : String(err),
+        instance: url.pathname,
+      });
     }
   }
 
-  private async report({ res, url }: AdminContext): Promise<void> {
+  private async report({ res, url }: AdminContext, crashReport: CrashReportService): Promise<void> {
     try {
-      const result = await this.crashReport!.writeDiagnosticReport("manual");
+      const result = await crashReport.writeDiagnosticReport("manual");
       this.sendJson(res, 200, { triggered: true, ...result });
     } catch (err) {
       this.logger.error({ ...ecsError(err) }, "Diagnostic report request failed");
-      writeProblem(res, { status: 500, detail: (err as Error).message, instance: url.pathname });
+      writeProblem(res, {
+        status: 500,
+        detail: err instanceof Error ? err.message : String(err),
+        instance: url.pathname,
+      });
     }
   }
 
@@ -407,7 +454,9 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   private readBody(req: http.IncomingMessage): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
       req.on("end", () => {
         resolve(Buffer.concat(chunks).toString("utf8"));
       });

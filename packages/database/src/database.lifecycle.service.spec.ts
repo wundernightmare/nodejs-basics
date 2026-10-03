@@ -36,7 +36,9 @@ describe("DatabaseLifecycleService", () => {
   it("a failing pool.end does not stop the other pool from closing", async () => {
     await testCase("NB-907", "database shutdown tolerates a failing pool");
     const primary = {
-      end: vi.fn(async () => Promise.reject(new Error("boom"))),
+      end: vi.fn(async () => {
+        throw new Error("boom");
+      }),
     } as unknown as Pool;
     const replica = pool();
     await new DatabaseLifecycleService(primary, replica).onApplicationShutdown();

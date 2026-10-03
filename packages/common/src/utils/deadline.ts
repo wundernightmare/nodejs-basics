@@ -58,7 +58,7 @@ export function callBudgetMs(ownTimeoutMs: number, what?: string): number {
 
 /** A positive integer number of milliseconds from a header value, else undefined. */
 export function parseTimeoutMs(value: unknown): number | undefined {
-  const raw = Array.isArray(value) ? value[0] : value;
+  const raw: unknown = Array.isArray(value) ? (value as unknown[])[0] : value;
   if (typeof raw !== "string" || !/^\d{1,9}$/u.test(raw)) return undefined;
   const ms = Number(raw);
   return ms > 0 ? ms : undefined;

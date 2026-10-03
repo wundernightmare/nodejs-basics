@@ -51,7 +51,7 @@ describe("OutboxRelay (unit)", () => {
       return Promise.reject(new Error("select failed"));
     });
     await expect(h.relay.relayOnce()).rejects.toThrow("select failed");
-    expect(h.release).toHaveBeenCalledWith(dead);
+    expect(h.release).toHaveBeenCalledWith(true);
   });
 
   it("shutdown waits for a batch in flight at most 5 s", async () => {

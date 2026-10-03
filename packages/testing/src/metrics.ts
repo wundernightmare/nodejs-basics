@@ -28,7 +28,7 @@ function parseLabels(s: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of s.matchAll(/(\w+)="((?:\\.|[^"\\])*)"/gu)) {
     // The exposition format escapes \\, " and newline (as \n).
-    out[m[1] as string] = (m[2] as string).replace(/\\(.)/gu, (_, c: string) =>
+    out[m[1] as string] = (m[2] as string).replaceAll(/\\(.)/gu, (_, c: string) =>
       c === "n" ? "\n" : c,
     );
   }

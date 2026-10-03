@@ -38,7 +38,7 @@ describe("registerRequestContext", () => {
     const id = res.headers["x-request-id"];
     expect(typeof id).toBe("string");
     expect(id).not.toBe("bad id\n");
-    expect(id).toMatch(/^[0-9A-Z]{8}$/);
+    expect(id).toMatch(/^[0-9A-Z]{8}$/u);
     expect(res.json().requestId).toBe(id);
   });
 

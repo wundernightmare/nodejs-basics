@@ -103,7 +103,6 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     let delay = 50;
     for (;;) {
       try {
-        // oxlint-disable-next-line no-await-in-loop -- a retry loop: each attempt waits for the last
         return await this.sendOnce(record);
       } catch (err) {
         const error = toKafkaSendError(err);
@@ -112,7 +111,6 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
           (error.kind === "queue_full" && record.messages.length === 1);
         const left = until - Date.now();
         if (!waitable || left <= 0) throw error;
-        // oxlint-disable-next-line no-await-in-loop -- backoff between attempts
         await sleep(Math.min(delay, left));
         delay = Math.min(delay * 2, 1_000);
       }

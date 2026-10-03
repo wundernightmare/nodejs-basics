@@ -171,7 +171,7 @@ export function loadConfigOrExit(options: LoadOptions = {}, write: Write = write
       `${JSON.stringify({
         "@timestamp": new Date().toISOString(),
         "log.level": "fatal",
-        message: (err as Error).message,
+        message: err instanceof Error ? err.message : String(err),
         "event.action": "config.invalid",
         // The envelope every line carries (docs/log-envelope.schema.json) — as
         // @base/logger writes it, which cannot be loaded yet.

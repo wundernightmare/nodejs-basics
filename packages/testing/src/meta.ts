@@ -41,7 +41,7 @@ export function meta(m: Meta): void {
     if (m.epic) labels.push(allure.epic(m.epic));
     if (m.feature) labels.push(allure.feature(m.feature));
     if (m.owner) labels.push(allure.owner(m.owner));
-    if (m.tags?.length) labels.push(allure.tags(...m.tags));
+    if (m.tags !== undefined && m.tags.length > 0) labels.push(allure.tags(...m.tags));
     await Promise.all(labels);
   });
 }

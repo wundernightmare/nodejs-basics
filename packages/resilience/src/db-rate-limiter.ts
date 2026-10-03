@@ -128,7 +128,7 @@ export class DbRateLimiter {
       // Bottleneck rejects with `Bottleneck.BottleneckError` when a job
       // is dropped due to strategy=OVERFLOW + highWater hit. Surface as
       // a clean 503 so HTTP handlers produce the right status code.
-      if (err instanceof Error && /dropped/i.test(err.message)) {
+      if (err instanceof Error && /dropped/iu.test(err.message)) {
         throw new ServiceUnavailableException(
           `Database rate limit exceeded for tenant ${tenantId}`,
         );

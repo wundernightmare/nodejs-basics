@@ -133,20 +133,12 @@ export class ResilientPool {
     this.#selectors = targets.map((t) => ({ name: t.name, selector: t.selector }));
 
     for (const target of targets) {
-      const baseUrl = extractBaseUrl(target.selector);
+      const { name, selector, connections, timeout: _timeout, ...options } = target;
       this.#clients.set(
-        target.name,
-        new ResilientClient(baseUrl, {
-          connections: target.connections ?? 10,
-          shortLived: target.shortLived,
-          retry: target.retry,
-          rateLimit: target.rateLimit,
-          circuitBreaker: target.circuitBreaker,
-          userAgent: target.userAgent,
-          cache: target.cache,
-          coalesce: target.coalesce,
-          fallback: target.fallback,
-          adaptiveConcurrency: target.adaptiveConcurrency,
+        name,
+        new ResilientClient(extractBaseUrl(selector), {
+          ...options,
+          connections: connections ?? 10,
         }),
       );
     }
@@ -354,7 +346,7 @@ export class ResilientPool {
  *          "https://graph.facebook.com/123456/events"
  */
 export function matchesSelector(url: string, selector: string): boolean {
-  const parts = selector.split(/\{[^}]+\}/);
+  const parts = selector.split(/\{[^}]+\}/u);
   let pos = 0;
   for (const part of parts) {
     if (!part) continue;
@@ -372,7 +364,7 @@ export function matchesSelector(url: string, selector: string): boolean {
  */
 export function extractBaseUrl(selector: string): string {
   const normalized = selector.startsWith("://") ? `https${selector}` : selector;
-  const match = normalized.match(/^(https?:\/\/[^/{?#]+)/);
+  const match = normalized.match(/^(https?:\/\/[^/{?#]+)/u);
   if (!match) throw new Error(`Cannot derive base URL from selector: "${selector}"`);
   return match[1] ?? "";
 }

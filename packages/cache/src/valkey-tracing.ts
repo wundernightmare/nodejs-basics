@@ -54,7 +54,7 @@ export function traceValkeyClient(client: Valkey): Valkey {
         span.recordException(err instanceof Error ? err : JSON.stringify(err));
         span.setStatus({
           code: SpanStatusCode.ERROR,
-          message: (err as Error | undefined)?.message,
+          ...(err instanceof Error ? { message: err.message } : {}),
         });
         span.end();
       },

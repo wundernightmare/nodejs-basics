@@ -13,13 +13,7 @@ import { z } from "zod";
 
 /** Length in code points — what JSON Schema's minLength/maxLength count. */
 function codePoints(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    n++;
-    const c = s.charCodeAt(i);
-    if (c >= 0xd800 && c <= 0xdbff) i++; // surrogate pair = one code point
-  }
-  return n;
+  return Array.from(s).length;
 }
 
 /**

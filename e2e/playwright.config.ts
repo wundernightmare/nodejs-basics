@@ -1,11 +1,10 @@
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "@playwright/test";
 
 import { API_URL } from "./helpers/env.js";
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
+const dirname = import.meta.dirname;
 
 // @base/contracts (the typed client) resolves to its TypeScript source through
 // `paths` in e2e/tsconfig.json — Playwright honours it, so the specs need no

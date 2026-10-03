@@ -60,7 +60,7 @@ export class TaskEventsProcessor implements OnApplicationBootstrap, OnApplicatio
         traceJob(job, async () => {
           this.processed.add(1);
           this.logger.info(
-            { "task.id": String(job.data.id), "job.id": job.id },
+            { "task.id": String((job.data as { id: unknown }).id), "job.id": job.id },
             "Task job processed",
           );
           await Promise.resolve();

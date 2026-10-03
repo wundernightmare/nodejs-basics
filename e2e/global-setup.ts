@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import { SPAWN, startServices } from "./fixtures/services.js";
 import { API_ADMIN_URL, API_URL, WORKER_ADMIN_URL } from "./helpers/env.js";
 
@@ -19,7 +21,7 @@ async function waitFor(url: string, tries = 120): Promise<void> {
     } catch {
       // not up yet
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await delay(1000);
   }
   throw new Error(
     `timed out waiting for ${url} — is the stack up? (just stack-up, or E2E_SPAWN=1 with just deps)`,
@@ -38,7 +40,7 @@ async function waitForReady(url: string, tries = 120): Promise<void> {
     } catch {
       // not ready yet
     }
-    await new Promise((r) => setTimeout(r, 1000));
+    await delay(1000);
   }
   throw new Error(`timed out waiting for ${url} to become ready`);
 }

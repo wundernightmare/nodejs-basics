@@ -137,7 +137,7 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
    */
   async relayOnce(): Promise<number> {
     const client = await this.pool.connect();
-    let broken: Error | undefined; // ROLLBACK failed → destroy, don't pool
+    let broken = false; // ROLLBACK failed → destroy, don't pool
     try {
       await client.query("BEGIN");
       const { rows } = await client.query<OutboxRow>(
@@ -205,8 +205,8 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
       }
       return sent.length;
     } catch (err) {
-      await client.query("ROLLBACK").catch((rollbackErr: unknown) => {
-        broken = rollbackErr as Error;
+      await client.query("ROLLBACK").catch(() => {
+        broken = true;
       });
       throw err;
     } finally {
@@ -239,7 +239,7 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
       this.failures++;
       delay = Math.min(this.intervalMs * 2 ** this.failures, MAX_BACKOFF_MS);
       this.logger.warn(
-        { ...ecsError(err as Error), "outbox.retry_in_ms": delay },
+        { ...ecsError(err), "outbox.retry_in_ms": delay },
         "Outbox relay failed — rows stay queued",
       );
     }

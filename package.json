@@ -8,7 +8,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "lint": "pnpm lint:root && pnpm -r lint",
-    "lint:root": "oxlint --max-warnings=173 scripts vitest.config.ts vite.app.config.ts stryker.config.mjs",
+    "lint:root": "oxlint --max-warnings=0 scripts vitest.config.ts vite.app.config.ts stryker.config.mjs",
     "lint:fix": "pnpm -r lint:fix",
     "format": "oxfmt scripts vitest.config.ts vite.app.config.ts stryker.config.mjs && pnpm -r format",
     "format:check": "oxfmt --check scripts vitest.config.ts vite.app.config.ts stryker.config.mjs && pnpm -r format:check",

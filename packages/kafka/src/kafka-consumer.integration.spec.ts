@@ -26,7 +26,6 @@ async function until(cond: () => boolean, ms = 30_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!cond()) {
     if (Date.now() > deadline) throw new Error("timed out waiting");
-    // oxlint-disable-next-line no-await-in-loop -- the pause between checks
     await new Promise((resolve) => {
       setTimeout(resolve, 200);
     });

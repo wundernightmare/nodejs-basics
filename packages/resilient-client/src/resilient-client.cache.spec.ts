@@ -124,6 +124,14 @@ describe("ValkeyCache", () => {
     expect(valkey.get).toHaveBeenCalledWith("rc:k1");
   });
 
+  it("treats an entry of another shape as a miss", async () => {
+    const { body: _body, ...withoutBody } = makeEntry();
+    await valkey.set("rc:old", JSON.stringify(withoutBody));
+    await valkey.set("rc:garbage", "[1,2]");
+    expect(await cache.get("old")).toBeNull();
+    expect(await cache.get("garbage")).toBeNull();
+  });
+
   it("stores with EX TTL = ttlSeconds + staleTtl", async () => {
     const entry = makeEntry({ ttlSeconds: 300 });
     const stalkyCache = new ValkeyCache(valkey, "rc:", 60);

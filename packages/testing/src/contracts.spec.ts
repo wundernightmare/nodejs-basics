@@ -127,12 +127,12 @@ describe("loadOpenAPI", () => {
       "NB-613",
       "unknown route, status, content type, header and body shape are reported",
     );
-    expect(() => contract.validate("GET", "/nope", 200, {}, json)).toThrow(/not in the contract/);
+    expect(() => contract.validate("GET", "/nope", 200, {}, json)).toThrow(/not in the contract/u);
     expect(() => contract.validate("POST", "/things", 201, {}, json)).toThrow(
-      /not in the contract/,
+      /not in the contract/u,
     );
     expect(() => contract.validate("GET", "/things/abc", 500, {}, problem)).toThrow(
-      /500 is not declared/,
+      /500 is not declared/u,
     );
     expect(() =>
       contract.validate(
@@ -142,10 +142,10 @@ describe("loadOpenAPI", () => {
         { type: "about:blank", title: "Not Found", status: 404 },
         json,
       ),
-    ).toThrow(/content type application\/json is not declared/);
+    ).toThrow(/content type application\/json is not declared/u);
     expect(() =>
       contract.validate("GET", "/things/abc", 200, { id: "abc", note: null }, json),
-    ).toThrow(/required response header X-Cache is missing/);
+    ).toThrow(/required response header X-Cache is missing/u);
     expect(() =>
       contract.validate(
         "GET",
@@ -154,13 +154,13 @@ describe("loadOpenAPI", () => {
         { id: "ABC", note: 1 },
         { ...json, "x-cache": "hit" },
       ),
-    ).toThrow(/does not match the contract/);
+    ).toThrow(/does not match the contract/u);
     expect(() =>
       contract.validate("GET", "/things/abc", 200, "{oops", { ...json, "x-cache": "hit" }),
-    ).toThrow(/not JSON/);
+    ).toThrow(/not JSON/u);
     expect(() => contract.validate("DELETE", "/things/abc", 204, "", {})).not.toThrow();
     expect(() => contract.validate("DELETE", "/things/abc", 204, "{}", {})).toThrow(
-      /declares no body/,
+      /declares no body/u,
     );
   });
 
@@ -170,9 +170,9 @@ describe("loadOpenAPI", () => {
       contract.validateSchema("Problem", { type: "about:blank", title: "x", status: 404 }),
     ).not.toThrow();
     expect(() => contract.validateSchema("Problem", { title: "x" })).toThrow(
-      /components.schemas.Problem/,
+      /components.schemas.Problem/u,
     );
-    expect(() => contract.validateSchema("Nope", {})).toThrow(/not in the contract/);
+    expect(() => contract.validateSchema("Nope", {})).toThrow(/not in the contract/u);
   });
 
   it("translates OpenAPI 3.0 nullable into a JSON Schema null union", async () => {

@@ -154,7 +154,10 @@ export class KafkaSendError extends Error {
   /** The librdkafka code, when the failure came from the client. */
   readonly code: number | undefined;
 
-  constructor(kind: KafkaSendErrorKind, options: { cause?: unknown; code?: number } = {}) {
+  constructor(
+    kind: KafkaSendErrorKind,
+    options: { cause?: unknown; code?: number | undefined } = {},
+  ) {
     const cause = options.cause as { message?: unknown } | undefined;
     const detail = typeof cause?.message === "string" ? `: ${cause.message}` : "";
     super(`Kafka send failed (${kind})${detail}`, { cause: options.cause });

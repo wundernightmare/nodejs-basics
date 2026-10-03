@@ -23,7 +23,7 @@ async function workerConsumed(
   const line = (await res.text())
     .split("\n")
     .find((l) => l.startsWith("worker_tasks_consumed_total"));
-  return line ? Number(line.split(/\s+/).at(-1)) : 0;
+  return line ? Number(line.split(/\s+/u).at(-1)) : 0;
 }
 
 test.describe("tasks API", () => {

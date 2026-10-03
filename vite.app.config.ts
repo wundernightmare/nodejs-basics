@@ -115,7 +115,7 @@ export function nodeApp(appDir: string, options: NodeAppOptions = {}): UserConfi
       emptyOutDir: true,
       sourcemap: true,
       minify: false,
-      rollupOptions: {
+      rolldownOptions: {
         // The app's own bare imports (node_modules, node: builtins) stay
         // external and bare; only `@base/*` is bundled (from src, `source`
         // condition). Imports the bundled packages make are handled by

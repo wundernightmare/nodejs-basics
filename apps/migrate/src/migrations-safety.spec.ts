@@ -85,7 +85,7 @@ function findings(sql: string): string[] {
 /** Statements in `sql`, comments and blank fragments aside (no dollar-quoting in our files). */
 function statementCount(sql: string): number {
   return sql
-    .replace(/--[^\n]*/gu, "")
+    .replaceAll(/--[^\n]*/gu, "")
     .split(";")
     .filter((s) => s.trim() !== "").length;
 }

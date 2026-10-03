@@ -11,9 +11,9 @@ describe("parseLogLevelStrict", () => {
   });
 
   it("rejects typos instead of falling back", () => {
-    expect(() => parseLogLevelStrict("debgu")).toThrow(/unknown log level "debgu"/);
-    expect(() => parseLogLevelStrict("")).toThrow(/unknown log level/);
-    expect(() => parseLogLevelStrict(undefined)).toThrow(/unknown log level/);
+    expect(() => parseLogLevelStrict("debgu")).toThrow(/unknown log level "debgu"/u);
+    expect(() => parseLogLevelStrict("")).toThrow(/unknown log level/u);
+    expect(() => parseLogLevelStrict(undefined)).toThrow(/unknown log level/u);
   });
 });
 

@@ -17,8 +17,8 @@ export interface CreateTaskInput {
 }
 
 export interface UpdateTaskInput {
-  title?: string;
-  description?: string | null;
+  title?: string | undefined;
+  description?: string | null | undefined;
 }
 
 export interface TaskRepository {

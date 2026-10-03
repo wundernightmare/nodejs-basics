@@ -64,7 +64,7 @@ describe("problemDetail (property)", () => {
     await testCase("NB-737", "carries the request id of the ambient context");
     fc.assert(
       fc.property(fc.string({ minLength: 1 }), fc.integer({ min: 100, max: 599 }), (id, status) => {
-        expect(withRequestId(id, () => problemDetail(status)).request_id).toBe(id);
+        expect(withRequestId(id, () => problemDetail(status))["request_id"]).toBe(id);
         expect(problemDetail(status)).not.toHaveProperty("request_id");
       }),
       { numRuns },
