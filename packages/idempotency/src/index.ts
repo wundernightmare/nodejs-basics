@@ -6,4 +6,5 @@ export {
   ValkeyIdempotencyStore,
   valkeyIdempotencyStoreProvider,
 } from "./idempotency.store.js";
+export { PgIdempotencyStore, pgIdempotencyStoreProvider } from "./pg-idempotency.store.js";
 export { Idempotent } from "./idempotent.decorator.js";

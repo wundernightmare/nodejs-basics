@@ -1,16 +1,8 @@
 /**
- * Client-side connection metrics for Valkey and PostgreSQL.
+ * Client-side connection metrics for PostgreSQL — the Node.js client's view of
+ * its own pool, not what postgres_exporter (pg_stat_activity) already exposes.
+ * Valkey's client metrics come with its client (@base/cache valkey-metrics.ts).
  *
- * Intentionally avoids duplicating what database-side exporters already expose
- * (valkey_exporter server stats, postgres_exporter pg_stat_activity).
- * Everything here is the Node.js client's view of its own state.
- *
- * Valkey (iovalkey):
- *   valkey.client.command_queue_size  — commands dispatched but awaiting reply
- *   (valkey.client.connected comes from @base/cache registerValkeyMetrics —
- *   registering it here too would export the gauge twice)
- *
- * PostgreSQL (pg.Pool):
  *   db.client.connection.count{state="idle"}     — idle connections in pool
  *   db.client.connection.count{state="used"}     — connections currently checked out
  *   db.client.connection.pending_requests        — requests waiting for a free connection
@@ -20,48 +12,17 @@
  */
 import { Inject, Injectable, OnModuleInit } from "@nestjs/common";
 import { metrics } from "@opentelemetry/api";
-import type { Redis as Valkey } from "iovalkey";
 import type { Pool } from "pg";
 
 import { PG_POOL } from "@base/database";
-import { VALKEY_CLIENT } from "@base/cache";
-
-// iovalkey exposes commandQueue as a public property but does not re-export its
-// internal Deque type.  Access it via a structural alias to stay type-safe.
-type ValkeyWithQueue = Valkey & { commandQueue: { length: number } };
 
 @Injectable()
 export class DbMetricsService implements OnModuleInit {
-  constructor(
-    @Inject(VALKEY_CLIENT) private readonly valkey: Valkey,
-    @Inject(PG_POOL) private readonly pgPool: Pool,
-  ) {}
+  constructor(@Inject(PG_POOL) private readonly pgPool: Pool) {}
 
   onModuleInit(): void {
-    this.registerValkeyMetrics();
     this.registerPgPoolMetrics();
   }
-
-  // ─── Valkey ───────────────────────────────────────────────────────────────
-
-  private registerValkeyMetrics(): void {
-    const meter = metrics.getMeter("valkey.client");
-
-    const commandQueueSize = meter.createObservableGauge("valkey.client.command_queue_size", {
-      description: "Commands dispatched to Valkey that are awaiting a reply from the server",
-      unit: "{command}",
-    });
-
-    meter.addBatchObservableCallback(
-      (result) => {
-        const client = this.valkey as ValkeyWithQueue;
-        result.observe(commandQueueSize, client.commandQueue.length);
-      },
-      [commandQueueSize],
-    );
-  }
-
-  // ─── PostgreSQL ───────────────────────────────────────────────────────────
 
   private registerPgPoolMetrics(): void {
     const meter = metrics.getMeter("db.client");

@@ -387,8 +387,41 @@ modules/<domain>/
 
 Decorate any mutating endpoint with `@Idempotent()` and clients can safely
 retry by sending an `Idempotency-Key` header. The interceptor caches the
-response in Valkey. Lock-on-conflict semantics prevent the same key from
-being processed twice concurrently.
+response in Valkey (in Postgres when the api runs without it, below).
+Lock-on-conflict semantics prevent the same key from being processed twice
+concurrently.
+
+### Optional integrations
+
+Postgres is the api's core; Valkey and Kafka can be switched off, so the api
+runs with a database alone:
+
+```sh
+DISABLED_INTEGRATIONS=valkey,kafka just dev
+```
+
+| Off | What runs instead |
+|---|---|
+| `valkey` | `Idempotency-Key` results in the `idempotency_keys` table (migrations/0004) |
+| `kafka` | no relay: events wait in the `outbox` table for a process that has one |
+
+The rules, for adding a module of your own:
+
+- **Decided once, at startup, in one place.** `app.module.ts` imports a
+  module only when its integration is on (`integrationEnabled()`), and binds
+  the port to the real adapter or the substitute. A disabled integration is
+  never connected to and has no readiness check. Nothing is registered only
+  to throw when called, and no service asks "is X configured?".
+- **On by default.** Production never runs degraded because a variable was
+  forgotten: it fails to start instead. Switching an integration off is an
+  explicit list.
+- **Each app declares what it can do without** (`integrations` in its
+  `boot.ts`). The worker is Kafka → BullMQ and declares nothing, so
+  `DISABLED_INTEGRATIONS=kafka` stops its start with exit 78.
+- **Visible.** Each process logs `integrations.resolved` at startup and
+  exports `app_integration_enabled{integration}`; alert on a 0 in production.
+- **A feature that cannot be substituted** (a payment provider) is a module
+  whose routes are absent when it is off (404), not routes that answer 500.
 
 ### Logging
 

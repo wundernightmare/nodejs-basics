@@ -173,12 +173,15 @@ describe("env registry", () => {
       ...(sources.get("packages/config/src/config.loader.ts") ?? "").matchAll(/from "([^"]+)"/gu),
       ...(sources.get("packages/config/src/config.values.ts") ?? "").matchAll(/from "([^"]+)"/gu),
       ...(sources.get("packages/config/src/config.boot.ts") ?? "").matchAll(/from "([^"]+)"/gu),
+      ...(sources.get("packages/config/src/integrations.ts") ?? "").matchAll(/from "([^"]+)"/gu),
     ].map((m) => m[1]);
     expect(loaderImports.toSorted((a, b) => String(a).localeCompare(String(b)))).toEqual(
       [
         "./config.loader.js",
         "./config.values.js",
+        "./config.values.js",
         "./env.registry.js",
+        "./integrations.js",
         "./env.registry.js",
         "./env.registry.js",
         "node:fs",

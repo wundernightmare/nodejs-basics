@@ -3,6 +3,7 @@
  *
  * Implementations:
  *   - ValkeyIdempotencyStore (provided here) — Redis/Valkey-backed.
+ *   - PgIdempotencyStore — Postgres, for an api without Valkey.
  *   - In-memory store for tests.
  *   - Anything else satisfying the interface.
  */

@@ -18,3 +18,9 @@ export {
   readString,
 } from "./config.values.js";
 export { ENV_REGISTRY, type EnvEntry, type EnvKey, type EnvType } from "./env.registry.js";
+export {
+  disabledIntegrations,
+  type Integration,
+  integrationEnabled,
+  INTEGRATIONS,
+} from "./integrations.js";
