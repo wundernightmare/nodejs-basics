@@ -15,8 +15,8 @@ import { TaskEventsModule } from "./tasks/task-events.module.js";
     ObservabilityModule.forRoot({
       telemetry,
       configSnapshot,
-      // No DB in the worker. The Kafka consumer and the BullMQ processor
-      // register their own /readyz checks (ReadinessService.register).
+      // The Kafka consumer and the job processor register their own /readyz
+      // checks (ReadinessService.register).
     }),
     TaskEventsModule,
   ],

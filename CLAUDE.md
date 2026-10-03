@@ -176,8 +176,14 @@ high-signal, easy-to-miss bits.
   is not imported and its port gets the substitute (PgIdempotencyStore, outbox
   without relay); never register a provider that throws "not configured". An
   app lists what it cannot do without in `boot.ts` (`requires`).
+- **Jobs** go through `JobQueue` (`@base/jobs`: `send(data, key)`,
+  `work`, `waiting`, `ping`) — BullMQ when `VALKEY_URL` is set, pg-boss on
+  `PG_POOL` otherwise (`JobsModule.forQueues`; README "Jobs: BullMQ or
+  pg-boss"). pg-boss migrates its own `pgboss` schema on start — the one
+  exception to "schema = migrations/". A new backend passes
+  `job-queue.integration.spec.ts`.
 - **Data services**: `apps/api` (Postgres + Valkey + Kafka) and `apps/worker`
-  (Kafka consumer → BullMQ) need the backing services. `just deps` (or
+  (Kafka consumer → jobs) need the backing services. `just deps` (or
   `just stack-up` for the whole thing in containers). The broker is **Redpanda**
   (Kafka API). Admin servers listen on 9090 in a container; on the host the
   api uses 9091 and the worker 9093 — `start:dev` passes `--admin-port` to

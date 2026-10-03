@@ -1,7 +1,8 @@
 import { ConfigService } from "@nestjs/config";
-import { type Queue } from "bullmq";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { TaskCreatedEvent } from "@base/contracts";
+import type { JobQueue } from "@base/jobs";
 import { KafkaBackpressureError } from "@base/kafka";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
@@ -17,9 +18,13 @@ function harness(env: Record<string, string> = {}): {
   waiting: ReturnType<typeof vi.fn>;
   readiness: ReadinessService;
 } {
-  const add = vi.fn(() => Promise.resolve({}));
+  const add = vi.fn(() => Promise.resolve());
   const waiting = vi.fn(() => Promise.resolve(0));
-  const queue = { name: "task-events", add, getWaitingCount: waiting } as unknown as Queue;
+  const queue = {
+    name: "task-events",
+    send: add,
+    waiting,
+  } as unknown as JobQueue<TaskCreatedEvent>;
   const readiness = new ReadinessService([], appLogger);
   const consumer = new TaskEventsConsumer(new ConfigService(env), queue, appLogger, readiness);
   return { consumer, add, waiting, readiness };
@@ -56,7 +61,7 @@ describe("TaskEventsConsumer.handle", () => {
     const h = harness();
     await h.consumer.handle(event(created));
     expect(h.add).toHaveBeenCalledOnce();
-    expect(h.add.mock.calls[0]?.[2]).toMatchObject({ jobId: TASK_ID });
+    expect(h.add.mock.calls[0]?.[1]).toBe(TASK_ID);
   });
 
   it("skips a task.created that breaks the contract instead of enqueuing it", async () => {

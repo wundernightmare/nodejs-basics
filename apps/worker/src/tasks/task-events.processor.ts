@@ -1,86 +1,52 @@
 /**
- * BullMQ worker that processes the jobs enqueued by TaskEventsConsumer — the
- * job-system half of the demo. "Processing" here just records a metric and
- * logs; a real worker would do the heavy/async work that should not block the
- * Kafka consumer (emails, webhooks, downstream calls).
+ * Processes the jobs TaskEventsConsumer enqueues — the job-system half of the
+ * demo, on BullMQ or pg-boss (@base/jobs JobsModule). "Processing" here just
+ * records a metric and logs; a real worker would do the heavy/async work that
+ * should not block the Kafka consumer (emails, webhooks, downstream calls).
  */
-import {
-  Inject,
-  Injectable,
-  type OnApplicationBootstrap,
-  type OnApplicationShutdown,
-} from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationBootstrap } from "@nestjs/common";
 import { metrics } from "@opentelemetry/api";
-import { type ConnectionOptions, type Job, Worker } from "bullmq";
 
-import { BULLMQ_CONNECTION, BullMQMetricsService, traceJob } from "@base/jobs";
+import type { TaskCreatedEvent } from "@base/contracts";
+import { type JobQueue, jobQueueToken } from "@base/jobs";
 import { AppLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
-const QUEUE_NAME = "task-events";
+import { TASK_JOBS } from "./task-events.consumer.js";
 
 @Injectable()
-export class TaskEventsProcessor implements OnApplicationBootstrap, OnApplicationShutdown {
-  private worker: Worker | undefined;
+export class TaskEventsProcessor implements OnApplicationBootstrap {
   private readonly logger: ReturnType<AppLogger["child"]>;
   // Prometheus-style name on purpose (pairs with worker_tasks_consumed_total);
   // see the note in task-events.consumer.ts.
   private readonly processed = metrics
     .getMeter("worker")
     .createCounter("worker_tasks_processed_total", {
-      description: "Task jobs processed successfully by the BullMQ worker.",
+      description: "Task jobs processed successfully by the job worker.",
     });
 
   constructor(
-    @Inject(BULLMQ_CONNECTION) private readonly connection: ConnectionOptions,
-    private readonly jobMetrics: BullMQMetricsService,
+    @Inject(jobQueueToken(TASK_JOBS)) private readonly queue: JobQueue<TaskCreatedEvent>,
     appLogger: AppLogger,
     readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsProcessor.name);
-    // Critical: BullMQ is the hand-off point; PING the worker's own Valkey connection.
+    // Critical: the job queue is the hand-off point.
     readiness.register({
-      name: "valkey",
+      name: "jobs",
       check: async () => {
-        if (this.worker === undefined) throw new Error("worker not started");
-        // bullmq types the client as its own IRedisClient; at runtime it is the
-        // iovalkey/ioredis instance, which answers PING.
-        const client = (await this.worker.backend.client) as unknown as { ping(): Promise<string> };
-        await client.ping();
+        await this.queue.ping();
         return "ok";
       },
     });
   }
 
-  onApplicationBootstrap(): void {
-    this.worker = new Worker(
-      QUEUE_NAME,
-      // traceJob: a `process` span parented on the Kafka consumer's span.
-      (job: Job): Promise<void> =>
-        traceJob(job, async () => {
-          this.processed.add(1);
-          this.logger.info(
-            { "task.id": String((job.data as { id: unknown }).id), "job.id": job.id },
-            "Task job processed",
-          );
-          await Promise.resolve();
-        }),
-      {
-        connection: this.connection,
-        // Explicit, so they read as decisions: one job at a time per worker; a
-        // job whose lock is not renewed for lockDuration is stalled and moved
-        // back to wait (once — the second stall fails it).
-        concurrency: 1,
-        lockDuration: 30_000,
-        stalledInterval: 30_000,
-        maxStalledCount: 1,
-      },
-    );
-    this.jobMetrics.observe(this.worker);
-    this.logger.info({ "bullmq.queue": QUEUE_NAME }, "BullMQ worker started");
-  }
-
-  async onApplicationShutdown(): Promise<void> {
-    await this.worker?.close();
+  async onApplicationBootstrap(): Promise<void> {
+    await this.queue.work((event) => {
+      this.processed.add(1);
+      this.logger.info({ "task.id": event.id }, "Task job processed");
+      return Promise.resolve();
+    });
+    this.logger.info({ "jobs.queue": TASK_JOBS }, "Job worker started");
   }
 }

@@ -11,7 +11,7 @@ apps/
                          task.created event to the outbox with each new task.
                          (+ distroless Dockerfile)
   worker/                Kafka consumer worker: drains tasks.events, enqueues a
-                         BullMQ job, processes it. (+ distroless Dockerfile)
+                         job (BullMQ or pg-boss), processes it. (+ distroless Dockerfile)
   migrate/               Forward-only SQL migration runner: one self-contained
                          bundle + migrations/, a 156 MB image with no node_modules.
 
@@ -39,8 +39,8 @@ packages/
                          librdkafka config builder + OTel client metrics.
   outbox                 Transactional outbox: OutboxWriter (inside the UoW
                          transaction) + OutboxRelay (→ Kafka, at least once).
-  jobs                   BullMQ NestJS module: configurable named queues,
-                         OTel metrics, BullBoard wiring.
+  jobs                   JobQueue port + BullMQ (Valkey) / pg-boss (Postgres)
+                         adapters, traced; BullMQ metrics, BullBoard wiring.
   idempotency            Idempotency-Key interceptor + decorator with pluggable
                          KV store (default: Valkey).
   observability          OpenTelemetry SDK setup, Node/HTTP/DB metrics,
@@ -401,6 +401,7 @@ alone. To get that locally, drop the `cache:` and `kafka:` blocks from
 |---|---|
 | `VALKEY_URL` | `Idempotency-Key` results in the `idempotency_keys` table |
 | `KAFKA_BROKERS` | no relay: events wait in the `outbox` table for a process that has one |
+| `VALKEY_URL` (worker) | its jobs run on pg-boss in Postgres (below) |
 
 The rules, for adding a module of your own (`@base/config` integrations.ts):
 
@@ -415,11 +416,31 @@ The rules, for adding a module of your own (`@base/config` integrations.ts):
   address fails the start with exit 78, e.g. `VALKEY_PASSWORD` without
   `VALKEY_URL` (a typo, a Secret without its ConfigMap). So does an
   integration the app cannot do without: the worker declares
-  `requires: ["kafka", "valkey"]` in `boot.ts`.
+  `requires: ["kafka"]` in `boot.ts`.
 - **Visible.** Each process logs `integrations.resolved` at startup and
   exports `app_integration_enabled{integration}`; alert on a 0 in production.
 - **A feature that cannot be substituted** (a payment provider) is a module
   whose routes are absent when it is off (404), not routes that answer 500.
+
+### Jobs: BullMQ or pg-boss
+
+The worker's code depends on `JobQueue` (`@base/jobs`): `send(data, key)`
+(once per key), `work(handler)`, `waiting()`. `JobsModule.forQueues` puts
+BullMQ behind it when `VALKEY_URL` is set, pg-boss on the app's Postgres
+otherwise. Both pass the same contract test (`job-queue.integration.spec.ts`).
+
+| | BullMQ (Valkey) | pg-boss (Postgres) |
+|---|---|---|
+| Extra infrastructure | Valkey, persistent (AOF) for jobs that must survive | none: the database you already run |
+| Enqueue in the business transaction | no; use the outbox | possible: same database, one commit |
+| Latency, throughput | ms, tens of thousands of jobs/s | polling (1 s here, or LISTEN/NOTIFY), hundreds to thousands/s; every job is rows and WAL |
+| Load on the database | none | job writes, autovacuum on `pgboss.job` |
+| Features | rate limits, priorities, flows, repeatable jobs, BullBoard UI | priorities, cron, throttling, dead-letter queues, no UI here |
+| Schema | none | pg-boss owns the `pgboss` schema and migrates it on start; the one schema not in `migrations/` |
+| Observability here | `bullmq.job.*` metrics | spans only; `waiting()` is a `count(*)` |
+
+Pick pg-boss when jobs are modest and one less moving part matters. Pick
+BullMQ for volume, low latency, or its rate limiting and flows.
 
 ### Logging
 

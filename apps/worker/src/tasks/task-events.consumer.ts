@@ -1,7 +1,7 @@
 /**
  * Drains the `tasks.events` Kafka topic (produced by apps/api) and, for each
  * `task.created` event (TaskCreatedEvent — generated from api/tsp/events.tsp,
- * the same type the producer writes), enqueues a BullMQ job that
+ * the same type the producer writes), enqueues a job that
  * TaskEventsProcessor handles. The Kafka side (connect, commit, pause and
  * backoff, tracing) is @base/kafka's KafkaConsumerRunner; this class is the
  * part every consumer writes for itself: decode the event, hand it off.
@@ -14,22 +14,23 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { metrics } from "@opentelemetry/api";
-import { type Queue } from "bullmq";
 
 import { readInt } from "@base/config";
-import { isTaskCreatedEvent, TASK_EVENTS_TOPIC } from "@base/contracts";
-import { addTraced, bullmqQueueToken } from "@base/jobs";
+import { isTaskCreatedEvent, TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
+import { type JobQueue, jobQueueToken } from "@base/jobs";
 import { KafkaBackpressureError, KafkaConsumerRunner } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
 const GROUP_ID = "tasks-worker";
+/** The job queue between the Kafka consumer and TaskEventsProcessor. */
+export const TASK_JOBS = "task-events";
 // How stale the job-queue depth may be before it is read again.
 const QUEUE_DEPTH_TTL_MS = 1_000;
 
 /**
  * The job queue holds WORKER_QUEUE_MAX_WAITING jobs: the runner pauses the
- * partition, so the backlog stays in Kafka (built for it), not in Valkey.
+ * partition, so the backlog stays in Kafka (built for it), not in the job queue.
  */
 export class JobQueueFullError extends KafkaBackpressureError {
   constructor(readonly waiting: number) {
@@ -55,7 +56,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
 
   constructor(
     config: ConfigService,
-    @Inject(bullmqQueueToken("task-events")) private readonly queue: Queue,
+    @Inject(jobQueueToken(TASK_JOBS)) private readonly queue: JobQueue<TaskCreatedEvent>,
     appLogger: AppLogger,
     readiness: ReadinessService,
   ) {
@@ -107,8 +108,8 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     const event = decoded;
     await this.ensureQueueRoom();
     this.consumed.add(1);
-    // jobId = task id makes redelivery idempotent; addTraced carries the trace.
-    await addTraced(this.queue, "process-task", event, { jobId: event.id });
+    // Keyed by task id: a redelivered event does not become a second job.
+    await this.queue.send(event, event.id);
     // Count our own enqueue into the cached depth: a burst inside one cache
     // window would otherwise all pass on a stale "0".
     if (this.queueDepth !== undefined) this.queueDepth.waiting++;
@@ -119,7 +120,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   private async ensureQueueRoom(): Promise<void> {
     const now = Date.now();
     if (this.queueDepth === undefined || now - this.queueDepth.at > QUEUE_DEPTH_TTL_MS) {
-      this.queueDepth = { waiting: await this.queue.getWaitingCount(), at: now };
+      this.queueDepth = { waiting: await this.queue.waiting(), at: now };
     }
     if (this.queueDepth.waiting >= this.maxWaiting) {
       throw new JobQueueFullError(this.queueDepth.waiting);

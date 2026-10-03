@@ -22,8 +22,9 @@ import { metricsReference } from "@base/observability/metrics-registry";
 bootConfig({
   name: "nodejs-basics-worker",
   defaults: { OTEL_SERVICE_NAME: "nodejs-basics-worker" },
-  // Kafka → BullMQ: without either there is nothing to do — exit 78.
-  requires: ["kafka", "valkey"],
+  // Kafka → jobs: without Kafka there is nothing to do — exit 78. Jobs run on
+  // BullMQ with VALKEY_URL, else on pg-boss in Postgres.
+  requires: ["kafka"],
   references: {
     "metrics-reference": {
       help: "every metric: name, instrument, unit, labels, meaning, when to worry",
