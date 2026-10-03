@@ -96,15 +96,11 @@ describe("IdempotencyInterceptor", () => {
     tags: ["idempotency", "unit"],
   });
 
-  it("caches for 24 h by default — and on a garbage IDEMPOTENCY_TTL_SECONDS", async () => {
+  it("caches for 24 h by default", async () => {
     await testCase("NB-810", "default TTL");
-    const envs: Record<string, string>[] = [{}, { IDEMPOTENCY_TTL_SECONDS: "a day" }];
-    for (const env of envs) {
-      const { store, call } = setup(env);
-      // oxlint-disable-next-line no-await-in-loop -- one setup after another
-      await call({ key: IDEM_UUID }).run();
-      expect(store.set).toHaveBeenCalledWith(STORE_KEY, expect.any(String), 86_400);
-    }
+    const { store, call } = setup();
+    await call({ key: IDEM_UUID }).run();
+    expect(store.set).toHaveBeenCalledWith(STORE_KEY, expect.any(String), 86_400);
   });
 
   it("answers 409 while an identical request is still in flight", async () => {

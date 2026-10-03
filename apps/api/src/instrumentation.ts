@@ -10,8 +10,8 @@
  *  - diagnostics_channel subscribers (UndiciInstrumentation: outbound HTTP),
  *  - explicit spans in the @base/* packages (Postgres, Valkey, Kafka, BullMQ).
  */
-// Must stay the first import: sets this app's OTEL_SERVICE_NAME default.
-import "./service-name.js";
+// Must stay the first import: the service name default and the configuration.
+import "./boot.js";
 
 import { FastifyOtelInstrumentation } from "@fastify/otel";
 import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";

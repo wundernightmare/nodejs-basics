@@ -6,8 +6,8 @@
  * apps/api/src/instrumentation.ts for why patching instrumentations are not
  * used in the bundle.
  */
-// Must stay the first import: sets this app's OTEL_SERVICE_NAME default.
-import "./service-name.js";
+// Must stay the first import: the service name default and the configuration.
+import "./boot.js";
 
 import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
 
