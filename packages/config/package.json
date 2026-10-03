@@ -29,7 +29,7 @@
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "tsc --build --clean && rm -rf dist coverage"
+    "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
     "yaml": "2.9.1"

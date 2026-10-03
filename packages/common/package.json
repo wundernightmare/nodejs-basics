@@ -24,7 +24,7 @@
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "tsc --build --clean && rm -rf dist coverage"
+    "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
     "nanoid": "6.0.1"
