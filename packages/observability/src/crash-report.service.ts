@@ -249,7 +249,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
       return s3Uri;
     } catch (err) {
       this.logger.error(
-        { ...ecsError(err as Error), "file.path": localPath },
+        { ...ecsError(err), "file.path": localPath },
         "Failed to upload crash report file to S3",
       );
       return localPath;

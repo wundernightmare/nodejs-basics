@@ -70,7 +70,7 @@ export const valkeyBreakerProvider: FactoryProvider<DependencyCircuitBreaker> = 
     return new DependencyCircuitBreaker("valkey", built.circuitBreaker, {
       errorFilter: (err) => {
         // Exclude user-logic errors (WRONGTYPE, etc.) from breaker budget.
-        const msg = (err as Error | undefined)?.message ?? "";
+        const msg = err instanceof Error ? err.message : "";
         return /WRONGTYPE|NOSCRIPT|NOGROUP|BUSYGROUP/u.test(msg);
       },
     });

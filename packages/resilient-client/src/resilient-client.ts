@@ -620,7 +620,8 @@ export class ResilientClient {
   }
 
   #isCacheable(opts: Dispatcher.RequestOptions, statusCode: number): boolean {
-    const methods = this.#cacheConfig!.methods ?? ["GET", "HEAD"];
+    if (this.#cacheConfig === undefined) return false;
+    const methods = this.#cacheConfig.methods ?? ["GET", "HEAD"];
     const method = (opts.method as string | undefined)?.toUpperCase() ?? "GET";
     return methods.includes(method) && statusCode >= 200 && statusCode < 300;
   }
@@ -629,9 +630,11 @@ export class ResilientClient {
     key: string,
     opts: Dispatcher.RequestOptions,
   ): Promise<Dispatcher.ResponseData | null> {
+    const cache = this.#cacheConfig;
+    if (cache === undefined) return null;
     let entry: CachedEntry | null;
     try {
-      entry = await this.#cacheConfig!.adapter.get(key);
+      entry = await cache.adapter.get(key);
     } catch {
       // cache read errors are non-fatal
       return null;
@@ -640,7 +643,7 @@ export class ResilientClient {
 
     const ageSec = (Date.now() - entry.cachedAt) / 1000;
     const isFresh = ageSec <= entry.ttlSeconds;
-    const staleTtl = this.#cacheConfig!.staleTtlSeconds ?? 0;
+    const staleTtl = cache.staleTtlSeconds ?? 0;
     const isStale = !isFresh && ageSec <= entry.ttlSeconds + staleTtl;
 
     if (isFresh) {
@@ -655,7 +658,7 @@ export class ResilientClient {
 
     // Beyond stale window — evict and fall through to fresh fetch
     try {
-      await this.#cacheConfig!.adapter.delete(key);
+      await cache.adapter.delete(key);
     } catch {}
     return null;
   }
@@ -677,6 +680,8 @@ export class ResilientClient {
     key: string,
     response: Dispatcher.ResponseData,
   ): Promise<Dispatcher.ResponseData> {
+    const cache = this.#cacheConfig;
+    if (cache === undefined) return response;
     const chunks: Buffer[] = [];
     if (response.body !== null && response.body !== undefined) {
       try {
@@ -694,11 +699,11 @@ export class ResilientClient {
       headers: response.headers as Record<string, string | string[]>,
       body: buf.toString("base64"),
       cachedAt: Date.now(),
-      ttlSeconds: this.#cacheConfig!.ttlSeconds ?? 300,
+      ttlSeconds: cache.ttlSeconds ?? 300,
     };
 
     try {
-      await this.#cacheConfig!.adapter.set(key, entry);
+      await cache.adapter.set(key, entry);
     } catch {
       // Cache write errors are non-fatal
     }

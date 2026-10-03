@@ -79,7 +79,6 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     await testCase("NB-940", "back-pressure is re-checked soon");
     const h = runner(failing(new KafkaBackpressureError("queue full")));
     for (let i = 0; i < 6; i++) {
-      // oxlint-disable-next-line no-await-in-loop -- consecutive failures on one partition
       await expect(h.runner.handleMessage(payload())).rejects.toThrow();
     }
     const late = vi.fn();

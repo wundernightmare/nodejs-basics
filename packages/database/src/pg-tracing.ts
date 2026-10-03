@@ -154,7 +154,7 @@ export function tracePgPool(pool: Pool, target: Attributes): void {
       } catch (err) {
         // Like pg-pool: a failed query's client is released with the error,
         // which destroys it instead of returning a possibly broken connection.
-        client.release(err as Error);
+        client.release(true);
         throw err;
       }
     })();

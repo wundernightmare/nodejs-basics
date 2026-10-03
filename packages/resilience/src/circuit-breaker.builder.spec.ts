@@ -113,7 +113,6 @@ describe("DependencyCircuitBreaker", () => {
 
   async function trip(b: DependencyCircuitBreaker, times: number): Promise<void> {
     for (let i = 0; i < times; i += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- breaker state accumulates per call
       await expect(b.execute(fail)).rejects.toThrow("x");
     }
   }
@@ -196,7 +195,6 @@ describe("DependencyCircuitBreaker", () => {
     const b = make({}, { errorFilter: (err) => (err as { code?: string }).code === "ENOENT" });
     const expected = Object.assign(new Error("expected"), { code: "ENOENT" });
     for (let i = 0; i < 5; i += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- breaker state accumulates per call
       await expect(b.execute(() => Promise.reject(expected))).rejects.toBe(expected);
     }
     expect(b.state()).toBe("closed");

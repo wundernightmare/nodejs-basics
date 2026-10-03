@@ -13,6 +13,20 @@ export interface CachedEntry {
   ttlSeconds: number;
 }
 
+/** True when `value` has the shape of a CachedEntry (what a store hands back is untyped). */
+export function isCachedEntry(value: unknown): value is CachedEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const e = value as Record<string, unknown>;
+  return (
+    typeof e["statusCode"] === "number" &&
+    typeof e["headers"] === "object" &&
+    e["headers"] !== null &&
+    typeof e["body"] === "string" &&
+    typeof e["cachedAt"] === "number" &&
+    typeof e["ttlSeconds"] === "number"
+  );
+}
+
 export interface CacheAdapter {
   get(key: string): Promise<CachedEntry | null>;
   set(key: string, entry: CachedEntry): Promise<void>;
@@ -98,7 +112,9 @@ export class ValkeyCache implements CacheAdapter {
     const raw = await this.client.get(this.prefix + key);
     if (raw === null || raw === "") return null;
     try {
-      return JSON.parse(raw) as CachedEntry;
+      const parsed: unknown = JSON.parse(raw);
+      // Another version's entry, or a corrupted one, is a miss — not a crash later.
+      return isCachedEntry(parsed) ? parsed : null;
     } catch {
       return null;
     }
@@ -156,7 +172,6 @@ export class CachedBodyReadable extends Readable {
     return Promise.resolve(new Blob([new Uint8Array(this.data)]));
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   dump(_opts?: { limit?: number }): Promise<void> {
     // Data is already buffered — nothing to drain.
     return Promise.resolve();

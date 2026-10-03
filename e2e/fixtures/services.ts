@@ -26,13 +26,15 @@ export const LOG_DIR = path.join(ROOT, "e2e", "test-results");
 
 export const SPAWN = process.env["E2E_SPAWN"] === "1";
 
+export const API_ENTRY = path.join(ROOT, "apps/api/dist/main.js");
+
 interface ServiceSpec {
   name: string;
   entry: string;
   env: Record<string, string>;
 }
 
-const deps = {
+export const deps = {
   DATABASE_URL: process.env["DATABASE_URL"] ?? "postgresql://app:app@localhost:5432/app",
   VALKEY_URL: process.env["VALKEY_URL"] ?? "redis://localhost:6379",
   KAFKA_BROKERS: process.env["KAFKA_BROKERS"] ?? "localhost:9092",
@@ -43,7 +45,7 @@ const deps = {
 const SERVICES: ServiceSpec[] = [
   {
     name: "api",
-    entry: path.join(ROOT, "apps/api/dist/main.js"),
+    entry: API_ENTRY,
     env: { ...deps, PORT: "3000", ADMIN_PORT: "9091", OTEL_SERVICE_NAME: "api" },
   },
   {

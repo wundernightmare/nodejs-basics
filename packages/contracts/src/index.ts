@@ -4,6 +4,7 @@
  * Generated, never edited (`just contracts`):
  *   tasksapi.gen.ts  the HTTP contract, from api/openapi3/tasks.openapi.yaml
  *   events.gen.ts    the Kafka events, from api/jsonschema/*.json
+ *   events.schemas.gen.ts  the same JSON Schemas, for isTaskCreatedEvent (events.ts)
  * This module names the types a producer, a consumer, a client or a test
  * reaches for, and createTasksClient (client.ts) — the typed client.
  */
@@ -33,9 +34,7 @@ export type Problem = Schemas["Problem"];
 /** Body of GET /health. */
 export type HealthStatus = Schemas["HealthStatus"];
 
-import type { components as events } from "./events.gen.js";
+export { isTaskCreatedEvent, type TaskCreatedEvent } from "./events.js";
 
 /** Kafka topic of the task lifecycle events (a topic is not part of a JSON Schema). */
 export const TASK_EVENTS_TOPIC = "tasks.events";
-/** Value of a `task.created` record on TASK_EVENTS_TOPIC; key = task id. */
-export type TaskCreatedEvent = events["schemas"]["TaskCreatedEvent"];

@@ -17,7 +17,7 @@ import { metrics } from "@opentelemetry/api";
 import { type Queue } from "bullmq";
 
 import { readInt } from "@base/config";
-import { TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
+import { isTaskCreatedEvent, TASK_EVENTS_TOPIC } from "@base/contracts";
 import { addTraced, bullmqQueueToken } from "@base/jobs";
 import { KafkaBackpressureError, KafkaConsumerRunner } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
@@ -95,9 +95,16 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       return;
     }
     // The topic may carry other event types (additive contract): not ours, skip.
-    if (typeof decoded !== "object" || decoded === null) return;
-    const event = decoded as TaskCreatedEvent;
-    if (event.type !== "task.created") return;
+    if ((decoded as { type?: unknown } | null)?.type !== "task.created") return;
+    if (!isTaskCreatedEvent(decoded)) {
+      // Ours, but not what the contract says (no id → no idempotent jobId): never retried.
+      this.logger.warn(
+        { "event.reason": "contract" },
+        "Skipping a task.created event that breaks the contract",
+      );
+      return;
+    }
+    const event = decoded;
     await this.ensureQueueRoom();
     this.consumed.add(1);
     // jobId = task id makes redelivery idempotent; addTraced carries the trace.

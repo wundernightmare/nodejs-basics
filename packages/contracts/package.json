@@ -27,6 +27,8 @@
     "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
