@@ -89,6 +89,18 @@ export function configSnapshot(): ConfigSnapshot {
   return { config, sources: provenance };
 }
 
+/**
+ * An empty value is no value. `KEY=` is what an unset knob renders to (a
+ * compose `${KEY:-}`, a helm `| quote` of ""), and left in place it would
+ * shadow config.yaml and the registry default, and reach code that falls
+ * back with `??` — `parseInt("")` is NaN, `setInterval(NaN)` is a busy loop.
+ */
+function dropEmptyValues(): void {
+  for (const entry of ENV_REGISTRY) {
+    if (process.env[entry.key] === "") delete process.env[entry.key];
+  }
+}
+
 function recordEnvSources(): void {
   for (const entry of ENV_REGISTRY) {
     if (process.env[entry.key] !== undefined) sources.set(entry.key, "env");
@@ -135,6 +147,7 @@ export function loadConfigOrExit(): void {
 }
 
 function load(): Record<string, unknown> {
+  dropEmptyValues();
   const configPath = resolve(process.env["APP_CONFIG_FILE"] ?? "config.yaml");
   recordEnvSources();
 
@@ -153,16 +166,17 @@ function load(): Record<string, unknown> {
     if (entry.yaml === undefined) continue;
     if (process.env[entry.key] !== undefined) continue;
     const value = getNestedValue(file, entry.yaml);
-    if (value !== null && value !== undefined) {
-      process.env[entry.key] = serializeValue(value);
-      sources.set(entry.key, "yaml");
-    }
+    if (value === null || value === undefined) continue;
+    const serialized = serializeValue(value);
+    if (serialized === "") continue;
+    process.env[entry.key] = serialized;
+    sources.set(entry.key, "yaml");
   }
 
   // Flat top-level keys (DATABASE_URL: ...).
   for (const [key, value] of Object.entries(file)) {
     if (value === null || value === undefined || !REGISTERED.has(key)) continue;
-    if (process.env[key] !== undefined) continue;
+    if (process.env[key] !== undefined || serializeValue(value) === "") continue;
     process.env[key] = serializeValue(value);
     sources.set(key, "yaml");
   }
@@ -192,9 +206,9 @@ function applyDefaults(): void {
 }
 
 function missingRequiredKeys(): string[] {
-  return ENV_REGISTRY.filter(
-    (e) => e.required && (process.env[e.key] === undefined || process.env[e.key] === ""),
-  ).map((e) => `${e.key} is required (set it in the environment or in the YAML file)`);
+  return ENV_REGISTRY.filter((e) => e.required && process.env[e.key] === undefined).map(
+    (e) => `${e.key} is required (set it in the environment or in the YAML file)`,
+  );
 }
 
 function invalidValues(): string[] {
