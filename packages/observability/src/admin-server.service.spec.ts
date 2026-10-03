@@ -5,6 +5,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { AppLogger, logLevel, pinoLogger } from "@base/logger";
 
 import { AdminServerService } from "./admin-server.service.js";
+import type { CrashReportService } from "./crash-report.service.js";
+import type { HeapSnapshotService } from "./heap-snapshot.service.js";
 import { ReadinessService } from "./readiness.service.js";
 import type { TelemetryHandle } from "./setup-telemetry.tokens.js";
 
@@ -93,7 +95,7 @@ describe("AdminServerService (auth=off)", () => {
       version: expect.any(String),
       revision: expect.any(String),
       node: process.version,
-      started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
       uptime_seconds: expect.any(Number),
       env: expect.any(String),
     });
@@ -139,7 +141,7 @@ describe("AdminServerService (auth=off)", () => {
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET");
     const id = res.headers.get("x-request-id");
-    expect(id).toMatch(/^[0-9A-Z]{8}$/);
+    expect(id).toMatch(/^[0-9A-Z]{8}$/u);
     expect(await res.json()).toMatchObject({
       title: "Method Not Allowed",
       status: 405,
@@ -252,5 +254,73 @@ describe("AdminServerService (auth=bearer)", () => {
 
   it("has no /admin/config route without a snapshot function", async () => {
     expect((await fetch(`${base}/admin/config`)).status).toBe(404);
+  });
+});
+
+describe("AdminServerService (diagnostics routes)", () => {
+  let base: string;
+  let admin: AdminServerService;
+  // What the next capture / report does: a location, null (busy), or a throw.
+  let capture: () => Promise<string | null>;
+  let report: () => Promise<{ location: string }>;
+
+  beforeAll(async () => {
+    process.env["ADMIN_PORT"] = "0";
+    delete process.env["ADMIN_TOKEN"];
+    const readiness = new ReadinessService([], appLogger);
+    const heapSnapshot = { capture: () => capture() } as unknown as HeapSnapshotService;
+    const crashReport = {
+      writeDiagnosticReport: () => report(),
+    } as unknown as CrashReportService;
+    admin = new AdminServerService(readiness, telemetry, appLogger, {}, heapSnapshot, crashReport);
+    await admin.onApplicationBootstrap();
+    base = `http://127.0.0.1:${admin.port}`;
+  });
+  afterAll(async () => {
+    await admin.onApplicationShutdown("test");
+  });
+  afterEach(() => {
+    logLevel.reset();
+  });
+
+  it("POST /debug/heapdump: 200 with the location, 409 while busy, 500 problem on failure", async () => {
+    capture = () => Promise.resolve("/tmp/x.heapsnapshot");
+    const ok = await fetch(`${base}/debug/heapdump`, { method: "POST" });
+    expect([ok.status, await json(ok)]).toEqual([
+      200,
+      { triggered: true, location: "/tmp/x.heapsnapshot" },
+    ]);
+
+    capture = () => Promise.resolve(null);
+    expect((await fetch(`${base}/debug/heapdump`, { method: "POST" })).status).toBe(409);
+
+    capture = () => Promise.reject(new Error("disk full"));
+    const failed = await fetch(`${base}/debug/heapdump`, { method: "POST" });
+    expect([failed.status, (await json(failed))["detail"]]).toEqual([500, "disk full"]);
+  });
+
+  it("POST /debug/report: 200 with the result, 500 problem on failure", async () => {
+    report = () => Promise.resolve({ location: "/tmp/r.json" });
+    const ok = await fetch(`${base}/debug/report`, { method: "POST" });
+    expect([ok.status, await json(ok)]).toEqual([
+      200,
+      { triggered: true, location: "/tmp/r.json" },
+    ]);
+
+    report = () => Promise.reject(new Error("no space"));
+    const failed = await fetch(`${base}/debug/report`, { method: "POST" });
+    expect([failed.status, (await json(failed))["detail"]]).toEqual([500, "no space"]);
+  });
+
+  it("takes the log level from a form body or a bare one", async () => {
+    const form = await fetch(`${base}/admin/log-level`, {
+      method: "PUT",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "level=debug&ttl=1m",
+    });
+    expect((await json(form))["level"]).toBe("debug");
+
+    const bare = await fetch(`${base}/admin/log-level`, { method: "PUT", body: "warn" });
+    expect((await json(bare))["level"]).toBe("warn");
   });
 });

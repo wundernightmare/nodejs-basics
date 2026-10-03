@@ -40,7 +40,7 @@ export class PgUnitOfWork implements IUnitOfWork {
     const tx = { client, open: true };
     // Set when ROLLBACK fails: the connection is in an unknown state and is
     // destroyed on release instead of going back to the pool.
-    let broken: Error | undefined;
+    let broken = false;
     try {
       await client.query("BEGIN");
       // Under a request deadline the server cancels a statement that would
@@ -52,8 +52,8 @@ export class PgUnitOfWork implements IUnitOfWork {
     } catch (err) {
       try {
         await client.query("ROLLBACK");
-      } catch (rollbackErr) {
-        broken = rollbackErr as Error;
+      } catch {
+        broken = true;
       }
       throw err;
     } finally {

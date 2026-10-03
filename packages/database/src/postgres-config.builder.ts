@@ -94,7 +94,7 @@ export function decorateConnectionString(
   // to stuff extra query params — libpq reads space-separated pairs.
   // Only URI-shaped strings accept our decoration; return everything
   // else untouched and let libpq parse it as-is.
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl)) return rawUrl;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//u.test(rawUrl)) return rawUrl;
 
   const queryIdx = rawUrl.indexOf("?");
   const [beforeQuery, query] =
@@ -171,7 +171,7 @@ export function buildPostgresConfig(
     ca !== undefined || skipVerify || (sslMode !== undefined && sslMode !== "disable");
   const ssl = sslEnabled
     ? {
-        ...(ca ? { ca } : {}),
+        ...(ca !== undefined ? { ca } : {}),
         rejectUnauthorized: !skipVerify,
       }
     : (false as const);
@@ -216,7 +216,7 @@ export function buildPostgresConfig(
     // reads it from libpq params and pure-JS pg writes it via the option
     // — covering both branches keeps pg_stat_activity clean on either.
     application_name: appName,
-    ...(ssl ? { ssl } : {}),
+    ...(ssl !== false ? { ssl } : {}),
     ...(queryTimeoutMs !== undefined ? { query_timeout: queryTimeoutMs } : {}),
     // Escape hatch lands last so a purposefully-named field can override
     // a typed one (e.g. set `options: '-c lock_timeout=5s'` for global

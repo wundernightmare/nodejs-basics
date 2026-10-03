@@ -16,7 +16,7 @@ import { integration, loadOpenAPI, meta, testCase } from "@base/testing";
  */
 const infra = integration("postgres", "valkey", "kafka");
 const contract = loadOpenAPI("openapi3/tasks.openapi.yaml");
-const NUL = String.fromCharCode(0);
+const NUL = String.fromCodePoint(0);
 const UNKNOWN_ID = "AAAAAAAAAAAAAAAAAAAAA"; // well-formed, never issued
 
 /** Assert the problem+json envelope every error carries and return the body. */

@@ -35,14 +35,15 @@ import v8 from "node:v8";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Injectable, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
 
+import { processEnv, readInt, readNumber } from "@base/config";
 import { AppLogger, ecsError } from "@base/logger";
 
 type Trigger = "signal" | "oom" | "manual";
 
 const S3_BUCKET = process.env["HEAP_SNAPSHOT_S3_BUCKET"];
 const S3_PREFIX = process.env["HEAP_SNAPSHOT_S3_PREFIX"] ?? "heap-snapshots";
-const OOM_THRESHOLD = parseFloat(process.env["HEAP_OOM_THRESHOLD"] ?? "0.85");
-const OOM_POLL_MS = parseInt(process.env["HEAP_OOM_POLL_INTERVAL_MS"] ?? "10000", 10);
+const OOM_THRESHOLD = readNumber(processEnv, "HEAP_OOM_THRESHOLD");
+const OOM_POLL_MS = readInt(processEnv, "HEAP_OOM_POLL_INTERVAL_MS");
 
 const SERVICE_NAME = process.env["OTEL_SERVICE_NAME"] ?? "app";
 
@@ -127,7 +128,7 @@ export class HeapSnapshotService implements OnApplicationBootstrap, OnApplicatio
   }
 
   private async captureAndUpload(trigger: Trigger): Promise<string> {
-    const ts = new Date().toISOString().replaceAll(/[:.]/g, "-");
+    const ts = new Date().toISOString().replaceAll(/[:.]/gu, "-");
     const filename = `heap-${ts}-${trigger}.heapsnapshot`;
     const localPath = join(tmpdir(), filename);
 

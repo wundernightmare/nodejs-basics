@@ -23,18 +23,3 @@ export function generateErrorId(): string {
 export function generateId(): string {
   return nanoid();
 }
-
-// Shorter token for state tokens (consistency tokens) — still globally unique
-export function generateStateToken(): string {
-  return nanoid();
-}
-
-// Short URL-safe token for tracker / public slugs — 12 chars → ~72 bits of entropy
-const shortToken = customAlphabet(
-  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
-  12,
-);
-
-export function generateToken(): string {
-  return shortToken();
-}

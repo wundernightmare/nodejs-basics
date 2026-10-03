@@ -56,7 +56,7 @@ export interface RequestContextOptions {
    * Value of the X-Debug-Token header that turns on debug logging for one
    * request. Empty/undefined disables the feature (no header is inspected).
    */
-  debugToken?: string;
+  debugToken?: string | undefined;
   /**
    * The budget of one request in ms (HTTP_REQUEST_TIMEOUT_MS): every outbound
    * call made while handling it gets at most what is left (utils/deadline.ts).

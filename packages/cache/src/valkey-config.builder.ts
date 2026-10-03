@@ -38,11 +38,11 @@ import { computeJitteredDelay } from "@base/resilient-client";
 export interface ValkeyBuilderResult {
   host: string;
   port: number;
-  username?: string;
-  password?: string;
+  username?: string | undefined;
+  password?: string | undefined;
   db: number;
   /** TLS options block when `secure` resolves to true. */
-  tls?: TlsConnectionOptions;
+  tls?: TlsConnectionOptions | undefined;
   /** Connect-timeout in ms (TCP setup + TLS handshake). */
   connectTimeoutMs: number;
   /** Per-command timeout in ms — clamps a single Valkey response wait. */
@@ -97,7 +97,7 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   const urlPass = parsed.password.length > 0 ? parsed.password : undefined;
   const username = readString(config, "VALKEY_USERNAME") ?? urlUser;
   const password = readString(config, "VALKEY_PASSWORD") ?? urlPass;
-  const urlDb = Number(parsed.pathname.replace(/^\//, ""));
+  const urlDb = Number(parsed.pathname.replace(/^\//u, ""));
   const db = readInt(config, "VALKEY_DB") ?? (Number.isInteger(urlDb) ? urlDb : 0);
 
   const secure = parsed.protocol === "rediss:" || readBool(config, "VALKEY_TLS");

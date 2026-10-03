@@ -27,7 +27,7 @@ const secretWord = fc.constantFrom(
 const secretKey = fc
   .tuple(fc.string({ maxLength: 8 }), secretWord, fc.string({ maxLength: 8 }))
   .map(([a, w, b]) => a + w + b)
-  .filter(isSecretKey);
+  .filter((key) => isSecretKey(key));
 // fast-check biases keys towards "__proto__" / "constructor" / "toString".
 // "constructor" is excluded only because toStrictEqual compares
 // `a.constructor === b.constructor`, which an own key of that name hijacks.

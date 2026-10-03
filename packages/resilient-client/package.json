@@ -20,7 +20,7 @@
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage --passWithNoTests",
-    "lint": "oxlint --max-warnings=78 src",
+    "lint": "oxlint --max-warnings=0 src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",

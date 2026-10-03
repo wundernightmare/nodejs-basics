@@ -99,7 +99,7 @@ export function ecsError(err: unknown): Record<string, string | undefined> {
 
 // ─── ECS formatters ──────────────────────────────────────────────────────────
 
-const formatters: pino.LoggerOptions["formatters"] = {
+const formatters: NonNullable<pino.LoggerOptions["formatters"]> = {
   level: (label: string) => ({ "log.level": label }),
   bindings: (bindings: pino.Bindings) => ({
     "process.pid": bindings["pid"] as number,
@@ -113,7 +113,7 @@ const formatters: pino.LoggerOptions["formatters"] = {
 
 // ─── ECS-compatible Fastify serializers ──────────────────────────────────────
 
-const serializers: pino.LoggerOptions["serializers"] = {
+const serializers: NonNullable<pino.LoggerOptions["serializers"]> = {
   req(req: Record<string, unknown>) {
     const url = typeof req["url"] === "string" ? req["url"] : "";
     const qIdx = url.indexOf("?");

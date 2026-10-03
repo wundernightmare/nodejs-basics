@@ -21,7 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { convert } from "ast-v8-to-istanbul";
-import { parseAstAsync } from "vite";
+import { parse } from "vite";
 
 const [rawDir, outFile] = process.argv.slice(2);
 if (!rawDir || !outFile) {
@@ -29,7 +29,7 @@ if (!rawDir || !outFile) {
   process.exit(2);
 }
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const root = resolve(import.meta.dirname, "..");
 const wanted = (file) =>
   /^(packages|apps)\/[^/]+\/src\/.*\.ts$/u.test(file) &&
   !file.endsWith(".spec.ts") &&
@@ -42,7 +42,9 @@ async function bundle(path) {
   if (!b) {
     const code = readFileSync(path, "utf8");
     const sourceMap = JSON.parse(readFileSync(`${path}.map`, "utf8"));
-    b = { code, sourceMap, ast: await parseAstAsync(code) };
+    const { program, errors } = await parse(path, code);
+    if (errors.length > 0) throw new Error(`${path}: ${errors[0].message}`);
+    b = { code, sourceMap, ast: program };
     bundles.set(path, b);
   }
   return b;

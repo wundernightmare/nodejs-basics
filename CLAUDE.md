@@ -32,10 +32,22 @@ high-signal, easy-to-miss bits.
 - **Lint/format** are oxlint + oxfmt (Rust-based, fast). Each app/e2e package
   needs its own `.oxlintrc.json` extending the root — oxlint's `typeAware`
   option is only valid in the config it treats as the root, so a package run
-  from its own dir must re-anchor to `../.oxlintrc.json`. Every `lint` script
-  carries `--max-warnings=N`, a ratchet: fix warnings and lower N, never
-  raise it. `import/no-cycle` is an error. The root `scripts/` and config
+  from its own dir must re-anchor to `../.oxlintrc.json` — a package config
+  is that `extends` and nothing else; rules live in the root. Every `lint`
+  script carries `--max-warnings=0`: fix a warning, or turn the rule off in
+  the root with the reason it does not fit (an `oxlint-disable` comment
+  for a single line). Turned off on purpose: `no-await-in-loop`
+  (sequential I/O is the point: migrations, retries, relay batches),
+  `no-inline-comments`, `no-useless-undefined`, `prefer-top-level-await`,
+  `no-redeclare` (the `const X` + `type X` pair); `strict-boolean-expressions`
+  allows a nullable string / boolean — an empty value is unset everywhere
+  here. Specs and `*.mjs` (untyped) relax the type-aware rules in
+  `overrides`. `import/no-cycle` is an error. The root `scripts/` and config
   files are linted/formatted by the root `lint:root` / `format:check`.
+- **TypeScript** is `strict` plus `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes` (an optional field the caller may pass as
+  `undefined` says `?: T | undefined`), `noPropertyAccessFromIndexSignature`
+  and `noImplicitReturns` — specs included, no relaxed test tsconfig.
 - **Tests** are vitest with ONE root `vitest.config.ts` and two projects:
   `unit` (`*.spec.ts`, `pnpm test`) and `integration` (`*.integration.spec.ts`,
   `pnpm test:integration`, real services from `just deps` via `DATABASE_URL` /

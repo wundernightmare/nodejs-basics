@@ -22,6 +22,6 @@ describe("SqlTaskRepository (unit)", () => {
     await expect(
       new SqlTaskRepository(pool).create({ id: "t1", title: "x", description: null }),
     ).rejects.toThrow("insert failed");
-    expect(release).toHaveBeenCalledWith(dead);
+    expect(release).toHaveBeenCalledWith(true);
   });
 });

@@ -63,7 +63,7 @@ function toPattern(url: string): RegExp {
     .map((segment) => {
       if (segment.startsWith(":")) return "[^/]+";
       if (segment === "*") return ".*";
-      return segment.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      return segment.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
     })
     .join("/");
   return new RegExp(`^${source}/?$`, "u");

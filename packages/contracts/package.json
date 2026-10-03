@@ -19,7 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --passWithNoTests",
     "test:run": "vitest run --passWithNoTests",
-    "lint": "oxlint --max-warnings=2 src",
+    "lint": "oxlint --max-warnings=0 src",
     "lint:fix": "oxlint --fix src",
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
@@ -27,6 +27,8 @@
     "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {

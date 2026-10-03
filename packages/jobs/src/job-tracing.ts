@@ -27,7 +27,10 @@ const TRACER = "@base/jobs";
 function endSpan(span: Span, err?: unknown): void {
   if (err !== undefined) {
     span.recordException(err instanceof Error ? err : JSON.stringify(err));
-    span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error | undefined)?.message });
+    span.setStatus({
+      code: SpanStatusCode.ERROR,
+      ...(err instanceof Error ? { message: err.message } : {}),
+    });
   }
   span.end();
 }

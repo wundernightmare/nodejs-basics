@@ -53,12 +53,7 @@ export function isDebugLogging(): boolean {
  * ULID, hex, base32) and nothing that could break a log line or a header.
  */
 export function isValidRequestId(value: unknown): value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_REQUEST_ID_LEN) {
-    return false;
-  }
-  for (let i = 0; i < value.length; i++) {
-    const c = value.charCodeAt(i);
-    if (c <= 0x20 || c > 0x7e) return false;
-  }
-  return true;
+  return (
+    typeof value === "string" && value.length <= MAX_REQUEST_ID_LEN && /^[!-~]+$/u.test(value) // "!" 0x21 … "~" 0x7e
+  );
 }

@@ -65,7 +65,7 @@ export class SqlTaskRepository implements TaskRepository {
     if (ambient) return fn(ambient);
 
     const client = await this.pool.connect();
-    let broken: Error | undefined; // ROLLBACK failed → destroy, don't pool
+    let broken = false; // ROLLBACK failed → destroy, don't pool
     try {
       await client.query("BEGIN");
       await limitTransaction(client); // the request budget as statement_timeout
@@ -76,8 +76,8 @@ export class SqlTaskRepository implements TaskRepository {
     } catch (err) {
       try {
         await client.query("ROLLBACK");
-      } catch (rollbackErr) {
-        broken = rollbackErr as Error;
+      } catch {
+        broken = true;
       }
       throw err;
     } finally {
@@ -140,8 +140,7 @@ export class SqlTaskRepository implements TaskRepository {
         sets.push(`description = $${i++}`);
         values.push(patch.description);
       }
-      sets.push(`updated_at = NOW()`);
-      sets.push(`version = version + 1`);
+      sets.push(`updated_at = NOW()`, `version = version + 1`);
 
       values.push(id, expectedVersion);
 
