@@ -79,9 +79,9 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(OutboxRelay.name);
-    this.intervalMs = readInt(config, "OUTBOX_POLL_INTERVAL_MS") ?? 200;
-    this.batchSize = readInt(config, "OUTBOX_BATCH_SIZE") ?? 100;
-    this.maxAttempts = readInt(config, "OUTBOX_MAX_ATTEMPTS") ?? 10;
+    this.intervalMs = readInt(config, "OUTBOX_POLL_INTERVAL_MS");
+    this.batchSize = readInt(config, "OUTBOX_BATCH_SIZE");
+    this.maxAttempts = readInt(config, "OUTBOX_MAX_ATTEMPTS");
     // The numbers to alert on: rows waiting to be published, rows given up on.
     const meter = metrics.getMeter("outbox");
     const pending = meter.createObservableGauge("outbox.pending", {

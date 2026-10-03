@@ -35,7 +35,7 @@ import { TASK_LIST_PAGE_SIZE } from "./tasks.tokens.js";
     {
       provide: TASK_LIST_PAGE_SIZE,
       inject: [ConfigService],
-      useFactory: (config: ConfigService): number => readInt(config, "TASK_LIST_PAGE_SIZE") ?? 50,
+      useFactory: (config: ConfigService): number => readInt(config, "TASK_LIST_PAGE_SIZE"),
     },
   ],
 })

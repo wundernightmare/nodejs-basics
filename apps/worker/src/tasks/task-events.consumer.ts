@@ -60,7 +60,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     readiness: ReadinessService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
-    this.maxWaiting = readInt(config, "WORKER_QUEUE_MAX_WAITING") ?? 10_000;
+    this.maxWaiting = readInt(config, "WORKER_QUEUE_MAX_WAITING");
     this.runner = new KafkaConsumerRunner(config, this.logger, {
       groupId: GROUP_ID,
       topics: [TASK_EVENTS_TOPIC],

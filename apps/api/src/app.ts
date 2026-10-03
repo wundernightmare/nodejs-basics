@@ -64,8 +64,8 @@ export async function createApp(): Promise<NestFastifyApplication> {
   // problem; the request budget bounds both receiving the request (slow
   // clients) and every Postgres / Valkey / HTTP call made while handling it
   // (the deadline, registerRequestContext below), after which the answer is 504.
-  const bodyLimit = readInt(processEnv, "HTTP_BODY_LIMIT_BYTES") ?? 1_048_576;
-  const requestTimeoutMs = readInt(processEnv, "HTTP_REQUEST_TIMEOUT_MS") ?? 10_000;
+  const bodyLimit = readInt(processEnv, "HTTP_BODY_LIMIT_BYTES");
+  const requestTimeoutMs = readInt(processEnv, "HTTP_REQUEST_TIMEOUT_MS");
   const adapter = new FastifyAdapter({
     bodyLimit,
     requestTimeout: requestTimeoutMs,
