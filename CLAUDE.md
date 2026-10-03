@@ -155,12 +155,15 @@ high-signal, easy-to-miss bits.
 - **DI scope**: a provider declared only in `AppModule.providers` is NOT visible
   to feature modules. Cross-cutting bindings (e.g. `UNIT_OF_WORK`) live in a
   `@Global` module (`apps/api/src/unit-of-work.module.ts`).
-- **Optional integrations**: Postgres is the api's core; `DISABLED_INTEGRATIONS=valkey,kafka`
-  runs it alone (`@base/config` integrations.ts). The module tree is composed
-  from `integrationEnabled()` in `app.module.ts` — a disabled integration is
-  not imported and its port gets the substitute (PgIdempotencyStore, outbox
-  without relay); never register a provider that throws "not configured".
-  An app lists what it can do without in `boot.ts` (`integrations`).
+- **Optional integrations**: Postgres is the api's core; Valkey / Kafka are on
+  when `VALKEY_URL` / `KAFKA_BROKERS` is set — no flags, no default address in
+  the registry (dev addresses live in config.example.yaml and the Justfile).
+  `@base/config` integrations.ts: a new one is `{ key, prefix }`; a prefixed
+  variable set without the key fails the boot. The module tree is composed
+  from `integrationEnabled()` in `app.module.ts` — an integration that is off
+  is not imported and its port gets the substitute (PgIdempotencyStore, outbox
+  without relay); never register a provider that throws "not configured". An
+  app lists what it cannot do without in `boot.ts` (`requires`).
 - **Data services**: `apps/api` (Postgres + Valkey + Kafka) and `apps/worker`
   (Kafka consumer → BullMQ) need the backing services. `just deps` (or
   `just stack-up` for the whole thing in containers). The broker is **Redpanda**

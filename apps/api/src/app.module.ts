@@ -18,9 +18,9 @@ import { HealthModule } from "./modules/health/health.module.js";
 import { TasksModule } from "./modules/tasks/tasks.module.js";
 import { UnitOfWorkModule } from "./unit-of-work.module.js";
 
-// Postgres is the core; Valkey and Kafka can be switched off
-// (DISABLED_INTEGRATIONS, boot.ts): a disabled one is not imported at all,
-// and what needs it runs on a substitute — see README "Optional integrations".
+// Postgres is the core; Valkey and Kafka are on when VALKEY_URL / KAFKA_BROKERS
+// are set. One that is off is not imported at all, and what needs it runs on
+// a substitute — see README "Optional integrations".
 const valkey = integrationEnabled("valkey");
 const kafka = integrationEnabled("kafka");
 
@@ -47,7 +47,7 @@ const kafka = integrationEnabled("kafka");
       readinessChecks: {
         provide: READINESS_CHECKS,
         inject: valkey ? [PG_POOL, VALKEY_CLIENT] : [PG_POOL],
-        // Checks for what this process connects to — a disabled integration has none.
+        // Checks for what this process connects to — one that is off has none.
         useFactory: (pool: Pool, valkeyClient?: Valkey): ReadinessCheck[] => [
           { name: "db", check: () => pool.query("SELECT 1").then(() => "ok") },
           ...(valkeyClient === undefined

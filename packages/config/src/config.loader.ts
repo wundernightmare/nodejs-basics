@@ -37,7 +37,7 @@ import { parse as parseYaml } from "yaml";
 
 import { ConfigValueError, parseConfigValue } from "./config.values.js";
 import { ENV_REGISTRY } from "./env.registry.js";
-import { disabledIntegrationProblems, type Integration } from "./integrations.js";
+import { type Integration, integrationProblems } from "./integrations.js";
 
 function serializeValue(value: unknown): string {
   if (Array.isArray(value)) {
@@ -133,8 +133,8 @@ export interface LoadOptions {
    * OTEL_SERVICE_NAME, so the api and the worker never share one name.
    */
   defaults?: Readonly<Record<string, string>>;
-  /** What this app can run without (DISABLED_INTEGRATIONS); default: nothing. */
-  integrations?: readonly Integration[];
+  /** Integrations this app cannot run without (the rest are optional). */
+  requires?: readonly Integration[];
 }
 
 /** Where output goes: stdout (1) or stderr (2). */
@@ -228,7 +228,11 @@ function load(options: LoadOptions): Record<string, unknown> {
   problems.push(
     ...invalidValues(),
     ...missingRequiredKeys(),
-    ...disabledIntegrationProblems(options.integrations ?? []),
+    ...integrationProblems(
+      options.requires ?? [],
+      (key) => sources.get(key) === "env" || sources.get(key) === "yaml",
+      [...REGISTERED],
+    ),
   );
   if (problems.length > 0) {
     throw new Error(

@@ -21,7 +21,9 @@ const KEYS = [
   "LOG_LEVEL_MAX_TTL",
   "OTEL_SERVICE_NAME",
   "ALLOWED_ORIGINS",
-  "DISABLED_INTEGRATIONS",
+  "VALKEY_URL",
+  "VALKEY_PASSWORD",
+  "KAFKA_BROKERS",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -46,8 +48,18 @@ describe("yamlConfigLoader + configSnapshot", () => {
     process.env["APP_CONFIG_FILE"] = path;
   };
 
+  // The loader writes every default into process.env; a case must not see the
+  // last one's (a VALKEY_* default would read as "set without VALKEY_URL").
+  let before: NodeJS.ProcessEnv = {};
+  const dropLoaded = (): void => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in before)) Reflect.deleteProperty(process.env, k);
+    }
+  };
+
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "config-spec-"));
+    before = { ...process.env };
     for (const k of KEYS) {
       saved[k] = process.env[k];
       delete process.env[k];
@@ -55,6 +67,7 @@ describe("yamlConfigLoader + configSnapshot", () => {
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+    dropLoaded();
     for (const k of KEYS) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
@@ -88,6 +101,7 @@ describe("yamlConfigLoader + configSnapshot", () => {
         "databse:",
         "  url: postgresql://elsewhere/db",
         "kafka:",
+        "  brokers: k:9092",
         "  producer:",
         "    linger_ms: 10ms",
         "app:",
@@ -118,12 +132,12 @@ describe("yamlConfigLoader + configSnapshot", () => {
 
   it("takes a mapping at a JSON key's path, and loads once per process", async () => {
     await testCase("NB-962", "extra properties as YAML; ConfigModule reuses the boot-time load");
-    file("kafka:\n  extra_properties:\n    debug: broker\n");
+    file("kafka:\n  brokers: k:9092\n  extra_properties:\n    debug: broker\n");
     const { yamlConfigLoader } = await loader();
     const first = yamlConfigLoader();
     expect(process.env["KAFKA_EXTRA_PROPERTIES"]).toBe('{"debug":"broker"}');
 
-    file("kafka:\n  extra_properties: {}\nbogus: 1\n");
+    file("kafka:\n  brokers: k:9092\n  extra_properties: {}\nbogus: 1\n");
     expect(yamlConfigLoader()).toBe(first);
   });
 
@@ -194,26 +208,35 @@ describe("yamlConfigLoader + configSnapshot", () => {
     expect(process.env["OTEL_SERVICE_NAME"]).toBe("my-app");
   });
 
-  it("lets an app run without only the integrations it declares", async () => {
+  it("an integration is on when its connection variable is set, and never half-set", async () => {
     await testCase(
       "NB-1003",
-      "DISABLED_INTEGRATIONS: what the app cannot do without fails the start",
+      "integrations by presence: a stray group key or a needed one fails the start",
     );
-    file("app:\n  disabled_integrations: [Valkey, kafka]\n");
+    process.env["APP_CONFIG_FILE"] = join(dir, "absent.yaml");
     let { yamlConfigLoader } = await loader();
-    expect(() => yamlConfigLoader({ integrations: ["valkey"] })).toThrow(
-      "DISABLED_INTEGRATIONS: this app cannot run without kafka (it can without: valkey)",
-    );
-    ({ yamlConfigLoader } = await loader());
-    expect(() => yamlConfigLoader({ integrations: ["valkey", "kafka"] })).not.toThrow();
+    expect(() => yamlConfigLoader()).not.toThrow(); // Postgres alone: both off, defaults are no intent
     const { integrationEnabled } = await import("./integrations.js");
     expect([integrationEnabled("valkey"), integrationEnabled("kafka")]).toEqual([false, false]);
 
-    process.env["DISABLED_INTEGRATIONS"] = "kafak";
+    dropLoaded();
     ({ yamlConfigLoader } = await loader());
-    expect(() => yamlConfigLoader({ integrations: ["kafka"] })).toThrow(
-      'unknown integration "kafak" (known: valkey, kafka)',
+    expect(() => yamlConfigLoader({ requires: ["kafka"] })).toThrow(
+      "KAFKA_BROKERS is required: this app needs kafka",
     );
+
+    dropLoaded();
+    file("cache:\n  password: s3cret\n"); // the secret arrived, the URL did not
+    ({ yamlConfigLoader } = await loader());
+    expect(() => yamlConfigLoader()).toThrow(
+      "VALKEY_PASSWORD set without VALKEY_URL: set VALKEY_URL to use valkey, or remove them",
+    );
+
+    dropLoaded();
+    process.env["VALKEY_URL"] = "redis://cache:6379";
+    ({ yamlConfigLoader } = await loader());
+    expect(() => yamlConfigLoader()).not.toThrow();
+    expect(integrationEnabled("valkey")).toBe(true);
   });
 
   it("joins a YAML list into the comma-separated value the code splits", async () => {

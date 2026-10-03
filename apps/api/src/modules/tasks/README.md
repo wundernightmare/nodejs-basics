@@ -15,7 +15,7 @@ application/
 
 infrastructure/
   sql-task.repository.ts     pg-based, withTx + db() helpers, optimistic lock
-                             (the table: migrations/0001_create_tasks.sql)
+                             (the table: migrations/0001_init.sql)
 
 http/
   tasks.dto.ts               createZodDto from nestjs-zod
@@ -96,7 +96,7 @@ Send a stale `expectedVersion` — you get `409 Conflict` as
 
 ## What to delete when you adapt this
 
-- `migrations/0001_create_tasks.sql` — or keep it and add yours after it.
+- The `tasks` table in `migrations/0001_init.sql` — or keep it and add yours after it.
 - The `queryFindById` shortcut at the bottom of `tasks.controller.ts` —
   push that into TaskQueryService as a real `findById` method.
 - The whole module — start over with your domain.

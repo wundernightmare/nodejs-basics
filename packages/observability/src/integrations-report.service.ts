@@ -6,7 +6,7 @@
 import { Injectable, type OnModuleInit } from "@nestjs/common";
 import { metrics } from "@opentelemetry/api";
 
-import { integrationEnabled, INTEGRATIONS } from "@base/config";
+import { INTEGRATION_NAMES, integrationEnabled } from "@base/config";
 import { AppLogger } from "@base/logger";
 
 @Injectable()
@@ -14,8 +14,8 @@ export class IntegrationsReportService implements OnModuleInit {
   constructor(private readonly logger: AppLogger) {}
 
   onModuleInit(): void {
-    const enabled = INTEGRATIONS.filter((name) => integrationEnabled(name));
-    const disabled = INTEGRATIONS.filter((name) => !integrationEnabled(name));
+    const enabled = INTEGRATION_NAMES.filter((name) => integrationEnabled(name));
+    const disabled = INTEGRATION_NAMES.filter((name) => !integrationEnabled(name));
     this.logger.child(IntegrationsReportService.name).info(
       {
         "event.action": "integrations.resolved",
@@ -28,10 +28,10 @@ export class IntegrationsReportService implements OnModuleInit {
       .getMeter("app")
       .createObservableGauge("app.integration.enabled", {
         description:
-          "1 when the integration is on in this process, 0 when DISABLED_INTEGRATIONS switched it off.",
+          "1 when the integration is on in this process, 0 when its connection variable is unset.",
       })
       .addCallback((result) => {
-        for (const name of INTEGRATIONS) {
+        for (const name of INTEGRATION_NAMES) {
           result.observe(integrationEnabled(name) ? 1 : 0, { integration: name });
         }
       });
