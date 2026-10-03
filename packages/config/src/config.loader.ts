@@ -37,6 +37,7 @@ import { parse as parseYaml } from "yaml";
 
 import { ConfigValueError, parseConfigValue } from "./config.values.js";
 import { ENV_REGISTRY } from "./env.registry.js";
+import { disabledIntegrationProblems, type Integration } from "./integrations.js";
 
 function serializeValue(value: unknown): string {
   if (Array.isArray(value)) {
@@ -122,7 +123,7 @@ let loaded: Record<string, unknown> | undefined;
  * missing required key.
  */
 export function yamlConfigLoader(options: LoadOptions = {}): Record<string, unknown> {
-  loaded ??= load(options.defaults ?? {});
+  loaded ??= load(options);
   return loaded;
 }
 
@@ -132,6 +133,8 @@ export interface LoadOptions {
    * OTEL_SERVICE_NAME, so the api and the worker never share one name.
    */
   defaults?: Readonly<Record<string, string>>;
+  /** What this app can run without (DISABLED_INTEGRATIONS); default: nothing. */
+  integrations?: readonly Integration[];
 }
 
 /** Where output goes: stdout (1) or stderr (2). */
@@ -186,7 +189,7 @@ export function loadConfigOrExit(options: LoadOptions = {}, write: Write = write
   }
 }
 
-function load(appDefaults: Readonly<Record<string, string>>): Record<string, unknown> {
+function load(options: LoadOptions): Record<string, unknown> {
   dropEmptyValues();
   const configPath = resolve(process.env["APP_CONFIG_FILE"] ?? "config.yaml");
   recordEnvSources();
@@ -221,8 +224,12 @@ function load(appDefaults: Readonly<Record<string, string>>): Record<string, unk
     sources.set(key, "yaml");
   }
 
-  applyDefaults(appDefaults);
-  problems.push(...invalidValues(), ...missingRequiredKeys());
+  applyDefaults(options.defaults ?? {});
+  problems.push(
+    ...invalidValues(),
+    ...missingRequiredKeys(),
+    ...disabledIntegrationProblems(options.integrations ?? []),
+  );
   if (problems.length > 0) {
     throw new Error(
       `Invalid configuration (${configPath}):\n` +

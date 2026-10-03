@@ -1,12 +1,13 @@
+import { type Redis as Valkey } from "iovalkey";
 import { type Pool } from "pg";
 
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
 import { ValkeyModule, VALKEY_CLIENT } from "@base/cache";
-import { configSnapshot, yamlConfigLoader } from "@base/config";
+import { configSnapshot, integrationEnabled, yamlConfigLoader } from "@base/config";
 import { DatabaseModule, PG_POOL } from "@base/database";
-import { IdempotencyModule } from "@base/idempotency";
+import { IdempotencyModule, pgIdempotencyStoreProvider } from "@base/idempotency";
 import { KafkaModule } from "@base/kafka";
 import { LoggerModule } from "@base/logger";
 import { OutboxModule } from "@base/outbox";
@@ -17,17 +18,25 @@ import { HealthModule } from "./modules/health/health.module.js";
 import { TasksModule } from "./modules/tasks/tasks.module.js";
 import { UnitOfWorkModule } from "./unit-of-work.module.js";
 
+// Postgres is the core; Valkey and Kafka can be switched off
+// (DISABLED_INTEGRATIONS, boot.ts): a disabled one is not imported at all,
+// and what needs it runs on a substitute — see README "Optional integrations".
+const valkey = integrationEnabled("valkey");
+const kafka = integrationEnabled("kafka");
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [yamlConfigLoader] }),
     LoggerModule,
     DatabaseModule,
     UnitOfWorkModule,
-    ValkeyModule,
-    KafkaModule,
-    // Transactional outbox → Kafka (OutboxWriter in use cases, OutboxRelay in the background).
-    OutboxModule,
-    IdempotencyModule.forRoot(),
+    ...(valkey ? [ValkeyModule] : []),
+    ...(kafka ? [KafkaModule] : []),
+    // Transactional outbox → Kafka (OutboxWriter in use cases, OutboxRelay in
+    // the background). Without Kafka the events wait in the table.
+    OutboxModule.forRoot({ relay: kafka }),
+    // Idempotency-Key results: Valkey, or the same in a Postgres table.
+    IdempotencyModule.forRoot(valkey ? {} : { storeProvider: pgIdempotencyStoreProvider }),
     ObservabilityModule.forRoot({
       telemetry,
       // GET /admin/config — the effective ENV_REGISTRY values (redacted).
@@ -37,22 +46,13 @@ import { UnitOfWorkModule } from "./unit-of-work.module.js";
       enableCrashReport: true,
       readinessChecks: {
         provide: READINESS_CHECKS,
-        inject: [PG_POOL, VALKEY_CLIENT],
-        useFactory: (pool: Pool, valkey: import("iovalkey").Redis): ReadinessCheck[] => [
-          {
-            name: "db",
-            check: async () => {
-              await pool.query("SELECT 1");
-              return "ok";
-            },
-          },
-          {
-            name: "valkey",
-            check: async () => {
-              await valkey.ping();
-              return "ok";
-            },
-          },
+        inject: valkey ? [PG_POOL, VALKEY_CLIENT] : [PG_POOL],
+        // Checks for what this process connects to — a disabled integration has none.
+        useFactory: (pool: Pool, valkeyClient?: Valkey): ReadinessCheck[] => [
+          { name: "db", check: () => pool.query("SELECT 1").then(() => "ok") },
+          ...(valkeyClient === undefined
+            ? []
+            : [{ name: "valkey", check: () => valkeyClient.ping().then(() => "ok") }]),
         ],
       },
     }),

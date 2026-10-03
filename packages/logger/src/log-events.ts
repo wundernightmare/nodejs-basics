@@ -31,6 +31,15 @@ export const LOG_EVENTS: readonly LogEvent[] = [
     source: "packages/config",
   },
   {
+    action: "integrations.resolved",
+    level: "info",
+    description:
+      "What the process runs with, at startup: the integrations on and the ones " +
+      "DISABLED_INTEGRATIONS switched off (@base/config integrations.ts).",
+    fields: ["integrations.enabled", "integrations.disabled"],
+    source: "packages/observability",
+  },
+  {
     action: "admin.started",
     level: "info",
     description:

@@ -7,6 +7,9 @@ import { valkeyIdempotencyStoreProvider } from "./idempotency.store.js";
  * Use the default Valkey-backed store:
  *   imports: [IdempotencyModule.forRoot()]
  *
+ * Postgres instead (an api without Valkey):
+ *   imports: [IdempotencyModule.forRoot({ storeProvider: pgIdempotencyStoreProvider })]
+ *
  * Provide a custom store implementation:
  *   imports: [IdempotencyModule.forRoot({
  *     storeProvider: { provide: IDEMPOTENCY_STORE, useClass: MyMemoryStore }

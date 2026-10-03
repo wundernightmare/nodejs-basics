@@ -8,6 +8,7 @@ import {
 import { CrashReportService } from "./crash-report.service.js";
 import { DbMetricsService } from "./db-metrics.service.js";
 import { HeapSnapshotService } from "./heap-snapshot.service.js";
+import { IntegrationsReportService } from "./integrations-report.service.js";
 import { OtelShutdownService } from "./otel-shutdown.service.js";
 import { READINESS_CHECKS, type ReadinessCheck, ReadinessService } from "./readiness.service.js";
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
@@ -27,7 +28,7 @@ export interface ObservabilityModuleOptions {
    * server (redact() from @base/logger). Without it the route is absent (404).
    */
   configSnapshot?: () => ConfigView;
-  /** Register DbMetricsService (requires PG_POOL and VALKEY_CLIENT to be available). */
+  /** Register DbMetricsService (requires PG_POOL). */
   enableDbMetrics?: boolean;
   /**
    * Register HeapSnapshotService — listens for SIGUSR2, polls heap usage,
@@ -58,6 +59,7 @@ export class ObservabilityModule {
       OtelShutdownService,
       AdminServerService,
       ReadinessService,
+      IntegrationsReportService,
     ];
 
     if (options.enableDbMetrics === true) {

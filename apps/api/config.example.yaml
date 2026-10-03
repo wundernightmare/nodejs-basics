@@ -16,6 +16,7 @@ app:
   allowed_origins:
     - http://localhost:3000
     - http://localhost:5173
+  # disabled_integrations: [valkey, kafka]   # run on Postgres alone (README "Optional integrations")
 
 database:
   url: postgresql://app:app@localhost:5432/app
