@@ -13,11 +13,7 @@ export {
   readInt,
   readJson,
   readNumber,
+  readSecretFile,
   readString,
 } from "./config.values.js";
 export { ENV_REGISTRY, type EnvEntry, type EnvType } from "./env.registry.js";
-export {
-  SecretFileWatcher,
-  type SecretFileWatcherOptions,
-  type SecretChangeListener,
-} from "./secret-file-watcher.js";
