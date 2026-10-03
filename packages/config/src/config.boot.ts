@@ -9,7 +9,7 @@
  */
 import { parseArgs } from "node:util";
 
-import { loadConfigOrExit, type LoadOptions } from "./config.loader.js";
+import { loadConfigOrExit, type LoadOptions, type Write, writeAll } from "./config.loader.js";
 import { ENV_REGISTRY, type EnvEntry } from "./env.registry.js";
 
 export interface BootOptions extends LoadOptions {
@@ -66,7 +66,11 @@ export function describeEntry(entry: EnvEntry, defaults: LoadOptions["defaults"]
  * Handles the flags, or loads the configuration (exiting 78 on a bad one).
  * Returns only when the app should start.
  */
-export function bootConfig(options: BootOptions, argv = process.argv.slice(2)): void {
+export function bootConfig(
+  options: BootOptions,
+  argv = process.argv.slice(2),
+  write: Write = writeAll,
+): void {
   const references = options.references ?? {};
   let flags: Record<string, boolean | undefined>;
   try {
@@ -80,30 +84,30 @@ export function bootConfig(options: BootOptions, argv = process.argv.slice(2)): 
       },
     }) as { values: Record<string, boolean | undefined> });
   } catch (err) {
-    process.stderr.write(`${(err as Error).message}\n\n${USAGE(options.name, references)}`);
+    write(2, `${(err as Error).message}\n\n${USAGE(options.name, references)}`);
     // 64 = EX_USAGE (sysexits.h).
     process.exit(64);
   }
 
   if (flags["help"] === true) {
-    process.stdout.write(USAGE(options.name, references));
+    write(1, USAGE(options.name, references));
     process.exit(0);
   }
   for (const [flag, reference] of Object.entries(references)) {
     if (flags[flag] === true) {
-      process.stdout.write(`${reference.text()}\n`);
+      write(1, `${reference.text()}\n`);
       process.exit(0);
     }
   }
   if (flags["config-reference"] === true) {
     const all = ENV_REGISTRY.map((entry) => describeEntry(entry, options.defaults));
-    process.stdout.write(`${all.join("\n\n")}\n`);
+    write(1, `${all.join("\n\n")}\n`);
     process.exit(0);
   }
   if (flags["check-config"] === true) {
-    loadConfigOrExit(options);
-    process.stdout.write("configuration is valid\n");
+    loadConfigOrExit(options, write);
+    write(1, "configuration is valid\n");
     process.exit(0);
   }
-  loadConfigOrExit(options);
+  loadConfigOrExit(options, write);
 }
