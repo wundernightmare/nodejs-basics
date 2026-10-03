@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { meta, testCase } from "@base/testing";
@@ -8,8 +12,12 @@ import {
   readInt,
   readJson,
   readNumber,
+  readSecretFile,
   readString,
 } from "./config.values.js";
+
+/** A config whose every key reads as `path`. */
+const pointingAt = (path?: string): { get: (key: string) => unknown } => ({ get: () => path });
 
 describe("typed config values", () => {
   meta({
@@ -80,5 +88,25 @@ describe("typed config values", () => {
     expect(readBool(config, "DATABASE_KEEPALIVE")).toBe(false);
     expect(readJson(config, "KAFKA_EXTRA_PROPERTIES")).toEqual({ debug: "all" });
     expect(readString(config, "KAFKA_BROKERS")).toBeUndefined();
+  });
+
+  it("reads a *_FILE secret once, trimmed; an unreadable or empty file is an error", async () => {
+    await testCase("NB-976", "a mounted secret is read at startup, never silently skipped");
+    const dir = mkdtempSync(join(tmpdir(), "nb-secret-"));
+    try {
+      const file = join(dir, "password");
+      writeFileSync(file, "s3cret\n");
+      const empty = join(dir, "empty");
+      writeFileSync(empty, "\n");
+      expect(readSecretFile(pointingAt(file), "DATABASE_PASSWORD_FILE")).toBe("s3cret");
+      expect(readSecretFile(pointingAt(), "DATABASE_PASSWORD_FILE")).toBeUndefined();
+      for (const bad of [empty, join(dir, "missing")]) {
+        expect(() => readSecretFile(pointingAt(bad), "DATABASE_PASSWORD_FILE")).toThrow(
+          "expected a readable, non-empty file",
+        );
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

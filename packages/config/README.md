@@ -1,8 +1,8 @@
 # @base/config
 
 YAML config loader with an env-var overlay, a central env registry, a snapshot
-of the effective configuration for `GET /admin/config`, and a Secret-file
-watcher for hot rotation.
+of the effective configuration for `GET /admin/config`, and typed readers
+(`readInt`, `readBool`, …, `readSecretFile` for `*_FILE` secrets).
 
 ## Priority
 
@@ -37,12 +37,3 @@ configSnapshot();
 Values are **raw** — pass it to `ObservabilityModule.forRoot({ configSnapshot })`
 and the admin server serves it on `GET /admin/config` through `redact()`
 (`@base/logger`), which masks secret-looking keys and URL passwords.
-
-## SecretFileWatcher
-
-Polls a Secret-mounted file (K8s projects each Secret key as a file and swaps
-the symlink on rotation) and notifies listeners when the content changes —
-used for `DATABASE_PASSWORD_FILE` (pg.Pool takes a password function, so new
-connections pick up the rotated secret) and `KAFKA_SASL_PASSWORD_FILE`
-(librdkafka cannot rotate at runtime; the watcher only detects it so operators
-can roll the pods).

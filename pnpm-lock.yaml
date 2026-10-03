@@ -528,9 +528,6 @@ importers:
 
   packages/config:
     dependencies:
-      '@base/logger':
-        specifier: workspace:*
-        version: link:../logger
       yaml:
         specifier: 2.9.1
         version: 2.9.1
