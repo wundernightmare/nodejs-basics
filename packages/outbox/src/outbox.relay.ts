@@ -17,6 +17,11 @@
  * Any failure backs the relay off (up to 30 s). A row that is retried gives
  * up its order relative to later rows of its key.
  *
+ * The batch's transaction stays open while Kafka acknowledges — up to
+ * message.timeout.ms (30 s) when the broker is slow. Keep that below
+ * DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS (60 s): past it Postgres kills the
+ * session, COMMIT fails, and every slow batch is sent again forever.
+ *
  * At least once, not exactly once: a crash between the broker's ack and the
  * COMMIT sends the batch again — consumers are idempotent (the worker's BullMQ
  * jobId is the task id). Order holds per relay for rows of one key, not

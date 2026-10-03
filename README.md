@@ -209,39 +209,37 @@ controllers/guards.
 
 ### Transactions
 
-`@base/common` exposes `IUnitOfWork` and `UNIT_OF_WORK`. `@base/database`
-exposes `transactionStorage` (an `AsyncLocalStorage<unknown>`). The pattern
-your repositories should follow:
+`@base/common` exposes `IUnitOfWork` and `UNIT_OF_WORK`; `@base/database`
+implements it for pg (`PgUnitOfWork`) and exposes `currentTransaction()` — the
+ambient transaction's client, `undefined` outside one. The pattern your
+repositories follow (see `apps/api/src/modules/tasks`):
 
 ```ts
-private withTx<T>(fn: (tx: TxClient) => Promise<T>): Promise<T> {
-  const tx = transactionStorage.getStore() as TxClient | undefined;
-  if (tx) return fn(tx);
-  return this.runMiniTx(fn);          // fallback if not inside a UoW
-}
-
-private db(): TxClient | DbClient {
-  return (transactionStorage.getStore() as TxClient | undefined) ?? this.client;
+private db(): PoolClient | Pool {
+  return currentTransaction<PoolClient>() ?? this.pool;
 }
 ```
 
-A reference `IUnitOfWork` for Prisma:
+Three rules the code enforces, each covered by an integration test:
 
-```ts
-@Injectable()
-export class PrismaUnitOfWork implements IUnitOfWork {
-  constructor(private readonly prisma: PrismaService) {}
-  runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
-    return this.prisma.$transaction((tx) => transactionStorage.run(tx, fn));
-  }
-}
-```
+- **No silent rollbacks.** A statement that fails aborts the whole Postgres
+  transaction; COMMIT then rolls back *without an error*. `runInTransaction`
+  (and `commit()` for hand-rolled transactions) rejects with
+  `TransactionAbortedError` instead of reporting writes that never happened —
+  so catching a DB error inside a transaction and carrying on is a bug.
+- **A nested call joins the outer transaction** (no savepoint): its failure is
+  the outer one's failure.
+- **Nothing outlives the transaction.** Work scheduled inside it (a timer, an
+  un-awaited promise) that runs after COMMIT gets `TransactionEndedError`
+  from `currentTransaction()` instead of a client already handed to another
+  request. Await everything inside.
 
-Wire in your AppModule:
+`OutboxWriter.add()` refuses to run outside a transaction
+(`OutboxOutsideTransactionError`): the event must commit with its change.
 
-```ts
-{ provide: UNIT_OF_WORK, useClass: PrismaUnitOfWork }
-```
+For another ORM, implement `IUnitOfWork` the same way — run `fn` inside
+`transactionStorage.run({ client: tx, open: true }, fn)` and set `open =
+false` when the transaction ends — and check that the commit committed.
 
 ### Limits and deadlines
 

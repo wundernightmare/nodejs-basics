@@ -16,7 +16,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import { OptimisticLockConflictError } from "@base/common";
-import { limitTransaction, PG_POOL, transactionStorage } from "@base/database";
+import { commit, currentTransaction, limitTransaction, PG_POOL } from "@base/database";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskNotFoundError } from "../domain/task.errors.js";
@@ -56,12 +56,12 @@ export class SqlTaskRepository implements TaskRepository {
 
   // ── Read helper: tx-aware, no mini-tx ─────────────────────────────────────
   private db(): DbClient {
-    return (transactionStorage.getStore() as PoolClient | undefined) ?? this.pool;
+    return currentTransaction<PoolClient>() ?? this.pool;
   }
 
   // ── Write helper: tx-aware, opens a mini-tx when standalone ───────────────
   private async withTx<T>(fn: (db: PoolClient) => Promise<T>): Promise<T> {
-    const ambient = transactionStorage.getStore() as PoolClient | undefined;
+    const ambient = currentTransaction<PoolClient>();
     if (ambient) return fn(ambient);
 
     const client = await this.pool.connect();
@@ -70,7 +70,8 @@ export class SqlTaskRepository implements TaskRepository {
       await client.query("BEGIN");
       await limitTransaction(client); // the request budget as statement_timeout
       const result = await fn(client);
-      await client.query("COMMIT");
+      // Rejects when a statement inside fn failed and was caught.
+      await commit(client);
       return result;
     } catch (err) {
       try {
