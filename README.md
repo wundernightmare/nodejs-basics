@@ -28,8 +28,8 @@ packages/
                          RFC 9457 exception filters.
   resilience             Circuit breaker, retry policy with jittered backoff,
                          per-tenant DB rate limiter.
-  database               pg.Pool with TLS, multi-host failover, secret-file
-                         password rotation, circuit breaker, AsyncLocalStorage
+  database               pg.Pool with TLS, multi-host failover, password from a
+                         mounted file, circuit breaker, AsyncLocalStorage
                          transaction context. (No ORM — bring your own.)
   cache                  Valkey/Redis client with config builder shared with
                          BullMQ, OTel client metrics.
@@ -223,8 +223,11 @@ names the OpenTelemetry SDKs use.
 No profiles, layered files or hot reload, on purpose: one file per deployment
 (a ConfigMap) plus environment overrides is all a container needs, and a
 changed value means a rollout — a restart is the reload that every component
-honours. The exception is mounted secrets, which `SecretFileWatcher` re-reads
-(password rotation without a restart).
+honours. Secrets too: `*_PASSWORD_FILE` is read once at startup, a rotated
+Secret is a rolling restart (Stakater Reloader, or a Secret checksum in the
+pod annotations). Zero-downtime password rotation alternates two database
+roles; the runtime-only tweaks (log level, per-request debug) are admin
+endpoints.
 
 ### Domain errors → HTTP
 

@@ -179,6 +179,7 @@ describe("env registry", () => {
         "./env.registry.js",
         "./env.registry.js",
         "node:fs",
+        "node:fs",
         "node:path",
         "yaml",
       ].toSorted(),

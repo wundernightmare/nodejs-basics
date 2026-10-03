@@ -1,7 +1,6 @@
 import { type Pool } from "pg";
 import { describe, expect, it, vi } from "vitest";
 
-import { type SecretFileWatcher } from "@base/config";
 import { meta, testCase } from "@base/testing";
 
 import { DatabaseLifecycleService } from "./database.lifecycle.service.js";
@@ -16,21 +15,19 @@ describe("DatabaseLifecycleService", () => {
     tags: ["database"],
   });
 
-  it("ends both pools and stops the password watcher", async () => {
+  it("ends both pools", async () => {
     await testCase("NB-905", "database pools are closed on shutdown");
     const primary = pool();
     const replica = pool();
-    const watcher = { stop: vi.fn() } as unknown as SecretFileWatcher;
-    await new DatabaseLifecycleService(primary, replica, watcher).onApplicationShutdown();
+    await new DatabaseLifecycleService(primary, replica).onApplicationShutdown();
     expect(primary.end).toHaveBeenCalledOnce();
     expect(replica.end).toHaveBeenCalledOnce();
-    expect(watcher.stop).toHaveBeenCalledOnce();
   });
 
   it("ends an aliased read-only pool once, and a second shutdown is a no-op", async () => {
     await testCase("NB-906", "database shutdown is idempotent");
     const primary = pool();
-    const svc = new DatabaseLifecycleService(primary, primary, null);
+    const svc = new DatabaseLifecycleService(primary, primary);
     await svc.onApplicationShutdown();
     await svc.onApplicationShutdown();
     expect(primary.end).toHaveBeenCalledOnce();
@@ -42,7 +39,7 @@ describe("DatabaseLifecycleService", () => {
       end: vi.fn(async () => Promise.reject(new Error("boom"))),
     } as unknown as Pool;
     const replica = pool();
-    await new DatabaseLifecycleService(primary, replica, null).onApplicationShutdown();
+    await new DatabaseLifecycleService(primary, replica).onApplicationShutdown();
     expect(replica.end).toHaveBeenCalledOnce();
   });
 });

@@ -4,12 +4,10 @@ export { commit, PgUnitOfWork, TransactionAbortedError } from "./pg-unit-of-work
 export {
   PG_BREAKER,
   PG_CONFIG,
-  PG_PASSWORD_WATCHER,
   PG_POOL,
   PG_POOL_READONLY,
   pgBreakerProvider,
   pgConfigProvider,
-  pgPasswordWatcherProvider,
   pgPoolProvider,
   pgReadonlyPoolProvider,
 } from "./pg-pool.provider.js";

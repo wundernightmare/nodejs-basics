@@ -17,6 +17,7 @@ const KEYS = [
   "KAFKA_EXTRA_PROPERTIES",
   "LOG_LEVEL",
   "OUTBOX_BATCH_SIZE",
+  "ALLOWED_ORIGINS",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -155,5 +156,13 @@ describe("yamlConfigLoader + configSnapshot", () => {
       exit.mockRestore();
       stderr.mockRestore();
     }
+  });
+
+  it("joins a YAML list into the comma-separated value the code splits", async () => {
+    await testCase("NB-979", "list-valued settings can be written as YAML sequences");
+    file("app:\n  allowed_origins:\n    - https://a.example\n    - https://b.example\n");
+    const { yamlConfigLoader } = await loader();
+    yamlConfigLoader();
+    expect(process.env["ALLOWED_ORIGINS"]).toBe("https://a.example,https://b.example");
   });
 });
