@@ -8,6 +8,11 @@
     "dist"
   ],
   "exports": {
+    "./metrics-registry": {
+      "source": "./src/metrics.registry.ts",
+      "types": "./src/metrics.registry.ts",
+      "import": "./dist/metrics.registry.js"
+    },
     ".": {
       "source": "./src/index.ts",
       "types": "./src/index.ts",

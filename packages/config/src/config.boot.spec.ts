@@ -13,7 +13,10 @@ function boot(): Promise<typeof import("./config.boot.js")> {
 }
 
 /** Runs bootConfig with these flags; returns its exit code and output. */
-async function run(argv: string[]): Promise<{ code?: number; out: string; err: string }> {
+async function run(
+  argv: string[],
+  references: Parameters<typeof import("./config.boot.js").bootConfig>[0]["references"] = {},
+): Promise<{ code?: number; out: string; err: string }> {
   const { bootConfig } = await boot();
   let out = "";
   let err = "";
@@ -30,7 +33,7 @@ async function run(argv: string[]): Promise<{ code?: number; out: string; err: s
     throw Object.assign(new Error("exit"), { exitCode: code });
   });
   try {
-    bootConfig({ name: "test-app", defaults: { OTEL_SERVICE_NAME: "test-app" } }, argv);
+    bootConfig({ name: "test-app", defaults: { OTEL_SERVICE_NAME: "test-app" }, references }, argv);
     return { out, err };
   } catch (e) {
     return { code: (e as { exitCode?: number }).exitCode, out, err };
@@ -99,5 +102,14 @@ describe("bootConfig — command-line flags", () => {
     expect(r.code).toBe(64);
     expect(r.err).toContain("Usage: test-app");
     expect((await run([])).code).toBeUndefined();
+  });
+
+  it("an app adds its own reference flags, listed in --help", async () => {
+    await testCase("NB-993", "--metrics-reference and the like come from the app");
+    const references = { "things-reference": { help: "every thing", text: () => "thing 1" } };
+    const help = await run(["--help"], references);
+    expect(help.out).toContain("--things-reference\n                        every thing");
+    const r = await run(["--things-reference"], references);
+    expect([r.code, r.out]).toEqual([0, "thing 1\n"]);
   });
 });

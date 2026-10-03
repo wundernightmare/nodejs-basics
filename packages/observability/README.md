@@ -7,6 +7,16 @@ for free on `ADMIN_PORT` (default 9090), separate from the API port.
 The admin server is the Node counterpart of `libs/httpx` in golang-basics: same
 routes, same auth model, same runtime-debugging tools, same problem+json errors.
 
+## Metrics
+
+Every instrument the services create is listed in
+[`src/metrics.registry.ts`](src/metrics.registry.ts) — name, instrument, unit,
+labels (bounded cardinality only), description and, for the ones worth an
+alert, what a bad value means. `metrics.registry.spec.ts` fails on an
+instrument that is missing there or differs from it; `node dist/main.js
+--metrics-reference` prints the list. New metric → add the entry, create the
+instrument with the same name, unit and description.
+
 ## Admin server endpoints
 
 | Route                      | Auth | Purpose                                                                                  |

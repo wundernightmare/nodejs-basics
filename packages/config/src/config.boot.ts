@@ -15,9 +15,14 @@ import { ENV_REGISTRY, type EnvEntry } from "./env.registry.js";
 export interface BootOptions extends LoadOptions {
   /** The program name shown by --help. */
   name: string;
+  /** More `--<flag>` printouts, e.g. `metrics-reference` — what the flag shows and how. */
+  references?: Readonly<Record<string, { help: string; text: () => string }>>;
 }
 
-const USAGE = (name: string): string => `Usage: ${name} [option]
+const USAGE = (
+  name: string,
+  references: BootOptions["references"] = {},
+): string => `Usage: ${name} [option]
 
 Configuration comes from the environment, then config.yaml (APP_CONFIG_FILE),
 then the defaults (see --config-reference); an option only inspects it.
@@ -29,7 +34,9 @@ Options:
       --config-reference
                         every setting: environment variable, YAML path,
                         type, default, description
-`;
+${Object.entries(references)
+  .map(([flag, r]) => `      --${flag}\n                        ${r.help}\n`)
+  .join("")}`;
 
 /** One setting, as --config-reference prints it. */
 export function describeEntry(entry: EnvEntry, defaults: LoadOptions["defaults"] = {}): string {
@@ -60,7 +67,8 @@ export function describeEntry(entry: EnvEntry, defaults: LoadOptions["defaults"]
  * Returns only when the app should start.
  */
 export function bootConfig(options: BootOptions, argv = process.argv.slice(2)): void {
-  let flags: { help?: boolean; "check-config"?: boolean; "config-reference"?: boolean };
+  const references = options.references ?? {};
+  let flags: Record<string, boolean | undefined>;
   try {
     ({ values: flags } = parseArgs({
       args: argv,
@@ -68,17 +76,24 @@ export function bootConfig(options: BootOptions, argv = process.argv.slice(2)): 
         help: { type: "boolean", short: "h" },
         "check-config": { type: "boolean" },
         "config-reference": { type: "boolean" },
+        ...Object.fromEntries(Object.keys(references).map((flag) => [flag, { type: "boolean" }])),
       },
-    }));
+    }) as { values: Record<string, boolean | undefined> });
   } catch (err) {
-    process.stderr.write(`${(err as Error).message}\n\n${USAGE(options.name)}`);
+    process.stderr.write(`${(err as Error).message}\n\n${USAGE(options.name, references)}`);
     // 64 = EX_USAGE (sysexits.h).
     process.exit(64);
   }
 
-  if (flags.help === true) {
-    process.stdout.write(USAGE(options.name));
+  if (flags["help"] === true) {
+    process.stdout.write(USAGE(options.name, references));
     process.exit(0);
+  }
+  for (const [flag, reference] of Object.entries(references)) {
+    if (flags[flag] === true) {
+      process.stdout.write(`${reference.text()}\n`);
+      process.exit(0);
+    }
   }
   if (flags["config-reference"] === true) {
     const all = ENV_REGISTRY.map((entry) => describeEntry(entry, options.defaults));
