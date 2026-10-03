@@ -1,8 +1,8 @@
 # Sample configuration for @base/api.
 # Copy to config.yaml and tweak. Environment variables ALWAYS override values here.
 #
-# The structured form (database.url, cache.url, ...) is preferred. Flat keys
-# (DATABASE_URL: ...) also work as a fallback for backwards compatibility.
+# The structured form (database.url, cache.url, ...) is preferred; flat keys
+# (DATABASE_URL: ...) work too.
 # A key no registry entry has, or a value of the wrong type, fails the start
 # with the list of problems (and a "did you mean" for a typo).
 

@@ -6,7 +6,7 @@ import { OutboxWriter } from "./outbox.writer.js";
 /**
  * The outbox: OutboxWriter for use cases, OutboxRelay running in the
  * background. Needs DatabaseModule (PG_POOL), and KafkaModule for the relay;
- * the table comes from migrations/0002_create_outbox.sql.
+ * the table comes from migrations/0001_init.sql.
  */
 @Global()
 @Module({})

@@ -47,7 +47,7 @@ const kafka = integrationEnabled("kafka");
       readinessChecks: {
         provide: READINESS_CHECKS,
         inject: valkey ? [PG_POOL, VALKEY_CLIENT] : [PG_POOL],
-        // Checks for what this process connects to — a disabled integration has none.
+        // Checks for what this process connects to — one that is off has none.
         useFactory: (pool: Pool, valkeyClient?: Valkey): ReadinessCheck[] => [
           { name: "db", check: () => pool.query("SELECT 1").then(() => "ok") },
           ...(valkeyClient === undefined

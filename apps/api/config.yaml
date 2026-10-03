@@ -1,8 +1,8 @@
 # Sample configuration for @base/api.
 # Copy to config.yaml and tweak. Environment variables ALWAYS override values here.
 #
-# The structured form (database.url, cache.url, ...) is preferred. Flat keys
-# (DATABASE_URL: ...) also work as a fallback for backwards compatibility.
+# The structured form (database.url, cache.url, ...) is preferred; flat keys
+# (DATABASE_URL: ...) work too.
 # A key no registry entry has, or a value of the wrong type, fails the start
 # with the list of problems (and a "did you mean" for a typo).
 
@@ -21,11 +21,13 @@ database:
   url: postgresql://app:app@localhost:5432/app
   pool_max: 10
 
+# Valkey and Kafka are on while their address is set; without these two
+# blocks the api runs on Postgres alone (README "Optional integrations").
 cache:
   url: redis://localhost:6379
 
-# kafka:
-#   brokers: localhost:9092
+kafka:
+  brokers: localhost:9092
 #   client_id: my-service      # default: OTEL_SERVICE_NAME
 #   security_protocol: sasl_ssl
 #   sasl:

@@ -178,9 +178,8 @@ export function buildRetryStrategy(
 
 /**
  * Shape the parsed config into the option bag the regular Valkey client
- * expects. Adds `lazyConnect` + `enableOfflineQueue=false` so the
- * legacy semantics survive (commands fail-fast when disconnected, no
- * silent buffering).
+ * expects. Adds `lazyConnect` + `enableOfflineQueue=false`: commands fail
+ * fast when disconnected, no silent buffering.
  */
 export function toClientOptions(result: ValkeyBuilderResult): Record<string, unknown> {
   return {

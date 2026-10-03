@@ -1208,14 +1208,6 @@ const REGISTRY = [
     usedIn: ["observability"],
   },
 
-  {
-    key: "OTLP_ENDPOINT",
-    required: false,
-    description:
-      "Legacy alias of OTEL_EXPORTER_OTLP_ENDPOINT (read only when that is unset). Environment only: telemetry starts in instrumentation.ts, before config.yaml is read.",
-    usedIn: ["observability"],
-  },
-
   // ─── Sentry ────────────────────────────────────────────────────────────────
 
   {

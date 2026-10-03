@@ -15,7 +15,7 @@ apps/
   migrate/               Forward-only SQL migration runner: one self-contained
                          bundle + migrations/, a 156 MB image with no node_modules.
 
-migrations/              The schema: 0001_create_tasks.sql, … (applied by apps/migrate).
+migrations/              The schema: 0001_init.sql, … (applied by apps/migrate).
 
 e2e/                     Playwright API e2e (health, tasks CRUD, Kafka→BullMQ flow).
 benchmarks/              k6 load test for the tasks API.
@@ -318,7 +318,7 @@ await uow.runInTransaction(async () => {
 });
 ```
 
-`OutboxWriter` inserts into `outbox` (migrations/0002) through the ambient
+`OutboxWriter` inserts into `outbox` through the ambient
 transaction client, with the request's trace context and request id.
 `OutboxRelay` (every `OUTBOX_POLL_INTERVAL_MS`, 200 ms) takes up to
 `OUTBOX_BATCH_SIZE` rows `FOR UPDATE SKIP LOCKED` — every replica can run one —
@@ -326,8 +326,7 @@ sends them and deletes them in that transaction. A failed send is judged by
 the `@base/kafka` error registry (`KAFKA_SEND_ERRORS`): a retryable one
 (broker down, queue full, topic not provisioned yet) leaves the row for a
 later pass (backoff to 30 s) and is never counted; a `rejected` record (too
-large, invalid) makes it a poison row — `attempts`/`last_error`
-(migrations/0003), and after `OUTBOX_MAX_ATTEMPTS` (10) it stays in the
+large, invalid) makes it a poison row — `attempts`/`last_error`, and after `OUTBOX_MAX_ATTEMPTS` (10) it stays in the
 table instead of being retried forever. Delivery is at least once, so consumers
 are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
 each record in the trace of the request that wrote it, so the trace still
@@ -400,7 +399,7 @@ alone. To get that locally, drop the `cache:` and `kafka:` blocks from
 
 | Unset | What runs instead |
 |---|---|
-| `VALKEY_URL` | `Idempotency-Key` results in the `idempotency_keys` table (migrations/0004) |
+| `VALKEY_URL` | `Idempotency-Key` results in the `idempotency_keys` table |
 | `KAFKA_BROKERS` | no relay: events wait in the `outbox` table for a process that has one |
 
 The rules, for adding a module of your own (`@base/config` integrations.ts):
