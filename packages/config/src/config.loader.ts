@@ -18,8 +18,8 @@
  *
  * There are no profiles / layered files and no hot reload, on purpose: one
  * file per deployment (a ConfigMap) plus env overrides is all a container
- * needs, and a value that changes under a running process is a restart —
- * except mounted secrets, which SecretFileWatcher re-reads.
+ * needs, and a value that changes under a running process is a restart,
+ * mounted secrets included.
  *
  * Usage: the apps call yamlConfigLoader() from their first import
  * (src/boot.ts), before any other module loads, and wire it into

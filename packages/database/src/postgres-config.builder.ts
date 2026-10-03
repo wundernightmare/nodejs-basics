@@ -15,11 +15,9 @@
  *   3. A typed retry policy for app-level `withRetry` wrappers around
  *      idempotent SQL.
  *
- * Behaviour preserved for dev: a bare `DATABASE_URL=postgresql://…` with
- * no other knobs yields the same pool shape the code used before this
- * builder (max=20, idle=30s, connect=5s, keepAlive on), plus server-side
- * statement_timeout=30s + idle_in_transaction=60s set on every
- * connection — safe defaults, not legacy behaviour, and disableable via
+ * Defaults: a bare `DATABASE_URL=postgresql://…` yields max=20, idle=30s,
+ * connect=5s, keepAlive on, plus server-side statement_timeout=30s +
+ * idle_in_transaction=60s on every connection — disableable via
  * `DATABASE_STATEMENT_TIMEOUT_MS=0`.
  */
 import { readFileSync } from "node:fs";
@@ -27,7 +25,7 @@ import { readFileSync } from "node:fs";
 import type { ConfigService } from "@nestjs/config";
 import type { PoolConfig } from "pg";
 
-import { readBool, readInt, readJson, readString } from "@base/config";
+import { readBool, readInt, readJson, readSecretFile, readString } from "@base/config";
 import {
   buildCircuitBreaker,
   buildRetryPolicy,
@@ -38,14 +36,6 @@ import {
 export interface PostgresBuilderResult {
   /** Option bag for `new Pool(options)` / `new pg.native.Pool(options)`. */
   poolOptions: PoolConfig;
-  /**
-   * Filesystem path to a Secret-mounted password file when
-   * DATABASE_PASSWORD_FILE is set; otherwise `undefined`. The provider
-   * owns the SecretFileWatcher lifecycle (start on init, stop on
-   * destroy) and wires its cached value into pg.Pool's `password`
-   * callback so new connections pick up rotations without a pod restart.
-   */
-  passwordFile?: string;
   /** When true the provider must use `require('pg').native.Pool`. */
   useNative: boolean;
   /**
@@ -163,6 +153,9 @@ export function buildPostgresConfig(
     application_name: appName,
     connect_timeout: String(Math.max(1, Math.ceil(connectTimeoutMs / 1000))),
     sslmode: readString(config, "DATABASE_SSL_MODE"),
+    // A query parameter, not pg's `password` option: the connection string
+    // wins over that option, and libpq (pg-native) reads it the same way.
+    password: readSecretFile(config, "DATABASE_PASSWORD_FILE"),
   });
 
   // ── TLS block on the pg Pool ─────────────────────────────────────────────
@@ -205,8 +198,6 @@ export function buildPostgresConfig(
   if (idleInTxTimeoutMs > 0) {
     sessionInit.push(`SET idle_in_transaction_session_timeout = ${idleInTxTimeoutMs}`);
   }
-
-  const passwordFile = readString(config, "DATABASE_PASSWORD_FILE");
 
   // ── Pool / query knobs ───────────────────────────────────────────────────
   const poolOptions: PoolConfig = {
@@ -251,6 +242,5 @@ export function buildPostgresConfig(
     sessionInit,
     retry,
     circuitBreaker,
-    ...(passwordFile ? { passwordFile } : {}),
   };
 }

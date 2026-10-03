@@ -20,6 +20,7 @@ const KEYS = [
   "HEAP_OOM_POLL_INTERVAL_MS",
   "LOG_LEVEL_MAX_TTL",
   "OTEL_SERVICE_NAME",
+  "ALLOWED_ORIGINS",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -186,5 +187,13 @@ describe("yamlConfigLoader + configSnapshot", () => {
     const { yamlConfigLoader } = await loader();
     yamlConfigLoader({ defaults: { OTEL_SERVICE_NAME: "my-app" } });
     expect(process.env["OTEL_SERVICE_NAME"]).toBe("my-app");
+  });
+
+  it("joins a YAML list into the comma-separated value the code splits", async () => {
+    await testCase("NB-979", "list-valued settings can be written as YAML sequences");
+    file("app:\n  allowed_origins:\n    - https://a.example\n    - https://b.example\n");
+    const { yamlConfigLoader } = await loader();
+    yamlConfigLoader();
+    expect(process.env["ALLOWED_ORIGINS"]).toBe("https://a.example,https://b.example");
   });
 });

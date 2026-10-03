@@ -68,7 +68,7 @@ high-signal, easy-to-miss bits.
   `@stryker-mutator/*` glob looks next to its own package under pnpm.
   `thresholds.break` is a ratchet (50 at 56.8 %). **vitest stays on 4.x until
   @stryker-mutator/vitest-runner supports vitest 5** — under 5.0.0 the runner
-  reports nearly every mutant as survived (checked 2026-09-13).
+  reports nearly every mutant as survived.
 - **Contracts are generated, never edited**: `api/tsp/*.tsp` is the source;
   `api/openapi3/tasks.openapi.yaml`, `api/jsonschema/*.json` (events.tsp,
   `@jsonSchema`) and `packages/contracts/src/{tasksapi,events}.gen.ts` are

@@ -115,6 +115,17 @@ describe("KafkaProducerService", () => {
     await expect(svc.send(record, { waitMs: 0 })).rejects.toBeInstanceOf(KafkaSendError);
   });
 
+  it("a failing disconnect on shutdown is logged, never thrown into Nest's shutdown", async () => {
+    await testCase("NB-978", "producer shutdown tolerates a broker that is already gone");
+    const p = fake();
+    p.disconnect.mockRejectedValueOnce(new Error("broker gone"));
+    const svc = new TestService([() => p]);
+    svc.onApplicationBootstrap();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(svc.onApplicationShutdown()).resolves.toBeUndefined();
+    expect(p.disconnect).toHaveBeenCalledOnce();
+  });
+
   it("waits out a connect within waitMs instead of failing", async () => {
     await testCase("NB-933", "send waits for the producer to connect");
     const svc = new TestService([refused, () => fake()]);
