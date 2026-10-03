@@ -9,7 +9,7 @@ import { AppLogger, pinoLogger } from "@base/logger";
 import { captureSpans, integration, meta, testCase, unique } from "@base/testing";
 
 import { OutboxRelay } from "./outbox.relay.js";
-import { OutboxWriter } from "./outbox.writer.js";
+import { OutboxOutsideTransactionError, OutboxWriter } from "./outbox.writer.js";
 
 /**
  * The outbox against a real Postgres (the table from migrations/, applied by
@@ -75,7 +75,7 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
 
   beforeAll(() => {
     pool = new pg.Pool({ connectionString: infra.url("postgres"), max: 3 });
-    writer = new OutboxWriter(pool);
+    writer = new OutboxWriter();
     uow = new PgUnitOfWork(pool);
   });
   afterAll(async () => {
@@ -143,13 +143,13 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     ]);
     expect(await mine()).toBe(1);
 
-    await writer.add({ topic, key: "good-2", value: {} });
+    await uow.runInTransaction(() => writer.add({ topic, key: "good-2", value: {} }));
     await poisonRelay.relayOnce();
     expect((await attempts())[0]?.attempts).toBe(2);
 
     // Dead: no longer selected, the rest of the outbox flows.
     poisonSends = 0;
-    await writer.add({ topic, key: "good-3", value: {} });
+    await uow.runInTransaction(() => writer.add({ topic, key: "good-3", value: {} }));
     await poisonRelay.relayOnce();
     expect(poisonSends).toBe(0);
     expect(sent.filter((r) => r.topic === topic).map((r) => r.messages[0]?.key)).toEqual(
@@ -185,6 +185,37 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     queueFullKeys = new Set();
     await r.relayOnce();
     expect(await mine()).toBe(0);
+  });
+
+  it("refuses to write outside a transaction — that write would not be atomic", async () => {
+    await testCase("NB-955", "outbox writes only with the state change");
+    await expect(writer.add({ topic, key: "loose", value: {} })).rejects.toBeInstanceOf(
+      OutboxOutsideTransactionError,
+    );
+    expect(await mine()).toBe(0);
+  });
+
+  it("two relays at once send every row exactly once (SKIP LOCKED)", async () => {
+    await testCase("NB-956", "replicas never send the same outbox row");
+    const keys = Array.from({ length: 40 }, (_, i) => `concurrent-${i}`);
+    await uow.runInTransaction(async () => {
+      // oxlint-disable-next-line no-await-in-loop -- one transaction, rows in order
+      for (const key of keys) await writer.add({ topic, key, value: {} });
+    });
+    const sentBefore = sent.length;
+    // Small batches, so both relays find work while the other holds its rows.
+    const small = (): OutboxRelay =>
+      new OutboxRelay(pool, kafka, new ConfigService({ OUTBOX_BATCH_SIZE: "5" }), logger);
+    const a = small();
+    const b = small();
+    // oxlint-disable-next-line no-await-in-loop -- passes until the table is drained
+    while ((await mine()) > 0) await Promise.all([a.relayOnce(), b.relayOnce()]);
+    const ours = sent
+      .slice(sentBefore)
+      .filter((r) => r.topic === topic)
+      .map((r) => String(r.messages[0]?.key))
+      .toSorted();
+    expect(ours).toEqual(keys.toSorted());
   });
 
   it("sends each record in the trace of the request that wrote it", async () => {

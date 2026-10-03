@@ -4,9 +4,10 @@
  * Demonstrates the canonical "transaction sandwich":
  *
  *   1. Cheap pre-flight work OUTSIDE the transaction (e.g. ID generation).
- *   2. Reads + writes INSIDE one transaction via IUnitOfWork.runInTransaction.
- *      Both happen on the same PoolClient, so a concurrent request cannot
- *      mutate the row between our check and our write (TOCTOU-safe).
+ *   2. Reads + writes INSIDE one transaction via IUnitOfWork.runInTransaction,
+ *      on the same PoolClient. The read takes no lock: what makes "check, then
+ *      write" safe against a concurrent request is the UPDATE's
+ *      `WHERE version = $expected` (optimistic lock → 409), not the transaction.
  *   3. Events that must not be lost go into the outbox INSIDE the
  *      transaction (@base/outbox); only best-effort side effects (a cache
  *      warm-up, a metric) run after it commits.

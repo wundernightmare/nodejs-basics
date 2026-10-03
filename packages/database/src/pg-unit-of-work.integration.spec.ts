@@ -3,8 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { integration, meta, testCase, unique } from "@base/testing";
 
-import { PgUnitOfWork } from "./pg-unit-of-work.service.js";
-import { transactionStorage } from "./transaction.storage.js";
+import { PgUnitOfWork, TransactionAbortedError } from "./pg-unit-of-work.service.js";
+import { currentTransaction, TransactionEndedError } from "./transaction.storage.js";
 
 /**
  * The unit of work against a real Postgres (DATABASE_URL from `just deps` or
@@ -40,7 +40,7 @@ describe.skipIf(infra.skip)("PgUnitOfWork (integration)", () => {
 
   /** Insert through the ambient transaction client when there is one, else the pool. */
   async function insert(v: string): Promise<void> {
-    const client = transactionStorage.getStore() as Pool | undefined;
+    const client = currentTransaction<Pool>();
     await (client ?? pool).query(`INSERT INTO ${table} (v) VALUES ($1)`, [v]);
   }
 
@@ -76,12 +76,56 @@ describe.skipIf(infra.skip)("PgUnitOfWork (integration)", () => {
     let inner: unknown;
     let outer: unknown;
     await uow.runInTransaction(async () => {
-      outer = transactionStorage.getStore();
+      outer = currentTransaction();
       await uow.runInTransaction(async () => {
-        inner = transactionStorage.getStore();
+        inner = currentTransaction();
       });
     });
     expect(outer).toBeDefined();
     expect(inner).toBe(outer);
+  });
+
+  it("rejects when a statement failed and the callback swallowed the error — nothing is written", async () => {
+    await testCase("NB-952", "an aborted transaction is never reported as committed");
+    const before = await count();
+    await expect(
+      uow.runInTransaction(async () => {
+        await insert("kept?");
+        // "insert, catch the duplicate, carry on" — the classic shape
+        await insert(null as unknown as string).catch(() => {});
+      }),
+    ).rejects.toBeInstanceOf(TransactionAbortedError);
+    expect(await count()).toBe(before);
+  });
+
+  it("a failed nested call fails the outer transaction even when the outer one catches it", async () => {
+    await testCase("NB-953", "nested failure aborts the whole transaction");
+    const before = await count();
+    await expect(
+      uow.runInTransaction(async () => {
+        await insert("outer");
+        await uow.runInTransaction(() => insert(null as unknown as string)).catch(() => {});
+      }),
+    ).rejects.toBeInstanceOf(TransactionAbortedError);
+    expect(await count()).toBe(before);
+  });
+
+  it("code that outlives its transaction cannot reach the released client", async () => {
+    await testCase("NB-954", "no query on a client back in the pool");
+    let late: Promise<unknown> | undefined;
+    await uow.runInTransaction(async () => {
+      await insert("x");
+      // scheduled inside, runs after COMMIT
+      late = new Promise((resolve) => {
+        setTimeout(() => {
+          try {
+            resolve(currentTransaction());
+          } catch (err) {
+            resolve(err);
+          }
+        }, 20);
+      });
+    });
+    expect(await late).toBeInstanceOf(TransactionEndedError);
   });
 });

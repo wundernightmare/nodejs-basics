@@ -6,7 +6,7 @@ import { captureSpans, integration, meta, testCase, unique } from "@base/testing
 
 import { pgTarget, tracePgPool } from "./pg-tracing.js";
 import { PgUnitOfWork } from "./pg-unit-of-work.service.js";
-import { transactionStorage } from "./transaction.storage.js";
+import { currentTransaction } from "./transaction.storage.js";
 
 /**
  * Query spans against a real Postgres: pool.query and a unit-of-work
@@ -46,7 +46,7 @@ describe.skipIf(infra.skip)("pg tracing (integration)", () => {
     await trace.getTracer("test").startActiveSpan("request", async (span) => {
       await pool.query(`SELECT count(*) FROM ${table}`);
       await uow.runInTransaction(async () => {
-        const client = transactionStorage.getStore() as Pool;
+        const client = currentTransaction<Pool>()!;
         await client.query(`INSERT INTO ${table} (v) VALUES ($1)`, ["a"]);
       });
       span.end();
