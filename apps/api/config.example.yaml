@@ -3,6 +3,8 @@
 #
 # The structured form (database.url, cache.url, ...) is preferred. Flat keys
 # (DATABASE_URL: ...) also work as a fallback for backwards compatibility.
+# A key no registry entry has, or a value of the wrong type, fails the start
+# with the list of problems (and a "did you mean" for a typo).
 
 app:
   node_env: development

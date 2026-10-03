@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import type { ConfigService } from "@nestjs/config";
 import type { PoolConfig } from "pg";
 
+import { readBool, readInt, readJson, readString } from "@base/config";
 import {
   buildCircuitBreaker,
   buildRetryPolicy,
@@ -66,54 +67,12 @@ export interface PostgresBuilderResult {
   circuitBreaker: CircuitBreakerConfig;
 }
 
-function readStr(config: ConfigService, key: string): string | undefined {
-  const v = config.get<string>(key);
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-
-function readNum(config: ConfigService, key: string, fallback: number): number {
-  const raw = readStr(config, key);
-  if (!raw) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-function readOptionalNum(config: ConfigService, key: string): number | undefined {
-  const raw = readStr(config, key);
-  if (!raw) return undefined;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? n : undefined;
-}
-
-function readBool(config: ConfigService, key: string, fallback: boolean): boolean {
-  const raw = readStr(config, key);
-  if (raw === undefined) return fallback;
-  return raw === "true" || raw === "1";
-}
-
 function resolveCa(config: ConfigService): Buffer | undefined {
-  const location = readStr(config, "DATABASE_SSL_CA_LOCATION");
+  const location = readString(config, "DATABASE_SSL_CA_LOCATION");
   if (location) return readFileSync(location);
-  const pem = readStr(config, "DATABASE_SSL_CA_PEM");
+  const pem = readString(config, "DATABASE_SSL_CA_PEM");
   if (pem) return Buffer.from(pem, "utf8");
   return undefined;
-}
-
-function resolveExtra(config: ConfigService): Partial<PoolConfig> {
-  const raw = readStr(config, "DATABASE_EXTRA_PROPERTIES");
-  if (!raw) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`DATABASE_EXTRA_PROPERTIES is not valid JSON: ${(err as Error).message}`, {
-      cause: err,
-    });
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("DATABASE_EXTRA_PROPERTIES must be a JSON object");
-  }
-  return parsed;
 }
 
 /**
@@ -170,7 +129,7 @@ export function buildPostgresConfig(
     throw new Error(`${urlKey} is required — the postgres pool cannot be built without it`);
   }
 
-  const useNative = readBool(config, "DATABASE_USE_NATIVE", false);
+  const useNative = readBool(config, "DATABASE_USE_NATIVE") ?? false;
 
   // ── Libpq-layer params decorated into the URL ────────────────────────────
   //
@@ -179,11 +138,11 @@ export function buildPostgresConfig(
   // inherits them for every host in a CSV multi-host list. Pure-JS pg
   // picks them up too via pg-connection-string — same semantic, single
   // source of truth.
-  const connectTimeoutMs = readNum(config, "DATABASE_CONNECT_TIMEOUT_MS", 5000);
+  const connectTimeoutMs = readInt(config, "DATABASE_CONNECT_TIMEOUT_MS") ?? 5000;
   // pg_stat_activity shows which service holds a connection: the OTel service
   // name (nodejs-basics-api / -worker) unless set explicitly.
   const baseAppName =
-    readStr(config, "DATABASE_APPLICATION_NAME") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
+    readString(config, "DATABASE_APPLICATION_NAME") ?? process.env["OTEL_SERVICE_NAME"] ?? "app";
   const appName = variant === "readonly" ? `${baseAppName}-ro` : baseAppName;
 
   // target_session_attrs: primary pool defaults to whatever the operator
@@ -193,17 +152,17 @@ export function buildPostgresConfig(
   // cluster), operators override to "read-only"/"prefer-standby" to
   // actually reach a replica.
   const readonlyTsa =
-    readStr(config, "DATABASE_READONLY_TARGET_SESSION_ATTRS") ??
-    readStr(config, "DATABASE_TARGET_SESSION_ATTRS") ??
+    readString(config, "DATABASE_READONLY_TARGET_SESSION_ATTRS") ??
+    readString(config, "DATABASE_TARGET_SESSION_ATTRS") ??
     "any";
   const targetSessionAttrs =
-    variant === "readonly" ? readonlyTsa : readStr(config, "DATABASE_TARGET_SESSION_ATTRS");
+    variant === "readonly" ? readonlyTsa : readString(config, "DATABASE_TARGET_SESSION_ATTRS");
 
   const decorated = decorateConnectionString(rawUrl, {
     target_session_attrs: targetSessionAttrs,
     application_name: appName,
     connect_timeout: String(Math.max(1, Math.ceil(connectTimeoutMs / 1000))),
-    sslmode: readStr(config, "DATABASE_SSL_MODE"),
+    sslmode: readString(config, "DATABASE_SSL_MODE"),
   });
 
   // ── TLS block on the pg Pool ─────────────────────────────────────────────
@@ -212,9 +171,9 @@ export function buildPostgresConfig(
   // sslmode — use both: the URL param tells libpq to enable TLS, the
   // pool option fills in CA + skipVerify so Node's TLS path has what it
   // needs. No-op when no CA is configured AND sslmode is absent.
-  const skipVerify = readBool(config, "DATABASE_SSL_SKIP_VERIFY", false);
+  const skipVerify = readBool(config, "DATABASE_SSL_SKIP_VERIFY") ?? false;
   const ca = resolveCa(config);
-  const sslMode = readStr(config, "DATABASE_SSL_MODE");
+  const sslMode = readString(config, "DATABASE_SSL_MODE");
   const sslEnabled =
     ca !== undefined || skipVerify || (sslMode !== undefined && sslMode !== "disable");
   const ssl = sslEnabled
@@ -236,8 +195,9 @@ export function buildPostgresConfig(
   // SET on every new connection so they apply to every host in a
   // multi-host / primary-failover pool. Setting them as pg PoolConfig
   // fields would lose them across libpq-native failover.
-  const statementTimeoutMs = readNum(config, "DATABASE_STATEMENT_TIMEOUT_MS", 30_000);
-  const idleInTxTimeoutMs = readNum(config, "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS", 60_000);
+  const statementTimeoutMs = readInt(config, "DATABASE_STATEMENT_TIMEOUT_MS") ?? 30_000;
+  const queryTimeoutMs = readInt(config, "DATABASE_QUERY_TIMEOUT_MS");
+  const idleInTxTimeoutMs = readInt(config, "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS") ?? 60_000;
   const sessionInit: string[] = [];
   if (statementTimeoutMs > 0) {
     sessionInit.push(`SET statement_timeout = ${statementTimeoutMs}`);
@@ -246,33 +206,31 @@ export function buildPostgresConfig(
     sessionInit.push(`SET idle_in_transaction_session_timeout = ${idleInTxTimeoutMs}`);
   }
 
-  const passwordFile = readStr(config, "DATABASE_PASSWORD_FILE");
+  const passwordFile = readString(config, "DATABASE_PASSWORD_FILE");
 
   // ── Pool / query knobs ───────────────────────────────────────────────────
   const poolOptions: PoolConfig = {
     connectionString: decorated,
     // TCP keepalive defaults to on — managed LBs (AWS NLB, GCP, Yandex)
     // silently drop idle conns otherwise.
-    keepAlive: readBool(config, "DATABASE_KEEPALIVE", true),
-    keepAliveInitialDelayMillis: readNum(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS", 10_000),
+    keepAlive: readBool(config, "DATABASE_KEEPALIVE") ?? true,
+    keepAliveInitialDelayMillis: readInt(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS") ?? 10_000,
     // Pool size
-    max: readNum(config, "DATABASE_POOL_MAX", 20),
-    min: readNum(config, "DATABASE_POOL_MIN", 0),
-    idleTimeoutMillis: readNum(config, "DATABASE_POOL_IDLE_TIMEOUT_MS", 30_000),
-    maxUses: readNum(config, "DATABASE_POOL_MAX_USES", 0),
+    max: readInt(config, "DATABASE_POOL_MAX") ?? 20,
+    min: readInt(config, "DATABASE_POOL_MIN") ?? 0,
+    idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS") ?? 30_000,
+    maxUses: readInt(config, "DATABASE_POOL_MAX_USES") ?? 0,
     connectionTimeoutMillis: connectTimeoutMs,
     // Application name is redundant-set (URL + option) because pg-native
     // reads it from libpq params and pure-JS pg writes it via the option
     // — covering both branches keeps pg_stat_activity clean on either.
     application_name: appName,
     ...(ssl ? { ssl } : {}),
-    ...(readOptionalNum(config, "DATABASE_QUERY_TIMEOUT_MS") !== undefined
-      ? { query_timeout: readOptionalNum(config, "DATABASE_QUERY_TIMEOUT_MS") }
-      : {}),
+    ...(queryTimeoutMs !== undefined ? { query_timeout: queryTimeoutMs } : {}),
     // Escape hatch lands last so a purposefully-named field can override
     // a typed one (e.g. set `options: '-c lock_timeout=5s'` for global
     // lock waits without a schema change).
-    ...resolveExtra(config),
+    ...readJson(config, "DATABASE_EXTRA_PROPERTIES"),
   };
 
   const retry = buildRetryPolicy(config, "DATABASE", {
