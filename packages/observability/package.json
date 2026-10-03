@@ -24,7 +24,7 @@
     "format": "oxfmt \"src/**/*.ts\"",
     "format:check": "oxfmt --check \"src/**/*.ts\"",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
-    "clean": "tsc --build --clean && rm -rf dist coverage"
+    "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1136.0",

@@ -16,7 +16,7 @@
     "test": "vitest run --project unit",
     "check": "pnpm lint:root && oxfmt --check scripts vitest.config.ts vite.app.config.ts stryker.config.mjs && pnpm -r check",
     "contracts": "pnpm --filter @base/api-spec generate && pnpm --filter @base/contracts typecheck",
-    "clean": "pnpm -r run clean && rm -rf .cover coverage-merged.lcov coverage-breakdown.json allure-results allure-report",
+    "clean:build": "pnpm -r run clean:build && rm -rf .cover coverage-merged.lcov coverage-breakdown.json allure-results allure-report",
     "test:watch": "vitest --project unit",
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",

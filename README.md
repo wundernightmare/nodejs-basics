@@ -821,7 +821,8 @@ block a change:
 | `just allure-report`                   | one Allure HTML report from every layer                        |
 | `just e2e` / `e2e-smoke` / `e2e-spawn` | Playwright vs images / @smoke / spawned processes              |
 | `pnpm check`                           | typecheck + lint + format:check                                |
-| `pnpm clean`                           | drop build output, coverage, reports (not committed contracts) |
+| `just clean`                           | drop build output, coverage, reports (not committed contracts) |
+| `pnpm clean`                           | pnpm built-in: remove every `node_modules` (full reinstall)    |
 | `just deps`                            | docker compose up postgres/valkey/kafka                        |
 | `just obs`                             | docker compose up Jaeger/Prometheus/Grafana                    |
 | `just dev` / `dev-worker`              | vite build --watch + restart after each build                  |
