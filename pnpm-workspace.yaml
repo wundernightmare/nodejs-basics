@@ -29,6 +29,7 @@ overrides:
   baseline-browser-mapping: ^2.11.21 # same chain
   js-yaml: ^4.3.2                 # GHSA-2883-xcg3-v3hh via openapi-typescript → @redocly/openapi-core
   qs: ^6.16.0                     # GHSA-4mjr-xmp4-gh2g / x5fp-wj9c-mxmx / q8mj-m7cp-5q26 via @stryker-mutator/core → typed-rest-client
+  source-map-js: ^1.2.2           # GHSA-68fv-2mgg-jv7q via vite/postcss + @vitest/coverage-v8 → magicast
 
 # Peers declared older than what we run, checked to work (drop an entry once
 # the package widens its range): @sentry/nestjs and nestjs-zod predate NestJS
