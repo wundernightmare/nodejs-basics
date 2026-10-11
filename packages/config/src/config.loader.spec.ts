@@ -24,6 +24,10 @@ const KEYS = [
   "VALKEY_URL",
   "VALKEY_PASSWORD",
   "KAFKA_BROKERS",
+  "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+  "KAFKA_MESSAGE_MAX_BYTES",
+  "KAFKA_CONSUMER_FETCH_MAX_BYTES",
+  "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES",
 ] as const;
 
 /** A fresh loader module: it loads once per process, these tests need one per case. */
@@ -55,6 +59,26 @@ describe("yamlConfigLoader + configSnapshot", () => {
     for (const k of Object.keys(process.env)) {
       if (!(k in before)) Reflect.deleteProperty(process.env, k);
     }
+  };
+
+  // Loads with `env` on top of the case's environment; `admin: false` = no admin listener.
+  const load = async (env: Record<string, string>, admin?: boolean): Promise<void> => {
+    dropLoaded();
+    Object.assign(process.env, env);
+    const { yamlConfigLoader } = await loader();
+    yamlConfigLoader(admin === undefined ? {} : { admin });
+  };
+  // The problem lines a config file produces, [] when it loads.
+  const problems = async (yaml: string): Promise<string[]> => {
+    dropLoaded(); // the last attempt's defaults (and APP_CONFIG_FILE)
+    file(yaml);
+    const { yamlConfigLoader } = await loader();
+    try {
+      yamlConfigLoader();
+    } catch (err) {
+      return (err as Error).message.split("\n").filter((l) => l.startsWith("  - "));
+    }
+    return [];
   };
 
   beforeEach(() => {
@@ -237,6 +261,54 @@ describe("yamlConfigLoader + configSnapshot", () => {
     ({ yamlConfigLoader } = await loader());
     expect(() => yamlConfigLoader()).not.toThrow();
     expect(integrationEnabled("valkey")).toBe(true);
+  });
+
+  it("an admin listener others can reach needs a token, or an explicit ADMIN_INSECURE", async () => {
+    await testCase("NB-1015", "no open log-level / heap-dump switch on a routable address");
+    process.env["APP_CONFIG_FILE"] = join(dir, "absent.yaml");
+    const host = process.env["ADMIN_HOST"]; // vitest.config.ts: loopback for every test
+    try {
+      delete process.env["ADMIN_HOST"]; // the default: every interface
+      await expect(load({})).rejects.toThrow(
+        'ADMIN_TOKEN is empty and ADMIN_HOST "0.0.0.0" is not loopback',
+      );
+      await expect(load({ ADMIN_INSECURE: "true" })).resolves.toBeUndefined();
+      delete process.env["ADMIN_INSECURE"];
+      await expect(load({ ADMIN_TOKEN: "t0ken" })).resolves.toBeUndefined();
+      await expect(load({}, false)).resolves.toBeUndefined(); // no admin listener (migrate)
+      for (const loopback of ["127.0.0.1", "::1", "localhost"]) {
+        await expect(load({ ADMIN_HOST: loopback })).resolves.toBeUndefined();
+      }
+      await expect(load({ ADMIN_HOST: "10.0.0.7" })).rejects.toThrow("is not loopback");
+    } finally {
+      delete process.env["ADMIN_INSECURE"];
+      if (host === undefined) delete process.env["ADMIN_HOST"];
+      else process.env["ADMIN_HOST"] = host;
+    }
+  });
+
+  it("Kafka sizes: only from their own keys, and consistent with each other", async () => {
+    await testCase("NB-1025", "buffer sizes are explicit keys, checked at boot");
+    expect(
+      await problems(
+        "kafka:\n  brokers: k:9092\n  consumer:\n    extra_properties:\n" +
+          "      fetch.max.bytes: 1\n      sasl.password: s3cret\n",
+      ),
+    ).toEqual([
+      '  - KAFKA_CONSUMER_EXTRA_PROPERTIES=…: expected no "fetch.max.bytes" — set ' +
+        "KAFKA_CONSUMER_FETCH_MAX_BYTES instead (yaml: kafka.consumer.extra_properties)",
+    ]);
+    expect(
+      await problems(
+        "kafka:\n  brokers: k:9092\n  message_max_bytes: 2000000\n" +
+          "  consumer:\n    fetch_max_bytes: 1048576\n    partition_fetch_max_bytes: 2097152\n",
+      ),
+    ).toEqual([
+      "  - KAFKA_CONSUMER_FETCH_MAX_BYTES=1048576 must be at least KAFKA_MESSAGE_MAX_BYTES=2000000",
+      "  - KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES=2097152 must be at most " +
+        "KAFKA_CONSUMER_FETCH_MAX_BYTES=1048576",
+    ]);
+    expect(await problems("kafka:\n  brokers: k:9092\n")).toEqual([]); // the defaults agree
   });
 
   it("joins a YAML list into the comma-separated value the code splits", async () => {

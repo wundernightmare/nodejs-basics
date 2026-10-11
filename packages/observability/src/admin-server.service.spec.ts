@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { AppLogger, logLevel, pinoLogger } from "@base/logger";
+import { testCase } from "@base/testing";
 
 import { AdminServerService } from "./admin-server.service.js";
 import type { CrashReportService } from "./crash-report.service.js";
@@ -244,6 +245,7 @@ describe("AdminServerService (auth=bearer)", () => {
       request_id: expect.any(String),
     });
     expect((await fetch(`${base}/admin/log-level`, { method: "DELETE" })).status).toBe(401);
+    expect((await fetch(`${base}/debug/cpu-profile`, { method: "POST" })).status).toBe(401);
 
     const allowed = await fetch(`${base}/admin/log-level?level=debug&ttl=1m`, {
       method: "PUT",
@@ -310,6 +312,29 @@ describe("AdminServerService (diagnostics routes)", () => {
     report = () => Promise.reject(new Error("no space"));
     const failed = await fetch(`${base}/debug/report`, { method: "POST" });
     expect([failed.status, (await json(failed))["detail"]]).toEqual([500, "no space"]);
+  });
+
+  it("POST /debug/cpu-profile: a .cpuprofile of the process, one at a time, bounded", async () => {
+    await testCase("NB-1017", "profile a busy pod without a debugger port or a restart");
+    const first = fetch(`${base}/debug/cpu-profile?seconds=1`, { method: "POST" });
+    await new Promise((r) => setTimeout(r, 100));
+    const busy = await fetch(`${base}/debug/cpu-profile?seconds=1`, { method: "POST" });
+    expect(busy.status).toBe(409);
+    const ok = await first;
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-disposition")).toMatch(
+      /^attachment; filename=".+\.cpuprofile"$/u,
+    );
+    const profile = await json(ok);
+    expect(Array.isArray(profile["nodes"])).toBe(true);
+    expect((profile["endTime"] as number) - (profile["startTime"] as number)).toBeGreaterThan(
+      900_000, // µs
+    );
+
+    for (const seconds of ["0", "61", "1.5", "x"]) {
+      const bad = await fetch(`${base}/debug/cpu-profile?seconds=${seconds}`, { method: "POST" });
+      expect(bad.status).toBe(400);
+    }
   });
 
   it("takes the log level from a form body or a bare one", async () => {

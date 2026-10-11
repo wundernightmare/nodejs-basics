@@ -44,11 +44,20 @@ export interface EnvEntry {
   /** Bounds of an int / number value, inclusive. */
   min?: number;
   max?: number;
+  /** Bounds by another int / number key's value, inclusive (checked when both are set). */
+  atLeast?: string;
+  atMost?: string;
   /**
    * enum: the allowed values (matched ignoring case). Any other type: literals
    * accepted besides a value of the type ("null" for VALKEY_MAX_RETRIES_PER_REQUEST).
    */
   values?: readonly string[];
+  /**
+   * json: properties the object may not set, each mapped to the registry key
+   * that owns it — a size kept explicit must not be overridden from a second
+   * place.
+   */
+  reserved?: Readonly<Record<string, string>>;
   /** Crash at startup if the variable is absent after all sources are merged. */
   required: boolean;
   /** Value used when required=false and the variable is not set. */
@@ -58,6 +67,25 @@ export interface EnvEntry {
   /** Source files / modules that read this variable. */
   usedIn: readonly string[];
 }
+
+/**
+ * librdkafka properties @base/kafka (kafka-config.builder.ts) always sets
+ * from their own keys — buffer and message sizes, never left at librdkafka's
+ * defaults (1 GiB producer queue, 50 MB fetches), and the assignment
+ * strategy — so a `*_EXTRA_PROPERTIES` escape hatch may not set them.
+ * Aliases included.
+ */
+const KAFKA_OWNED_PROPERTIES = {
+  "partition.assignment.strategy": "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY",
+  "queue.buffering.max.kbytes": "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
+  "queue.buffering.max.messages": "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES",
+  "message.max.bytes": "KAFKA_MESSAGE_MAX_BYTES",
+  "queued.max.messages.kbytes": "KAFKA_CONSUMER_QUEUE_MAX_KBYTES",
+  "fetch.max.bytes": "KAFKA_CONSUMER_FETCH_MAX_BYTES",
+  "receive.message.max.bytes": "KAFKA_CONSUMER_FETCH_MAX_BYTES",
+  "max.partition.fetch.bytes": "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES",
+  "fetch.message.max.bytes": "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES",
+} as const;
 
 const REGISTRY = [
   // ─── Config file ──────────────────────────────────────────────────────────
@@ -119,6 +147,44 @@ const REGISTRY = [
       "while handling it (the deadline, @base/common deadline.ts) — then 504. A caller's " +
       "x-request-timeout-ms header can shorten it, never extend it.",
     usedIn: ["apps/api/src/app.ts", "common"],
+  },
+
+  {
+    key: "HTTP_SHUTDOWN_DELAY_MS",
+    yaml: "app.http.shutdown_delay_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "2000",
+    description:
+      "On SIGTERM, how long the process keeps serving after /readyz turns 503 and before the " +
+      "api listener drains — the time a load balancer / endpoint controller needs to stop " +
+      "routing to it. 0 in tests and `just dev`.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "ADMIN_HOST",
+    yaml: "app.admin_host",
+    required: false,
+    default: "0.0.0.0",
+    description:
+      "Address the admin listener binds. Anything but loopback (127.0.0.1, ::1, localhost) " +
+      "needs ADMIN_TOKEN, or ADMIN_INSECURE=true.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "ADMIN_INSECURE",
+    yaml: "app.admin_insecure",
+    type: "bool",
+    required: false,
+    default: "false",
+    description:
+      "Allow an admin listener without ADMIN_TOKEN on a non-loopback ADMIN_HOST: the log " +
+      "level, heap dumps and CPU profiles are then open to anyone who reaches the port. " +
+      "Local development and docker/stack.yml only — never in production.",
+    usedIn: ["config"],
   },
 
   {
@@ -195,8 +261,8 @@ const REGISTRY = [
     required: false,
     description:
       "Bearer token for the mutating admin endpoints (PUT/DELETE /admin/log-level, " +
-      "POST /debug/*). Empty (the local/compose default) leaves them open; the " +
-      '"Admin server listening" log line says auth=off|bearer.',
+      "POST /debug/*). Without it the start fails unless ADMIN_HOST is loopback or " +
+      'ADMIN_INSECURE=true; the "Admin server listening" log line says auth=off|bearer.',
     usedIn: ["observability"],
   },
 
@@ -238,7 +304,7 @@ const REGISTRY = [
     required: false,
     default: "postgresql://app:app@localhost:5432/app",
     description: "PostgreSQL connection URL.",
-    usedIn: ["database"],
+    usedIn: ["database", "apps/migrate"],
   },
 
   {
@@ -248,7 +314,7 @@ const REGISTRY = [
     description:
       "Path to a Secret-mounted file holding the database password; overrides the password " +
       "in DATABASE_URL. Read once at startup (unreadable or empty → startup error).",
-    usedIn: ["database"],
+    usedIn: ["database", "apps/migrate"],
   },
 
   {
@@ -375,7 +441,7 @@ const REGISTRY = [
     required: false,
     description:
       "application_name shown in pg_stat_activity (the read-only pool appends -ro). Default: OTEL_SERVICE_NAME.",
-    usedIn: ["database"],
+    usedIn: ["database", "apps/migrate"],
   },
 
   {
@@ -417,7 +483,7 @@ const REGISTRY = [
     values: ["disable", "allow", "prefer", "require", "verify-ca", "verify-full", "no-verify"],
     required: false,
     description: "libpq sslmode (disable|require|verify-ca|verify-full). Unset: from DATABASE_URL.",
-    usedIn: ["database"],
+    usedIn: ["database", "apps/migrate"],
   },
 
   {
@@ -851,11 +917,12 @@ const REGISTRY = [
     type: "enum",
     values: ["earliest", "latest", "smallest", "largest", "beginning", "end", "error"],
     required: false,
-    default: "latest",
+    default: "earliest",
     description:
-      "librdkafka auto.offset.reset for consumers with no committed offset " +
-      "(earliest|latest). The compose stack uses earliest so the worker drains events " +
-      "produced before it joined the group.",
+      "librdkafka auto.offset.reset for a group with no committed offset (earliest|latest). " +
+      "earliest: a newly deployed consumer group reads the retained backlog instead of " +
+      "skipping what was produced before it first joined — at-least-once means handlers " +
+      "are idempotent anyway. latest only for groups that must not see history.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1014,8 +1081,10 @@ const REGISTRY = [
     type: "int",
     min: 0,
     required: false,
-    default: "10",
-    description: "Producer linger.ms (batching window).",
+    default: "5",
+    description:
+      "Producer linger.ms — how long a record waits for others to share its batch (and " +
+      "its compression). 5 ms: a few records per batch under load, no visible latency.",
     usedIn: ["kafka"],
   },
 
@@ -1044,9 +1113,83 @@ const REGISTRY = [
   },
 
   {
+    key: "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES",
+    yaml: "kafka.producer.queue_max_messages",
+    type: "int",
+    min: 1,
+    required: false,
+    default: "100000",
+    description:
+      "Producer queue.buffering.max.messages — record count bound of the local send queue, " +
+      "next to the byte bound. Default 100000; whichever bound is hit first fails send() " +
+      "with QUEUE_FULL.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_MESSAGE_MAX_BYTES",
+    yaml: "kafka.message_max_bytes",
+    type: "int",
+    min: 1000,
+    required: false,
+    default: "1000000",
+    description:
+      "message.max.bytes for every client — the largest record batch produced. Default " +
+      "1000000, under the broker's default max.message.bytes (1 MiB): a bigger record fails " +
+      "locally (MSG_SIZE_TOO_LARGE, kind `rejected`) instead of at the broker. Keep it at or " +
+      "below the topic's max.message.bytes.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_QUEUE_MAX_KBYTES",
+    yaml: "kafka.consumer.queue_max_kbytes",
+    type: "int",
+    min: 1,
+    required: false,
+    default: "4096",
+    description:
+      "Consumer queued.max.messages.kbytes — prefetched records held in memory per consumer. " +
+      "Default 4096 (4 MiB; librdkafka's own is 64 MiB): a consumer that handles one message " +
+      "at a time gains nothing from a deep prefetch and is OOM-killed on a big backlog.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_FETCH_MAX_BYTES",
+    yaml: "kafka.consumer.fetch_max_bytes",
+    type: "int",
+    min: 1000,
+    required: false,
+    default: "4194304",
+    atLeast: "KAFKA_MESSAGE_MAX_BYTES",
+    description:
+      "Consumer fetch.max.bytes — the most one fetch response may carry (librdkafka's default " +
+      "50 MB). Default 4194304 (4 MiB), the size of the prefetch queue; must be at least " +
+      "KAFKA_MESSAGE_MAX_BYTES. receive.message.max.bytes is derived from it (+512).",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES",
+    yaml: "kafka.consumer.partition_fetch_max_bytes",
+    type: "int",
+    min: 1000,
+    required: false,
+    default: "1048576",
+    atMost: "KAFKA_CONSUMER_FETCH_MAX_BYTES",
+    description:
+      "Consumer max.partition.fetch.bytes — the most one fetch takes from a single partition. " +
+      "Default 1048576 (1 MiB), so one hot partition cannot fill a whole fetch; at most " +
+      "KAFKA_CONSUMER_FETCH_MAX_BYTES.",
+    usedIn: ["kafka"],
+  },
+
+  {
     key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
     yaml: "kafka.producer.extra_properties",
     type: "json",
+    reserved: KAFKA_OWNED_PROPERTIES,
     required: false,
     description:
       "JSON object of librdkafka properties for the producer only, applied after " +
@@ -1058,6 +1201,7 @@ const REGISTRY = [
     key: "KAFKA_CONSUMER_EXTRA_PROPERTIES",
     yaml: "kafka.consumer.extra_properties",
     type: "json",
+    reserved: KAFKA_OWNED_PROPERTIES,
     required: false,
     description:
       "JSON object of librdkafka properties for consumers only, applied after " +
@@ -1076,6 +1220,36 @@ const REGISTRY = [
       "How many assigned partitions a consumer handles in parallel (eachMessage; order within " +
       "a partition holds). Raise it when one consumer serves many partitions/topics.",
     usedIn: ["apps/worker"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_MAX_RETRIES",
+    yaml: "kafka.consumer.max_retries",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "5",
+    description:
+      "How many times a consumer retries a message whose handler fails (paused partition, " +
+      "backoff 1 s → 60 s) before it goes to the dead-letter topic. Back-pressure " +
+      "(KafkaBackpressureError: a full or unreachable downstream) never counts; a " +
+      "KafkaPermanentError skips the retries.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_DEAD_LETTER_TOPIC",
+    yaml: "kafka.consumer.dead_letter_topic",
+    values: ["none"],
+    required: false,
+    default: "{topic}.dlq",
+    description:
+      "Where a consumer parks a message it gave up on — key, value and headers as consumed, " +
+      "plus dlq_reason / dlq_error / dlq_source_topic / dlq_source_partition / " +
+      "dlq_source_offset / dlq_attempts headers — then commits and moves on. `{topic}` is " +
+      "the source topic. The topic must exist (broker policy, like every topic). `none`: " +
+      "nothing is parked — a failing message holds its partition, retried, until it succeeds.",
+    usedIn: ["kafka"],
   },
 
   {
@@ -1116,13 +1290,33 @@ const REGISTRY = [
   },
 
   {
+    key: "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY",
+    yaml: "kafka.consumer.assignment_strategy",
+    type: "enum",
+    values: ["cooperative-sticky", "roundrobin", "range"],
+    required: false,
+    default: "cooperative-sticky",
+    description:
+      "Consumer partition.assignment.strategy. cooperative-sticky: a rebalance moves only " +
+      "the partitions that change owner, the rest keep being consumed (roundrobin / range " +
+      "are eager: every member stops and gives up everything). One protocol per group: " +
+      "switching an existing group between cooperative and eager takes stopping all its " +
+      "members (or a new group.id) — a mixed group fails to rebalance.",
+    usedIn: ["kafka"],
+  },
+
+  {
     key: "KAFKA_CONSUMER_SESSION_TIMEOUT_MS",
     yaml: "kafka.consumer.session_timeout_ms",
     type: "int",
     min: 1,
     required: false,
-    default: "10000",
-    description: "Consumer session.timeout.ms.",
+    default: "45000",
+    description:
+      "Consumer session.timeout.ms — how long the broker waits for a heartbeat before it " +
+      "evicts the member and rebalances. 45 s (the Kafka/librdkafka default) rides out a " +
+      "node hiccup or a long GC pause without a rebalance; a pod that stops cleanly " +
+      "leaves the group at once, so only a crash waits it out.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1133,7 +1327,10 @@ const REGISTRY = [
     min: 1,
     required: false,
     default: "300000",
-    description: "Consumer max.poll.interval.ms.",
+    description:
+      "Consumer max.poll.interval.ms — the longest one handler call may take before the " +
+      "member is considered stuck and its partitions are reassigned (the message is then " +
+      "handled again elsewhere). Above the slowest handler, with its retries' backoff.",
     usedIn: ["kafka", "apps/worker"],
   },
 
@@ -1141,6 +1338,7 @@ const REGISTRY = [
     key: "KAFKA_EXTRA_PROPERTIES",
     yaml: "kafka.extra_properties",
     type: "json",
+    reserved: KAFKA_OWNED_PROPERTIES,
     required: false,
     description:
       "JSON object of extra librdkafka properties, applied last to every client (escape hatch).",

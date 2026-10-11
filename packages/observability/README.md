@@ -39,6 +39,7 @@ the alerts and dashboards, then drop the old one.
 | `DELETE /admin/log-level`  | bearer | Revert to the configured level now                                                     |
 | `POST /debug/heapdump`     | bearer | Capture a V8 heap snapshot (`enableHeapSnapshot`)                                      |
 | `POST /debug/report`       | bearer | Node diagnostic report + heap snapshot (`enableCrashReport`)                           |
+| `POST /debug/cpu-profile`  | bearer | `?seconds=10` (1–60): a `.cpuprofile` of the process (node:inspector; one at a time, else 409) |
 
 Nothing on this listener goes through the API's access log, request metrics or
 tracing, so probes and scrapes never show up as traffic. **Keep it off the
@@ -46,10 +47,11 @@ ingress** — it is the listener that exposes internals.
 
 **bearer**: the mutations require `Authorization: Bearer <ADMIN_TOKEN>` when
 `ADMIN_TOKEN` is set (constant-time compare; `401 application/problem+json`
-with `WWW-Authenticate: Bearer realm="admin"` otherwise, logged at warn). An
-empty token leaves them open — the laptop / compose default — and the
-"Admin server listening" log line says `auth=off` so it is never a surprise in
-a cluster. Reads and probes never need a token.
+with `WWW-Authenticate: Bearer realm="admin"` otherwise, logged at warn).
+Without a token the config loader refuses to start unless `ADMIN_HOST` is
+loopback or `ADMIN_INSECURE=true` (what `just dev` and `docker/stack.yml`
+set); the mutations are then open and the "Admin server listening" log line
+says `auth=off`. Reads and probes never need a token.
 
 **Errors** are RFC 9457 `application/problem+json` everywhere on this listener:
 `404` for an unknown route, `405` (+ `Allow`) for a known route with the wrong
@@ -144,7 +146,9 @@ constructor(readiness: ReadinessService) {
 `app.enableShutdownHooks()` + SIGTERM → `app.close()`, which NestJS runs as:
 
 1. `beforeApplicationShutdown` — `ReadinessService` closes the gate: `/readyz`
-   answers `503 not_ready` so the load balancer stops routing;
+   answers `503 not_ready` so the load balancer stops routing, and waits
+   `HTTP_SHUTDOWN_DELAY_MS` (2 s) while requests are still served — the time
+   it takes the load balancer to notice;
 2. `dispose()` — Nest closes the API listener (in-flight requests drain);
 3. `onApplicationShutdown` — `AdminServerService` closes the admin listener last,
    so probes keep answering while the API drains.
@@ -157,7 +161,10 @@ admin).
 | Variable            | Default | Meaning                                                              |
 | ------------------- | ------- | -------------------------------------------------------------------- |
 | `ADMIN_PORT`        | `9090`  | Admin listener port                                                  |
-| `ADMIN_TOKEN`       | *(empty)* | Bearer token for the mutations; empty = open (`auth=off`)          |
+| `ADMIN_HOST`        | `0.0.0.0` | Admin listener address                                             |
+| `ADMIN_TOKEN`       | *(empty)* | Bearer token for the mutations; required unless `ADMIN_HOST` is loopback |
+| `ADMIN_INSECURE`    | `false` | Start without a token on a non-loopback `ADMIN_HOST` (`auth=off`)    |
+| `HTTP_SHUTDOWN_DELAY_MS` | `2000` | Serving time between `/readyz` → 503 and the API drain        |
 | `DEBUG_TOKEN`       | *(empty)* | `X-Debug-Token` value for per-request debug logging; empty = off   |
 | `LOG_LEVEL_MAX_TTL` | `24h`   | Cap (and default) for a runtime log-level change                     |
 | `GIT_COMMIT`        | *(empty)* | `revision` in `/version`                                           |

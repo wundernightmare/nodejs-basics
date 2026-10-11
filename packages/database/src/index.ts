@@ -13,6 +13,7 @@ export {
 } from "./pg-pool.provider.js";
 export { guardPgPool, limitTransaction } from "./pg-deadline.js";
 export { pgTarget, tracePgClient, tracePgPool } from "./pg-tracing.js";
+export { decorateConnectionString } from "./connection-string.js";
 export { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 export {
   type AmbientTransaction,

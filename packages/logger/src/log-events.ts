@@ -101,6 +101,23 @@ export const LOG_EVENTS: readonly LogEvent[] = [
     source: "packages/outbox",
   },
   {
+    action: "kafka.dead_lettered",
+    level: "warn",
+    description:
+      "A consumer gave up on a message (`event.reason`: retries_exhausted after " +
+      "KAFKA_CONSUMER_MAX_RETRIES, or permanent) and parked it on the dead-letter topic.",
+    fields: [
+      "event.reason",
+      "error.message",
+      "kafka.topic",
+      "kafka.partition",
+      "kafka.offset",
+      "kafka.dead_letter_topic",
+      "kafka.attempts",
+    ],
+    source: "packages/kafka",
+  },
+  {
     action: "heap_snapshot.written",
     level: "info",
     description:
@@ -116,6 +133,15 @@ export const LOG_EVENTS: readonly LogEvent[] = [
       "A Node diagnostic report was written — `event.reason`: uncaught (the process is " +
       "crashing) or manual (POST /debug/report).",
     fields: ["event.reason", "file.path"],
+    source: "packages/observability",
+  },
+  {
+    action: "cpu_profile.captured",
+    level: "info",
+    description:
+      "Someone took a CPU profile of the process through POST /debug/cpu-profile (sampling " +
+      "costs a few percent of CPU while it runs).",
+    fields: ["event.duration_ms", "client.address"],
     source: "packages/observability",
   },
 ];

@@ -67,6 +67,15 @@ migrate:
     pnpm --filter @base/migrate build >/dev/null
     node apps/migrate/dist/main.js
 
+# A SASL_SSL broker with a private CA on localhost:29095 (examples/kafka-sasl-ssl)
+kafka-sasl-ssl-up:
+    examples/kafka-sasl-ssl/gen-certs.sh
+    docker compose -f examples/kafka-sasl-ssl/compose.yml up -d --wait redpanda
+    docker compose -f examples/kafka-sasl-ssl/compose.yml run --rm init
+
+kafka-sasl-ssl-down:
+    docker compose -f examples/kafka-sasl-ssl/compose.yml down -v
+
 # Start observability stack
 obs:
     docker compose -f {{OBS}} up -d

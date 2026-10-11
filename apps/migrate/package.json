@@ -21,6 +21,8 @@
     "clean:build": "rm -rf dist coverage tsconfig.tsbuildinfo"
   },
   "dependencies": {
+    "@base/config": "workspace:*",
+    "@base/database": "workspace:*",
     "pg": "8.23.0"
   },
   "devDependencies": {

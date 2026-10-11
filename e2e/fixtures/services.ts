@@ -40,6 +40,9 @@ export const deps = {
   KAFKA_BROKERS: process.env["KAFKA_BROKERS"] ?? "localhost:9092",
   LOG_LEVEL: process.env["E2E_LOG_LEVEL"] ?? "warn",
   NODE_ENV: "production",
+  // Admin listeners on loopback need no token; no load balancer to wait for.
+  ADMIN_HOST: "127.0.0.1",
+  HTTP_SHUTDOWN_DELAY_MS: "0",
 };
 
 const SERVICES: ServiceSpec[] = [
@@ -61,7 +64,7 @@ const SERVICES: ServiceSpec[] = [
   },
 ];
 
-const MIGRATE = path.join(ROOT, "apps/migrate/dist/main.js");
+export const MIGRATE = path.join(ROOT, "apps/migrate/dist/main.js");
 
 /** Migrate the database (apps/migrate), spawn api + worker from dist/, persist pids for teardown. */
 export function startServices(): void {
@@ -79,6 +82,8 @@ export function startServices(): void {
     env: { ...process.env, DATABASE_URL: deps.DATABASE_URL },
     encoding: "utf8",
   });
+  // Its lines join the log contract check (logs.spec.ts) with the services'.
+  fs.writeFileSync(path.join(LOG_DIR, "migrate.log"), `${migrated.stdout}${migrated.stderr}`);
   if (migrated.status !== 0)
     throw new Error(`migrate failed:\n${migrated.stderr}${migrated.stdout}`);
   const children: ChildProcess[] = [];

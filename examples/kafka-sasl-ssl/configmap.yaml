@@ -1,0 +1,78 @@
+# The client side of the example on Kubernetes: settings in a ConfigMap (the
+# app's config.yaml), credentials in a Secret, both mounted as files.
+#
+#   kubectl create secret generic worker-kafka \
+#     --from-file=ca.crt=certs/ca.crt --from-literal=sasl-password=app-secret
+#   kubectl apply -f configmap.yaml
+#
+# Only what the app reads lives here; every key, its YAML path, type and
+# default: ENV_REGISTRY in @base/config (`node dist/main.js --config-reference`).
+# Buffer sizes and the assignment strategy are named keys — the
+# *_extra_properties may not set them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: worker-config
+data:
+  config.yaml: |
+    kafka:
+      brokers: kafka-0.kafka:9093,kafka-1.kafka:9093,kafka-2.kafka:9093
+      security_protocol: SASL_SSL
+      sasl:
+        mechanism: SCRAM-SHA-512
+        username: app
+        password_file: /etc/kafka-secret/sasl-password  # read once at start
+      ssl:
+        ca_location: /etc/kafka-secret/ca.crt           # the private CA
+        endpoint_identification_algorithm: https        # verify the broker's hostname
+      message_max_bytes: 1000000
+      producer:
+        queue_max_kbytes: 65536
+        queue_max_messages: 100000
+        # Any other librdkafka property — a mapping, applied after the named keys.
+        extra_properties:
+          batch.size: 262144
+      consumer:
+        queue_max_kbytes: 4096
+        fetch_max_bytes: 4194304
+        partition_fetch_max_bytes: 1048576
+        assignment_strategy: cooperative-sticky
+        extra_properties:
+          fetch.wait.max.ms: 100
+      # mTLS, when the broker also requires a client certificate:
+      # extra_properties:
+      #   ssl.certificate.location: /etc/kafka-secret/client.crt
+      #   ssl.key.location: /etc/kafka-secret/client.key
+---
+# The part of the worker's Deployment that wires the two in.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      securityContext:
+        fsGroup: 65532 # distroless `nonroot`: the Secret's files are group-readable
+      containers:
+        - name: worker
+          image: registry.example.com/nodejs-basics-worker:1.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities: { drop: [ALL] }
+          env:
+            - name: APP_CONFIG_FILE
+              value: /etc/app/config.yaml
+          volumeMounts:
+            - { name: config, mountPath: /etc/app, readOnly: true }
+            - { name: kafka-secret, mountPath: /etc/kafka-secret, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: worker-config }
+        - name: kafka-secret
+          secret: { secretName: worker-kafka, defaultMode: 0440 }

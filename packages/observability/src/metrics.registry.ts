@@ -176,6 +176,17 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/kafka",
   },
   {
+    name: "kafka.consumer.dead_lettered",
+    kind: "Counter",
+    unit: "{message}",
+    labels: ["reason"],
+    description: "Messages a consumer gave up on and parked on the dead-letter topic.",
+    watch:
+      "Any: a handler keeps failing on some messages — the consumer's warn logs " +
+      "(kafka.dead_lettered) name the error; replay the dead-letter topic once it is fixed.",
+    source: "packages/kafka",
+  },
+  {
     name: "valkey.client.command_queue_size",
     kind: "ObservableGauge",
     unit: "{command}",

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { integration, meta, testCase, unique } from "@base/testing";
 
-import { KafkaConsumerRunner } from "./kafka-consumer.js";
+import { KafkaConsumerRunner, KafkaPermanentError } from "./kafka-consumer.js";
 import { KafkaProducerService } from "./kafka.provider.js";
 
 /**
@@ -87,5 +87,55 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
     await second.stop();
 
     expect(seen).toEqual(["m1", "m2"]);
+  }, 90_000);
+
+  it("parks a message it can never handle on {topic}.dlq and moves on", async () => {
+    await testCase(
+      "NB-1023",
+      "a poison message reaches the dead-letter topic, the next one is handled",
+    );
+    const source = unique("it-dlq");
+    const parked: { value: string; headers: Record<string, string> }[] = [];
+    const handled: string[] = [];
+    // Its own consumer asks the broker for the dead-letter topic first (auto-created here).
+    const dlq = new KafkaConsumerRunner(config, appLogger.child("it-dlq"), {
+      groupId: unique("it-dlq-group"),
+      topics: [`${source}.dlq`],
+      handle: (message) => {
+        const headers = Object.fromEntries(
+          Object.entries(message.headers ?? {}).map(([k, v]) => [k, String(v)]),
+        );
+        parked.push({ value: String(message.value), headers });
+        return Promise.resolve();
+      },
+    });
+    dlq.start();
+    const main = new KafkaConsumerRunner(config, appLogger.child("it-main"), {
+      groupId: unique("it-main-group"),
+      topics: [source],
+      producer,
+      handle: (message) => {
+        const value = String(message.value);
+        if (value === "poison") return Promise.reject(new KafkaPermanentError("cannot decode"));
+        handled.push(value);
+        return Promise.resolve();
+      },
+    });
+    await producer.send(
+      { topic: source, messages: [{ value: "poison" }, { value: "fine" }] },
+      { waitMs: 15_000 },
+    );
+    main.start();
+    await until(() => handled.includes("fine") && parked.length === 1);
+    await Promise.all([main.stop(), dlq.stop()]);
+
+    expect(parked[0]?.value).toBe("poison");
+    expect(parked[0]?.headers).toMatchObject({
+      dlq_reason: "permanent",
+      dlq_error: "cannot decode",
+      dlq_source_topic: source,
+      dlq_source_offset: "0",
+      dlq_attempts: "1",
+    });
   }, 90_000);
 });

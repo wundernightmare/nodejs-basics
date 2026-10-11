@@ -74,9 +74,9 @@ export function nodeApp(appDir: string, options: NodeAppOptions = {}): UserConfi
         (isBare(id) && !id.startsWith("@base/") && !(importer?.startsWith(pkgs) ?? false));
   // A self-contained bundle inlines CommonJS drivers whose own require()s must
   // get the CommonJS build (pg → pg-pool): leave import / require to the kind
-  // of each import instead of forcing "import".
+  // of each import instead of forcing "import". @base/* still from src/.
   const conditions = options.selfContained
-    ? ["node", "default"]
+    ? ["source", "node", "default"]
     : ["source", "node", "import", "default"];
   return {
     // Resolve the way Node will at runtime — exports conditions node / import /

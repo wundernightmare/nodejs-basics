@@ -16,7 +16,7 @@ const read = (name: string): string[] =>
 const FEATURE = { ...E2E, feature: "health & observability" };
 
 test.describe("log contract", () => {
-  // The spawned api and worker write their output to files; the stack's
+  // The spawned api, worker (and migrate) write their output to files; the stack's
   // containers log to Docker, out of reach here.
   test.skip(!SPAWN, "needs the spawned services (E2E_SPAWN=1)");
 
@@ -47,7 +47,7 @@ test.describe("log contract", () => {
     const actions = new Set(LOG_EVENTS.map((e) => e.action));
     const problems: string[] = [];
     let checked = 0;
-    for (const name of ["api", "worker"]) {
+    for (const name of ["api", "worker", "migrate"]) {
       for (const [i, raw] of read(name).entries()) {
         if (raw.trim() === "") continue;
         // Node's own warnings (deprecations) go to stderr in plain text.

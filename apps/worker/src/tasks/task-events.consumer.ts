@@ -3,8 +3,11 @@
  * `task.created` event (TaskCreatedEvent — generated from api/tsp/events.tsp,
  * the same type the producer writes), enqueues a job that
  * TaskEventsProcessor handles. The Kafka side (connect, commit, pause and
- * backoff, tracing) is @base/kafka's KafkaConsumerRunner; this class is the
- * part every consumer writes for itself: decode the event, hand it off.
+ * backoff, the dead-letter topic, tracing) is @base/kafka's
+ * KafkaConsumerRunner; this class is the part every consumer writes for
+ * itself: decode the event, hand it off — and say which failures retrying
+ * cannot fix (KafkaPermanentError: parked on tasks.events.dlq) and which are
+ * the job queue's, not the event's (KafkaBackpressureError: waited out).
  */
 import {
   Inject,
@@ -18,8 +21,13 @@ import { metrics } from "@opentelemetry/api";
 import { readInt } from "@base/config";
 import { isTaskCreatedEvent, TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
 import { type JobQueue, jobQueueToken } from "@base/jobs";
-import { KafkaBackpressureError, KafkaConsumerRunner } from "@base/kafka";
-import { AppLogger, ecsError } from "@base/logger";
+import {
+  KafkaBackpressureError,
+  KafkaConsumerRunner,
+  KafkaPermanentError,
+  KafkaProducerService,
+} from "@base/kafka";
+import { AppLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 
 const GROUP_ID = "tasks-worker";
@@ -36,6 +44,14 @@ export class JobQueueFullError extends KafkaBackpressureError {
   constructor(readonly waiting: number) {
     super(`job queue holds ${waiting} waiting jobs`);
     this.name = "JobQueueFullError";
+  }
+}
+
+/** The job queue (Valkey / Postgres) failed: the event is fine — waited out, never dead-lettered. */
+export class JobQueueUnavailableError extends KafkaBackpressureError {
+  constructor(cause: unknown) {
+    super("job queue unavailable", { cause });
+    this.name = "JobQueueUnavailableError";
   }
 }
 
@@ -59,6 +75,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     @Inject(jobQueueToken(TASK_JOBS)) private readonly queue: JobQueue<TaskCreatedEvent>,
     appLogger: AppLogger,
     readiness: ReadinessService,
+    producer?: KafkaProducerService,
   ) {
     this.logger = appLogger.child(TaskEventsConsumer.name);
     this.maxWaiting = readInt(config, "WORKER_QUEUE_MAX_WAITING");
@@ -66,6 +83,7 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
       groupId: GROUP_ID,
       topics: [TASK_EVENTS_TOPIC],
       handle: (message) => this.handle(message.value),
+      producer,
     });
     // Critical: a worker that cannot consume is not ready.
     readiness.register({
@@ -86,30 +104,31 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     return this.runner.stop();
   }
 
-  /** Decode and hand off one event. Returns for anything not ours (committed, skipped). */
+  /**
+   * Decode and hand off one event. Returns for an event type that is not
+   * ours (committed, skipped); throws KafkaPermanentError for one that can
+   * never be handled (parked on the dead-letter topic).
+   */
   async handle(value: Buffer | null): Promise<void> {
     let decoded: unknown;
     try {
       decoded = JSON.parse((value ?? Buffer.from("{}")).toString());
     } catch (err) {
-      this.logger.warn({ ...ecsError(err) }, "Skipping undecodable event");
-      return;
+      throw new KafkaPermanentError("undecodable event (not JSON)", { cause: err });
     }
     // The topic may carry other event types (additive contract): not ours, skip.
     if ((decoded as { type?: unknown } | null)?.type !== "task.created") return;
     if (!isTaskCreatedEvent(decoded)) {
-      // Ours, but not what the contract says (no id → no idempotent jobId): never retried.
-      this.logger.warn(
-        { "event.reason": "contract" },
-        "Skipping a task.created event that breaks the contract",
-      );
-      return;
+      // Ours, but not what the contract says (no id → no idempotent jobId).
+      throw new KafkaPermanentError("task.created event breaks the contract");
     }
     const event = decoded;
     await this.ensureQueueRoom();
     this.consumed.add(1);
     // Keyed by task id: a redelivered event does not become a second job.
-    await this.queue.send(event, event.id);
+    await this.queue.send(event, event.id).catch((err: unknown) => {
+      throw new JobQueueUnavailableError(err);
+    });
     // Count our own enqueue into the cached depth: a burst inside one cache
     // window would otherwise all pass on a stale "0".
     if (this.queueDepth !== undefined) this.queueDepth.waiting++;
@@ -120,7 +139,10 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   private async ensureQueueRoom(): Promise<void> {
     const now = Date.now();
     if (this.queueDepth === undefined || now - this.queueDepth.at > QUEUE_DEPTH_TTL_MS) {
-      this.queueDepth = { waiting: await this.queue.waiting(), at: now };
+      const waiting = await this.queue.waiting().catch((err: unknown) => {
+        throw new JobQueueUnavailableError(err);
+      });
+      this.queueDepth = { waiting, at: now };
     }
     if (this.queueDepth.waiting >= this.maxWaiting) {
       throw new JobQueueFullError(this.queueDepth.waiting);
