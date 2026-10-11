@@ -308,7 +308,9 @@ is left of it:
 
 A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
 caller can ask for less with `x-request-timeout-ms` (never more), which is
-also how a budget crosses services. Bodies over `HTTP_BODY_LIMIT_BYTES`
+also how a budget crosses services — but not below `HTTP_REQUEST_TIMEOUT_MIN_MS`
+(1 s; 0 = no floor), so no client can make 504s on demand and drive the 5xx
+rate the alerts watch. Bodies over `HTTP_BODY_LIMIT_BYTES`
 (1 MiB) are a **413** problem. Both statuses are in the contract. Rate
 limiting is left to the gateway / ingress in front of the service.
 

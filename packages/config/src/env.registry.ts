@@ -150,6 +150,20 @@ const REGISTRY = [
   },
 
   {
+    key: "HTTP_REQUEST_TIMEOUT_MIN_MS",
+    yaml: "app.http.request_timeout_min_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "1000",
+    description:
+      "The shortest budget a caller's x-request-timeout-ms can ask for; 0 = no floor. " +
+      "Without it a client sending `1` turns its requests into 504s and drives the 5xx " +
+      "rate the alerts watch. Above HTTP_REQUEST_TIMEOUT_MS, that one wins.",
+    usedIn: ["apps/api/src/app.ts", "common"],
+  },
+
+  {
     key: "HTTP_SHUTDOWN_DELAY_MS",
     yaml: "app.http.shutdown_delay_ms",
     type: "int",

@@ -101,6 +101,7 @@ export async function createApp(): Promise<NestFastifyApplication> {
   registerRequestContext(adapter.getInstance(), {
     debugToken: process.env["DEBUG_TOKEN"],
     requestTimeoutMs,
+    minRequestTimeoutMs: readInt(processEnv, "HTTP_REQUEST_TIMEOUT_MIN_MS"),
   });
 
   registerHttpInstrumentation(adapter.getInstance());

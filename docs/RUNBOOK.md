@@ -66,6 +66,11 @@ What each means is in `--metrics-reference` (`watch:`); what to do:
   attempts, last_error FROM outbox WHERE attempts >= <OUTBOX_MAX_ATTEMPTS>`;
   fix the cause, then `UPDATE outbox SET attempts = 0 …` to resend or delete
   the rows.
+- **504s from the api** — a request ran out of its budget
+  (`HTTP_REQUEST_TIMEOUT_MS`, or less when the caller sent
+  `x-request-timeout-ms` — never below `HTTP_REQUEST_TIMEOUT_MIN_MS`, so a
+  client cannot produce them on purpose): the trace shows which Postgres /
+  Valkey / HTTP call took the time.
 - **`outbox.pending` growing** — Kafka is down or slow: `kafka.client.brokers.up`,
   the relay's warn logs. Nothing is lost; it drains when Kafka is back.
 - **`kafka.client.consumer.lag.max` growing** — the worker falls behind, the
