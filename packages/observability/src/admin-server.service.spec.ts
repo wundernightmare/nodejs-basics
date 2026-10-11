@@ -337,6 +337,19 @@ describe("AdminServerService (diagnostics routes)", () => {
     }
   });
 
+  it("shutdown stops a running CPU profile instead of waiting it out", async () => {
+    await testCase("NB-1031", "a 60 s profile never holds the pod past its grace period");
+    const other = await start();
+    const profiling = fetch(`${other.base}/debug/cpu-profile?seconds=60`, { method: "POST" });
+    await new Promise((r) => setTimeout(r, 200));
+    const t0 = Date.now();
+    await other.admin.onApplicationShutdown("test");
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    const res = await profiling;
+    expect(res.status).toBe(503);
+    expect((await json(res))["detail"]).toMatch(/shutting down/u);
+  });
+
   it("takes the log level from a form body or a bare one", async () => {
     const form = await fetch(`${base}/admin/log-level`, {
       method: "PUT",
