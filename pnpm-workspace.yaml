@@ -32,9 +32,11 @@ overrides:
   source-map-js: ^1.2.2           # GHSA-68fv-2mgg-jv7q via vite/postcss + @vitest/coverage-v8 → magicast
 
 # Peers declared older than what we run, checked to work (drop an entry once
-# the package widens its range): @sentry/nestjs and nestjs-zod predate NestJS
-# 12 — without the rule pnpm auto-installs a second @nestjs/core 11 for Sentry,
-# whose SentryGlobalFilter then extends the wrong BaseExceptionFilter.
+# the package widens its range): @sentry/nestjs 10 and nestjs-zod predate
+# NestJS 12 — without the rule pnpm auto-installs a second @nestjs/core 11 for
+# Sentry, whose SentryGlobalFilter then extends the wrong BaseExceptionFilter.
+# (Sentry 11 accepts NestJS 12 but drops skipOpenTelemetrySetup and ships its
+# bundler plugins — webpack, Babel, esbuild — as runtime dependencies; held.)
 peerDependencyRules:
   allowedVersions:
     '@sentry/nestjs>@nestjs/core': '12'

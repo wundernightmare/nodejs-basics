@@ -708,9 +708,9 @@ Default credentials: `app` / `app` for postgres. **Change before deploying.**
 | Service        | Image                                          | Port  |
 | -------------- | ---------------------------------------------- | ----- |
 | Jaeger v2      | `jaegertracing/jaeger:2.21.0`                  | 16686 |
-| Prometheus     | `prom/prometheus:v3.14.0`                      | 9090  |
-| Grafana        | `grafana/grafana:12.4.11`                      | 3001  |
-| OTel Collector | `otel/opentelemetry-collector-contrib:0.161.0` | 4317  |
+| Prometheus     | `prom/prometheus:v3.15.0`                      | 9090  |
+| Grafana        | `grafana/grafana:12.4.12`                      | 3001  |
+| OTel Collector | `otel/opentelemetry-collector-contrib:0.162.0` | 4317  |
 
 Images are pulled through `${DOCKER_HUB}` (default `docker.io`, see
 `.env.example`), like everything else in the repo.

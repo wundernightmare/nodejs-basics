@@ -17,6 +17,12 @@ function stub(env: Record<string, string | undefined>): ConfigService {
 
 const fail = (): Promise<never> => Promise.reject(new Error("x"));
 
+async function trip(b: DependencyCircuitBreaker, times: number): Promise<void> {
+  for (let i = 0; i < times; i += 1) {
+    await expect(b.execute(fail)).rejects.toThrow("x");
+  }
+}
+
 describe("buildCircuitBreaker", () => {
   meta({
     epic: "nodejs-basics",
@@ -109,12 +115,6 @@ describe("DependencyCircuitBreaker", () => {
     );
     breakers.push(b);
     return b;
-  }
-
-  async function trip(b: DependencyCircuitBreaker, times: number): Promise<void> {
-    for (let i = 0; i < times; i += 1) {
-      await expect(b.execute(fail)).rejects.toThrow("x");
-    }
   }
 
   it("is a pass-through when disabled — runs the action, no bookkeeping", async () => {
