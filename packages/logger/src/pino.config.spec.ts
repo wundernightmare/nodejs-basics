@@ -1,14 +1,14 @@
 import { Writable } from "node:stream";
 
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withDebugLogging, withRequestId } from "@base/common";
 
-import { logEnvelopeProblems } from "@base/testing";
+import { logEnvelopeProblems, testCase } from "@base/testing";
 
 import { LogLevel } from "./log-level.js";
-import { buildPinoOptions, ECS_VERSION, ecsError } from "./pino.config.js";
+import { buildPinoOptions, ECS_VERSION, ecsError, logLevel, pinoLogger } from "./pino.config.js";
 
 interface Line {
   "log.level": string;
@@ -120,5 +120,28 @@ describe("log envelope", () => {
     expect(lines).toHaveLength(3);
     expect(lines.map((line) => logEnvelopeProblems(line))).toEqual([[], [], []]);
     expect((lines[0] as unknown as Record<string, unknown>)["ecs.version"]).toBe(ECS_VERSION);
+  });
+});
+
+describe("logLevel (the process-wide level)", () => {
+  afterEach(() => {
+    logLevel.reset();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("logs log_level.expired when a runtime change runs out — the revert has no caller", async () => {
+    await testCase("NB-1027", "an expired debug window leaves a trace in the log");
+    vi.useFakeTimers();
+    const warn = vi.spyOn(pinoLogger, "warn").mockImplementation(() => undefined);
+    const base = logLevel.base;
+    logLevel.set("trace", 1_000);
+    expect(warn).not.toHaveBeenCalled(); // an explicit set() is logged by its caller
+    vi.advanceTimersByTime(1_000);
+    expect(logLevel.level).toBe(base);
+    expect(warn).toHaveBeenCalledWith(
+      { "event.action": "log_level.expired", "log.level.from": "trace", "log.level.to": base },
+      "Log level reverted to base",
+    );
   });
 });
