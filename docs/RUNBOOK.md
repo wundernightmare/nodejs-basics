@@ -31,6 +31,15 @@ none — the startup line `integrations.resolved` says what a pod runs with):
 `503 not_ready` is a critical dependency down — the pod gets no traffic until
 it recovers, no restart needed. `degraded` is an optional one.
 
+A worker whose `kafka` check says `consumer has not joined its group yet` for
+longer than a rebalance is kept out of its consumer group. The usual cause is
+a rollout that changes the assignment strategy (eager `roundrobin` / `range` ↔
+`cooperative-sticky`): the broker refuses the new pods while an old one is in
+the group — `Inconsistent group protocol` in their logs. Finish it with a
+recreate (scale the old release to zero first), or give the new release a new
+`group.id` (it starts from `KAFKA_CONSUMER_AUTO_OFFSET_RESET`, `earliest`:
+expect the retained backlog again — handlers are idempotent).
+
 ## Something is wrong — where to look
 
 Logs are one JSON object per line (envelope: `docs/log-envelope.schema.json`);
