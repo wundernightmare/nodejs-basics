@@ -39,24 +39,30 @@ describe("kafka config builders", () => {
       "client.id": "svc",
       "socket.keepalive.enable": true,
       "statistics.interval.ms": 15_000,
+      "message.max.bytes": 1_000_000,
     });
     expect(buildProducerConfig(env)).toMatchObject({
       "client.id": "svc-producer",
       acks: "all",
       "enable.idempotence": true,
       "compression.type": "lz4",
-      "linger.ms": 10,
+      "linger.ms": 5,
       "message.timeout.ms": 30_000,
       "queue.buffering.max.kbytes": 65_536,
+      "queue.buffering.max.messages": 100_000,
     });
     expect(buildConsumerConfig(env, "g")).toMatchObject({
       "client.id": "svc-consumer-g",
       "group.id": "g",
-      "auto.offset.reset": "latest",
+      "auto.offset.reset": "earliest",
+      "partition.assignment.strategy": "cooperative-sticky",
       "enable.auto.commit": false,
       "allow.auto.create.topics": true,
       "queued.min.messages": 1_000,
       "queued.max.messages.kbytes": 4_096,
+      "fetch.max.bytes": 4_194_304,
+      "max.partition.fetch.bytes": 1_048_576,
+      "receive.message.max.bytes": 4_194_816,
     });
   });
 
@@ -83,7 +89,13 @@ describe("kafka config builders", () => {
       KAFKA_PRODUCER_LINGER_MS: "50",
       KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS: "10000",
       KAFKA_PRODUCER_QUEUE_MAX_KBYTES: "16384",
-      KAFKA_CONSUMER_AUTO_OFFSET_RESET: "earliest",
+      KAFKA_PRODUCER_QUEUE_MAX_MESSAGES: "5000",
+      KAFKA_MESSAGE_MAX_BYTES: "2000000",
+      KAFKA_CONSUMER_QUEUE_MAX_KBYTES: "8192",
+      KAFKA_CONSUMER_FETCH_MAX_BYTES: "8388608",
+      KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES: "2097152",
+      KAFKA_CONSUMER_AUTO_OFFSET_RESET: "latest",
+      KAFKA_CONSUMER_ASSIGNMENT_STRATEGY: "range",
       KAFKA_CONSUMER_ENABLE_AUTO_COMMIT: "true",
       KAFKA_CONSUMER_SESSION_TIMEOUT_MS: "20000",
       KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS: "600000",
@@ -103,6 +115,7 @@ describe("kafka config builders", () => {
       "reconnect.backoff.max.ms": 5_000,
       "socket.keepalive.enable": true,
       "statistics.interval.ms": 0,
+      "message.max.bytes": 2_000_000,
     });
     expect(buildProducerConfig(env)).toMatchObject({
       acks: "1",
@@ -111,12 +124,18 @@ describe("kafka config builders", () => {
       "linger.ms": 50,
       "message.timeout.ms": 10_000,
       "queue.buffering.max.kbytes": 16_384,
+      "queue.buffering.max.messages": 5_000,
     });
     expect(buildConsumerConfig(env, "g")).toMatchObject({
-      "auto.offset.reset": "earliest",
+      "auto.offset.reset": "latest",
+      "partition.assignment.strategy": "range",
       "enable.auto.commit": true,
       "session.timeout.ms": 20_000,
       "max.poll.interval.ms": 600_000,
+      "queued.max.messages.kbytes": 8_192,
+      "fetch.max.bytes": 8_388_608,
+      "max.partition.fetch.bytes": 2_097_152,
+      "receive.message.max.bytes": 8_389_120,
     });
   });
 
@@ -180,9 +199,38 @@ describe("kafka config builders", () => {
     async (key) => {
       await testCase("NB-798", "malformed extras are rejected");
       expect(() => buildConsumerConfig(stub({ [key]: "{oops" }), "g")).toThrow(
-        `${key}="{oops": expected a JSON object`,
+        `${key}=…: expected a JSON object`,
       );
       expect(() => buildConsumerConfig(stub({ [key]: "[1]" }), "g")).toThrow(/JSON object/u);
     },
   );
+
+  it.each([
+    ["KAFKA_EXTRA_PROPERTIES", "message.max.bytes", "KAFKA_MESSAGE_MAX_BYTES"],
+    [
+      "KAFKA_PRODUCER_EXTRA_PROPERTIES",
+      "queue.buffering.max.kbytes",
+      "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
+    ],
+    [
+      "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+      "fetch.message.max.bytes",
+      "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES",
+    ],
+    [
+      "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+      "partition.assignment.strategy",
+      "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY",
+    ],
+  ])("%s may not set %s — it has its own key", async (key, property, owner) => {
+    await testCase("NB-1024", "buffer sizes cannot come from an escape hatch");
+    const env = stub({ [key]: JSON.stringify({ [property]: 1, "sasl.password": "s3cret" }) });
+    const build = (): unknown =>
+      key === "KAFKA_PRODUCER_EXTRA_PROPERTIES"
+        ? buildProducerConfig(env)
+        : buildConsumerConfig(env, "g");
+    expect(build).toThrow(`${key}=…: expected no "${property}" — set ${owner} instead`);
+    // The escape hatch may carry credentials: the message never repeats it.
+    expect(build).not.toThrow(/s3cret/u);
+  });
 });

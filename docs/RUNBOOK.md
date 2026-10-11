@@ -12,8 +12,9 @@ node dist/main.js --check-config        # validate this deployment's env + confi
 
 Each pod has an admin listener (port `ADMIN_PORT`, 9090 in a container; keep
 it off the ingress): `/livez`, `/readyz`, `/metrics`, `/version`,
-`/admin/config`, `/admin/log-level`, `/debug/heapdump`. Mutations need
-`Authorization: Bearer $ADMIN_TOKEN`.
+`/admin/config`, `/admin/log-level`, `/debug/heapdump`, `/debug/cpu-profile`.
+Mutations need `Authorization: Bearer $ADMIN_TOKEN`; a pod without a token
+does not start (unless `ADMIN_INSECURE=true` — never in production).
 
 ## A pod does not start
 
@@ -58,10 +59,20 @@ What each means is in `--metrics-reference` (`watch:`); what to do:
   the rows.
 - **`outbox.pending` growing** — Kafka is down or slow: `kafka.client.brokers.up`,
   the relay's warn logs. Nothing is lost; it drains when Kafka is back.
-- **`kafka.client.consumer.lag.max` growing** — the worker falls behind or one
-  message keeps failing (its warn logs repeat the same offset). Scale the
-  worker or fix the handler; a message that can never succeed must be skipped
-  in code, not by moving offsets by hand.
+- **`kafka.client.consumer.lag.max` growing** — the worker falls behind, the
+  job queue is down (warn "Downstream unavailable"), or a message keeps failing
+  while the dead-letter topic is missing (warn "Could not dead-letter"). Scale
+  the worker, fix the dependency, or provision `<topic>.dlq`; never move
+  offsets by hand.
+- **`kafka.consumer.dead_lettered` > 0** — the worker gave up on messages and
+  parked them on `<topic>.dlq` (log `kafka.dead_lettered`: the reason and the
+  error; the record's `dlq_*` headers say where it came from). Fix the
+  handler, then produce the parked records back to their source topic.
+- **`kafka.client.producer.queue.size` near `.limit`, or send() failing
+  `queue_full`** — the broker takes records slower than the app makes them
+  (or is down). The queue is bounded on purpose (README "Kafka" → "Memory"):
+  fix the broker side before raising `KAFKA_PRODUCER_QUEUE_MAX_KBYTES`
+  together with the pod's memory limit.
 - **`db.client.connection.pending_requests` > 0 for minutes** — the Postgres
   pool is exhausted: slow queries (`pg_stat_activity` by `application_name`)
   or `DATABASE_POOL_MAX` too small for the load.
@@ -71,6 +82,9 @@ What each means is in `--metrics-reference` (`watch:`); what to do:
   snapshot before the pod is killed: `curl -X POST :9090/debug/heapdump -H
   "Authorization: Bearer $ADMIN_TOKEN"` (written to the pod, or to S3 when
   `HEAP_SNAPSHOT_S3_BUCKET` is set); open it in Chrome DevTools → Memory.
+- **CPU high, latency up** — `curl -X POST -o cpu.cpuprofile
+  ':9090/debug/cpu-profile?seconds=30' -H "Authorization: Bearer $ADMIN_TOKEN"`
+  (1–60 s; open it in Chrome DevTools → Performance, or speedscope).
 
 ## Rotating a secret
 

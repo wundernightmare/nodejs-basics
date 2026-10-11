@@ -17,25 +17,35 @@
  *
  *   - `handle` resolves → the offset is committed: explicitly, offset + 1.
  *     `enable.auto.commit` is false and the kafkajs-compat layer only *stores*
- *     offsets, so without it a restart resumes at the tail
- *     (`auto.offset.reset: latest`) and drops whatever came in meanwhile. A
- *     bare `commitOffsets()` inside eachMessage would commit the previous
- *     message (this one is stored only after eachMessage returns).
+ *     offsets, so without it a restart re-reads from the last commit (or
+ *     from `auto.offset.reset`). A bare `commitOffsets()` inside eachMessage
+ *     would commit the previous message (this one is stored only after
+ *     eachMessage returns).
  *   - `handle` throws → not committed: the partition is paused, resumed after
  *     a per-partition backoff (1 s → 60 s), and the same message comes again.
- *     A bare throw would re-fetch at once — a hot loop. Throw
- *     {@link KafkaBackpressureError} for "not now" (a full downstream queue):
- *     backoff capped at 5 s, logged at info.
- *   - a message that can never succeed (undecodable): return from `handle` —
- *     it is committed and skipped; throwing would wedge the partition.
+ *     A bare throw would re-fetch at once — a hot loop. After
+ *     KAFKA_CONSUMER_MAX_RETRIES retries the message is parked on the
+ *     dead-letter topic (KAFKA_DEAD_LETTER_TOPIC, `{topic}.dlq`: key, value
+ *     and headers as consumed plus `dlq_*` headers) through `producer`, then
+ *     committed — one poison message costs its retries, not the partition.
+ *     Without a producer, with `none`, or while the dead-letter send fails,
+ *     it keeps its partition and is retried.
+ *   - throw {@link KafkaBackpressureError} for "not now, the message is
+ *     fine" (a full or unreachable downstream): backoff capped at 5 s, never
+ *     counted towards the retries, never dead-lettered.
+ *   - throw {@link KafkaPermanentError} for a message that can never succeed
+ *     (undecodable, breaks the contract): dead-lettered without retries. Or
+ *     return from `handle` to drop it (committed and skipped) when nobody
+ *     will ever want it back.
  *
  * KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY partitions are handled in parallel;
  * order within a partition (and so per key) holds.
  */
 import { KafkaJS } from "@confluentinc/kafka-javascript";
 import type { ConfigService } from "@nestjs/config";
+import { metrics } from "@opentelemetry/api";
 
-import { readInt } from "@base/config";
+import { readInt, readString } from "@base/config";
 import {
   type AppLogger,
   ecsError,
@@ -49,6 +59,7 @@ import { buildConsumerConfig, buildKafkaClientConfig } from "./kafka-config.buil
 import { kafkaLogger } from "./kafka-log-creator.js";
 import { kafkaClientMetrics } from "./kafka-metrics.js";
 import { traceKafkaMessage } from "./kafka-tracing.js";
+import type { KafkaProducerService } from "./kafka.provider.js";
 import { Reconnect } from "./reconnect.js";
 
 const RETRY_BASE_MS = 1_000;
@@ -56,11 +67,34 @@ const RETRY_MAX_MS = 60_000;
 // Back-pressure clears on its own; a long pause would idle the consumer after it has.
 const BACKPRESSURE_MAX_MS = 5_000;
 
-/** Thrown by a handler for "not now": paused and retried, backoff capped at 5 s, info log. */
+// An error text can embed a whole payload; the dlq_error header keeps the start.
+const MAX_DLQ_ERROR_CHARS = 1_024;
+const DLQ_HEADERS = new Set([
+  "dlq_reason", // "permanent" | "retries_exhausted"
+  "dlq_error", // the last handler error, truncated
+  "dlq_source_topic",
+  "dlq_source_partition",
+  "dlq_source_offset",
+  "dlq_attempts", // handler invocations made
+]);
+
+/**
+ * Thrown by a handler for "not now, the message is fine": a full downstream
+ * queue (info log), or one that is down (pass the error as `cause`: warn
+ * log). Paused and retried, backoff capped at 5 s, never dead-lettered.
+ */
 export class KafkaBackpressureError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "KafkaBackpressureError";
+  }
+}
+
+/** Thrown by a handler for a message that can never succeed: dead-lettered at once. */
+export class KafkaPermanentError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "KafkaPermanentError";
   }
 }
 
@@ -72,6 +106,8 @@ export interface KafkaConsumerOptions {
     message: KafkaJS.KafkaMessage,
     from: { topic: string; partition: number },
   ) => Promise<void>;
+  /** Sends what the consumer gives up on to the dead-letter topic; without it nothing is parked. */
+  producer?: KafkaProducerService | undefined;
 }
 
 type Logger = ReturnType<AppLogger["child"]>;
@@ -80,8 +116,18 @@ export class KafkaConsumerRunner {
   private consumer: KafkaJS.Consumer | undefined;
   private running = false;
   private readonly failures = new Map<string, number>();
+  /** Per partition: the message being retried and how often its handler failed. */
+  private readonly attempts = new Map<string, { offset: string; failed: number }>();
   private readonly clientMetrics = kafkaClientMetrics("consumer");
+  private readonly deadLettered = metrics
+    .getMeter("kafka")
+    .createCounter("kafka.consumer.dead_lettered", {
+      unit: "{message}",
+      description: "Messages a consumer gave up on and parked on the dead-letter topic.",
+    });
   private readonly concurrently: number;
+  private readonly maxRetries: number;
+  private readonly deadLetterTopic: string;
   private readonly reconnect: Reconnect;
 
   constructor(
@@ -90,6 +136,8 @@ export class KafkaConsumerRunner {
     private readonly options: KafkaConsumerOptions,
   ) {
     this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY");
+    this.maxRetries = readInt(config, "KAFKA_CONSUMER_MAX_RETRIES");
+    this.deadLetterTopic = readString(config, "KAFKA_DEAD_LETTER_TOPIC");
     this.reconnect = new Reconnect(
       () => this.connect(),
       (err, delay) => {
@@ -129,7 +177,6 @@ export class KafkaConsumerRunner {
   /** One record through the loop above. Public for tests. */
   async handleMessage(payload: KafkaJS.EachMessagePayload): Promise<void> {
     const { topic, partition, message } = payload;
-    const key = `${topic}:${partition}`;
     const requestId = headerString(message.headers?.["x-request-id"]);
     const run = (): Promise<void> =>
       withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
@@ -140,36 +187,114 @@ export class KafkaConsumerRunner {
         message.headers?.["x-debug-logging"] === undefined ? run() : withDebugLogging(run),
       );
     } catch (err) {
-      const failures = this.failures.get(key) ?? 0;
-      this.failures.set(key, failures + 1);
-      const backpressure = err instanceof KafkaBackpressureError;
-      const delay = Math.min(
-        RETRY_BASE_MS * 2 ** failures,
-        backpressure ? BACKPRESSURE_MAX_MS : RETRY_MAX_MS,
-      );
-      const fields = {
-        ...ecsError(err),
-        "kafka.topic": topic,
-        "kafka.offset": message.offset,
-        "retry.delay_ms": delay,
-      };
-      if (backpressure) this.logger.info(fields, "Back-pressure — partition paused");
-      else this.logger.warn(fields, "Failed to handle a message — partition paused, not committed");
-      const resume = payload.pause();
-      setTimeout(() => {
-        // The consumer may have disconnected meanwhile; the pause died with it.
-        try {
-          resume();
-        } catch {
-          /* already disconnected */
-        }
-      }, delay).unref();
+      if (await this.giveUp(payload, err)) return; // parked and committed: move on
+      this.retryLater(payload, err);
       throw err;
     }
+    await this.commit(topic, partition, message.offset);
+  }
+
+  /** Pause the partition; the same message comes again after the backoff. */
+  private retryLater(payload: KafkaJS.EachMessagePayload, err: unknown): void {
+    const { topic, partition, message } = payload;
+    const key = `${topic}:${partition}`;
+    const failures = this.failures.get(key) ?? 0;
+    this.failures.set(key, failures + 1);
+    const backpressure = err instanceof KafkaBackpressureError;
+    const delay = Math.min(
+      RETRY_BASE_MS * 2 ** failures,
+      backpressure ? BACKPRESSURE_MAX_MS : RETRY_MAX_MS,
+    );
+    const fields = {
+      ...ecsError(err),
+      "kafka.topic": topic,
+      "kafka.offset": message.offset,
+      "retry.delay_ms": delay,
+    };
+    if (backpressure && err.cause === undefined)
+      this.logger.info(fields, "Back-pressure — partition paused");
+    else if (backpressure) this.logger.warn(fields, "Downstream unavailable — partition paused");
+    else this.logger.warn(fields, "Failed to handle a message — partition paused, not committed");
+    const resume = payload.pause();
+    setTimeout(() => {
+      // The consumer may have disconnected meanwhile; the pause died with it.
+      try {
+        resume();
+      } catch {
+        /* already disconnected */
+      }
+    }, delay).unref();
+  }
+
+  /**
+   * Parks the message on the dead-letter topic and commits it when its handler
+   * failed for good (permanent, or past KAFKA_CONSUMER_MAX_RETRIES). False:
+   * keep retrying it.
+   */
+  private async giveUp(payload: KafkaJS.EachMessagePayload, err: unknown): Promise<boolean> {
+    if (err instanceof KafkaBackpressureError) return false;
+    const { topic, partition, message } = payload;
+    const key = `${topic}:${partition}`;
+    const previous = this.attempts.get(key);
+    const failed = (previous?.offset === message.offset ? previous.failed : 0) + 1;
+    this.attempts.set(key, { offset: message.offset, failed });
+    const reason = err instanceof KafkaPermanentError ? "permanent" : "retries_exhausted";
+    const producer = this.options.producer;
+    if (reason === "retries_exhausted" && failed <= this.maxRetries) return false;
+    if (producer === undefined || this.deadLetterTopic === "none") return false;
+
+    const deadLetterTopic = this.deadLetterTopic.replaceAll("{topic}", topic);
+    const error = (err instanceof Error ? err.message : String(err)).slice(0, MAX_DLQ_ERROR_CHARS);
+    const headers: KafkaJS.IHeaders = {};
+    for (const [name, value] of Object.entries(message.headers ?? {})) {
+      // A message replayed from a dead-letter topic gets fresh ones.
+      if (value !== undefined && !DLQ_HEADERS.has(name)) headers[name] = value;
+    }
+    Object.assign(headers, {
+      dlq_reason: reason,
+      dlq_error: error,
+      dlq_source_topic: topic,
+      dlq_source_partition: String(partition),
+      dlq_source_offset: message.offset,
+      dlq_attempts: String(failed),
+    });
+    try {
+      await producer.send({
+        topic: deadLetterTopic,
+        messages: [{ key: message.key, value: message.value, headers }],
+      });
+    } catch (sendErr) {
+      this.logger.warn(
+        { ...ecsError(sendErr), "kafka.topic": topic, "kafka.dead_letter_topic": deadLetterTopic },
+        "Could not dead-letter a message — it keeps its partition and is retried",
+      );
+      return false;
+    }
+    this.deadLettered.add(1, { reason });
+    this.logger.warn(
+      {
+        "event.action": "kafka.dead_lettered",
+        "event.reason": reason,
+        "error.message": error,
+        "kafka.topic": topic,
+        "kafka.partition": partition,
+        "kafka.offset": message.offset,
+        "kafka.dead_letter_topic": deadLetterTopic,
+        "kafka.attempts": failed,
+      },
+      "Message dead-lettered",
+    );
+    await this.commit(topic, partition, message.offset);
+    return true;
+  }
+
+  private async commit(topic: string, partition: number, offset: string): Promise<void> {
+    const key = `${topic}:${partition}`;
     this.failures.delete(key);
+    this.attempts.delete(key);
     try {
       await this.consumer?.commitOffsets([
-        { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
+        { topic, partition, offset: (BigInt(offset) + 1n).toString() },
       ]);
     } catch (err) {
       // Not thrown: the message is handled; a redelivery is the cheaper failure.

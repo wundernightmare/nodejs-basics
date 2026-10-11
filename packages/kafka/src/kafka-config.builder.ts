@@ -22,7 +22,8 @@ import { readBool, readInt, readJson, readSecretFile, readString } from "@base/c
  *
  * Behaviour preserved for local dev / tests: when the security / tunable env
  * vars are unset the returned configs degrade to plaintext + librdkafka
- * defaults, so an untouched `localhost:9092` broker keeps working.
+ * defaults, so an untouched `localhost:9092` broker keeps working. Buffer and
+ * message sizes are the exception: always set from their own keys.
  */
 
 // Narrow shape of @confluentinc/kafka-javascript's GlobalConfig that this
@@ -131,6 +132,10 @@ export function buildKafkaClientConfig(
   // kafka-metrics.ts. 0 turns them off.
   out["statistics.interval.ms"] = readInt(config, "KAFKA_STATISTICS_INTERVAL_MS");
 
+  // Sizes are always explicit (ENV_REGISTRY: the *_EXTRA_PROPERTIES may not
+  // set them) — see the producer and consumer builders for the rest.
+  out["message.max.bytes"] = readInt(config, "KAFKA_MESSAGE_MAX_BYTES");
+
   // Escape hatch is applied last so it can tune anything above on purpose.
   return { ...out, ...readJson(config, "KAFKA_EXTRA_PROPERTIES") };
 }
@@ -157,6 +162,7 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
     // memory goes. 64 MiB bounds it; a full queue fails send() with
     // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
     "queue.buffering.max.kbytes": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES"),
+    "queue.buffering.max.messages": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES"),
   };
   // Re-apply the escape hatches so they win over role flags too: the shared
   // one, then the producer-only one.
@@ -180,6 +186,7 @@ export function buildConsumerConfig(
   clientIdSuffix?: string,
 ): KafkaRdKafkaConfig {
   const base = buildKafkaClientConfig(config, clientIdSuffix ?? `consumer-${groupId}`);
+  const fetchMaxBytes = readInt(config, "KAFKA_CONSUMER_FETCH_MAX_BYTES");
 
   const out: KafkaRdKafkaConfig = {
     ...base,
@@ -193,13 +200,20 @@ export function buildConsumerConfig(
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT"),
     "session.timeout.ms": readInt(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS"),
     "max.poll.interval.ms": readInt(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS"),
+    // Incremental rebalances by default: only moved partitions stop (the
+    // kafkajs-compat layer otherwise picks eager roundrobin).
+    "partition.assignment.strategy": readString(config, "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY"),
     // Bounded prefetch. librdkafka's defaults size the local queue for raw
-    // throughput (100k messages, up to 64 MiB per partition): a consumer that
+    // throughput (100k messages, 64 MiB, 50 MB fetches): a consumer that
     // handles one message at a time and wakes up to a deep backlog pulls
     // hundreds of MB in faster than it drains them and is OOM-killed before
-    // its first commit — a crash loop. Tune via KAFKA_CONSUMER_EXTRA_PROPERTIES.
+    // its first commit — a crash loop.
     "queued.min.messages": 1_000,
-    "queued.max.messages.kbytes": 4_096,
+    "queued.max.messages.kbytes": readInt(config, "KAFKA_CONSUMER_QUEUE_MAX_KBYTES"),
+    "fetch.max.bytes": fetchMaxBytes,
+    "max.partition.fetch.bytes": readInt(config, "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES"),
+    // librdkafka refuses a response above it; it must exceed a full fetch.
+    "receive.message.max.bytes": fetchMaxBytes + 512,
   };
   return {
     ...out,

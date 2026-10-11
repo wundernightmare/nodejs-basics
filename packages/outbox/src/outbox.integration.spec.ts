@@ -70,8 +70,8 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     );
     return rows[0]?.n ?? 0;
   };
-  const relay = (): OutboxRelay =>
-    new OutboxRelay(pool, kafka, new ConfigService({ OUTBOX_BATCH_SIZE: "1000" }), logger);
+  const relay = (batchSize = "1000"): OutboxRelay =>
+    new OutboxRelay(pool, kafka, new ConfigService({ OUTBOX_BATCH_SIZE: batchSize }), logger);
 
   beforeAll(() => {
     pool = new pg.Pool({ connectionString: infra.url("postgres"), max: 3 });
@@ -203,10 +203,8 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     });
     const sentBefore = sent.length;
     // Small batches, so both relays find work while the other holds its rows.
-    const small = (): OutboxRelay =>
-      new OutboxRelay(pool, kafka, new ConfigService({ OUTBOX_BATCH_SIZE: "5" }), logger);
-    const a = small();
-    const b = small();
+    const a = relay("5");
+    const b = relay("5");
     while ((await mine()) > 0) await Promise.all([a.relayOnce(), b.relayOnce()]);
     const ours = sent
       .slice(sentBefore)

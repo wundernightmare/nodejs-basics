@@ -24,6 +24,11 @@
  * run side by side, stay off 9090 (Cockpit on Fedora; Prometheus) and are
  * scraped by the local Prometheus the same way whether they run here or in
  * `just stack-up`.
+ *
+ * Two more defaults of a laptop, again unless the environment sets them:
+ * ADMIN_INSECURE=true (the admin listener binds every interface without a
+ * token — the local Prometheus scrapes it through host.docker.internal) and
+ * HTTP_SHUTDOWN_DELAY_MS=0 (no load balancer to wait for on a restart).
  */
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
@@ -36,6 +41,11 @@ const adminPort = process.argv
   ?.slice(ADMIN_PORT_FLAG.length);
 if (adminPort !== undefined && (process.env.ADMIN_PORT ?? "") === "")
   process.env.ADMIN_PORT = adminPort;
+for (const [key, value] of [
+  ["ADMIN_INSECURE", "true"],
+  ["HTTP_SHUTDOWN_DELAY_MS", "0"],
+])
+  if ((process.env[key] ?? "") === "") process.env[key] = value;
 // Everything else goes to node, e.g. --inspect, --inspect-brk=9229.
 const extraNodeArgs = process.argv.slice(2).filter((a) => !a.startsWith(ADMIN_PORT_FLAG));
 

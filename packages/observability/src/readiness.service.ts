@@ -1,5 +1,8 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 import { type BeforeApplicationShutdown, Inject, Injectable } from "@nestjs/common";
 
+import { processEnv, readInt } from "@base/config";
 import { AppLogger } from "@base/logger";
 
 /**
@@ -64,7 +67,9 @@ export const READINESS_CHECKS = Symbol("READINESS_CHECKS");
  *   }
  *
  * Shutdown order (Nest calls hooks in this sequence on app.close()/SIGTERM):
- *   1. beforeApplicationShutdown  → this service flips the gate: /readyz = 503 not_ready
+ *   1. beforeApplicationShutdown  → this service flips the gate: /readyz = 503 not_ready,
+ *                                   then waits HTTP_SHUTDOWN_DELAY_MS while requests are
+ *                                   still served — the time load balancers need to notice
  *   2. dispose()                  → Nest closes the API listener (in-flight requests drain)
  *   3. onApplicationShutdown      → AdminServerService closes the admin listener last
  * — the same order as golang-basics' httpx.Server.Run (SetReady(false) → API → admin),
@@ -105,12 +110,14 @@ export class ReadinessService implements BeforeApplicationShutdown {
     return this.ready;
   }
 
-  beforeApplicationShutdown(signal?: string): void {
+  async beforeApplicationShutdown(signal?: string): Promise<void> {
     this.ready = false;
+    const delayMs = readInt(processEnv, "HTTP_SHUTDOWN_DELAY_MS");
     this.logger.info(
-      { "process.signal": signal ?? null },
-      "Readiness gate closed — /readyz reports not_ready while the API drains",
+      { "process.signal": signal ?? null, "shutdown.delay_ms": delayMs },
+      "Readiness gate closed — /readyz reports not_ready; draining after the shutdown delay",
     );
+    if (delayMs > 0) await delay(delayMs);
   }
 
   async check(): Promise<ReadinessResult> {

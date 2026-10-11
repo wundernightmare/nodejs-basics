@@ -182,6 +182,12 @@ high-signal, easy-to-miss bits.
   pg-boss"). pg-boss migrates its own `pgboss` schema on start — the one
   exception to "schema = migrations/". A new backend passes
   `job-queue.integration.spec.ts`.
+- **Admin listener**: binds `ADMIN_HOST` (0.0.0.0); without `ADMIN_TOKEN`
+  the loader fails the start unless the host is loopback or
+  `ADMIN_INSECURE=true` (`LoadOptions.admin: false` for an app without one —
+  migrate). Tests run with `ADMIN_HOST=127.0.0.1` and
+  `HTTP_SHUTDOWN_DELAY_MS=0` (vitest.config.ts `test.env`, the e2e spawn
+  harness, schemathesis.sh); `scripts/dev.mjs` sets `ADMIN_INSECURE=true`.
 - **Data services**: `apps/api` (Postgres + Valkey + Kafka) and `apps/worker`
   (Kafka consumer → jobs) need the backing services. `just deps` (or
   `just stack-up` for the whole thing in containers). The broker is **Redpanda**
@@ -218,15 +224,21 @@ high-signal, easy-to-miss bits.
     single-message `queue_full`) is waited out for `waitMs` (5 s).
   - Consume with `KafkaConsumerRunner`: you write `handle()` — resolve =
     committed (offset + 1), throw = paused and retried with per-partition
-    backoff, `KafkaBackpressureError` = "not now" (5 s cap), return for a
-    message that can never succeed. Never commit with a bare
+    backoff, then after `KAFKA_CONSUMER_MAX_RETRIES` parked on
+    `{topic}.dlq` (pass `producer`) and committed; `KafkaPermanentError` =
+    parked at once (can never succeed); `KafkaBackpressureError` = "not
+    now, the message is fine" (5 s cap, never parked — wrap a downstream
+    outage in it, with `cause`); return = drop. Never commit with a bare
     `commitOffsets()` and never rethrow without a pause (a hot loop).
   - Never race a client's connect() against a timer: it waits up to 30 s for
     metadata, and a disconnect under it crashes the process (`Reconnect`).
-  - Config: lz4, producer queue 64 MiB (`KAFKA_PRODUCER_QUEUE_MAX_KBYTES`),
-    consumer prefetch 4 MiB; anything else via `KAFKA_EXTRA_PROPERTIES` /
-    `KAFKA_PRODUCER_/CONSUMER_EXTRA_PROPERTIES` (e.g. `{"debug":"broker"}`, or
-    `cooperative-sticky` — the whole group switches together). Topics are the
+  - Config (README "Kafka" has the whole table): lz4, cooperative-sticky,
+    `auto.offset.reset=earliest`; every buffer/message size is a named key the
+    builder always sets (producer queue 64 MiB, consumer prefetch and fetch
+    4 MiB) — `KAFKA_*_EXTRA_PROPERTIES` take anything else (e.g.
+    `{"debug":"broker"}`) but are refused for an owned property
+    (`reserved` in ENV_REGISTRY, exit 78). SASL_SSL with a private CA:
+    `examples/kafka-sasl-ssl/` (`just kafka-sasl-ssl-up`). Topics are the
     broker's call: the runner asks for its topics before subscribing (a
     consumer subscribed to a missing topic notices it only at the next 5-min
     metadata refresh), a provisioned cluster answers "exists" or refuses; a

@@ -21,11 +21,13 @@
     "clean:build": "rm -rf dist coverage tsconfig.tsbuildinfo"
   },
   "dependencies": {
-    "pg": "8.23.0"
+    "@base/config": "workspace:*",
+    "@base/database": "workspace:*",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@base/testing": "workspace:*",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.4",
     "@types/pg": "8.23.1",
     "typescript": "7.0.2"
   }

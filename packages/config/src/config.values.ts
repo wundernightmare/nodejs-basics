@@ -39,13 +39,16 @@ export class ConfigValueError extends Error {
     readonly key: string,
     readonly raw: string,
     expected: string,
+    // A JSON value may carry credentials (sasl.password in an escape hatch):
+    // its text is not repeated in the message.
+    shown = JSON.stringify(raw),
   ) {
-    super(`${key}=${JSON.stringify(raw)}: expected ${expected}`);
+    super(`${key}=${shown}: expected ${expected}`);
     this.name = "ConfigValueError";
   }
 }
 
-type Rule = Pick<EnvEntry, "key" | "min" | "max" | "values"> & { type: EnvType };
+type Rule = Pick<EnvEntry, "key" | "min" | "max" | "values" | "reserved"> & { type: EnvType };
 
 const DURATION = /^(?:\d+(?:\.\d+)?|(?:\d+(?:\.\d+)?(?:ms|s|m|h|d))+)$/u;
 
@@ -89,7 +92,16 @@ const PARSERS: Record<EnvType, (rule: Rule, raw: string, value: string) => Parse
       parsed = undefined;
     }
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
-      throw new ConfigValueError(rule.key, raw, "a JSON object");
+      throw new ConfigValueError(rule.key, raw, "a JSON object", "…");
+    for (const [property, owner] of Object.entries(rule.reserved ?? {})) {
+      if (Object.hasOwn(parsed, property))
+        throw new ConfigValueError(
+          rule.key,
+          raw,
+          `no ${JSON.stringify(property)} — set ${owner} instead`,
+          "…",
+        );
+    }
     return parsed;
   },
   enum(rule, raw, value) {

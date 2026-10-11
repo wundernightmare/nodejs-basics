@@ -55,7 +55,8 @@ log "start api on :$port (admin :$admin)"
   DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
   VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
   KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
-  PORT="$port" ADMIN_PORT="$admin" LOG_LEVEL="${LOG_LEVEL:-warn}" NODE_ENV=production OTEL_SERVICE_NAME=api \
+  PORT="$port" ADMIN_HOST=127.0.0.1 ADMIN_PORT="$admin" HTTP_SHUTDOWN_DELAY_MS=0 \
+  LOG_LEVEL="${LOG_LEVEL:-warn}" NODE_ENV=production OTEL_SERVICE_NAME=api \
   exec node --enable-source-maps "$entry") > "$root/.run/schemathesis-api.log" 2>&1 &
 pid=$!
 # SIGTERM → graceful shutdown (the e2e harness relies on the same path).
@@ -64,8 +65,8 @@ trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
 ready=0
 for _ in $(seq 1 150); do
   if ! kill -0 "$pid" 2>/dev/null; then break; fi
-  if command -v curl >/dev/null; then curl -fsS -o /dev/null "http://localhost:$admin/readyz" 2>/dev/null && ready=1 && break
-  else wget -q -O /dev/null "http://localhost:$admin/readyz" 2>/dev/null && ready=1 && break; fi
+  if command -v curl >/dev/null; then curl -fsS -o /dev/null "http://127.0.0.1:$admin/readyz" 2>/dev/null && ready=1 && break
+  else wget -q -O /dev/null "http://127.0.0.1:$admin/readyz" 2>/dev/null && ready=1 && break; fi
   sleep 0.2
 done
 if [ "$ready" != "1" ]; then

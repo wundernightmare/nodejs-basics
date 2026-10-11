@@ -8,6 +8,15 @@ import { resilientFetch } from "./resilient-fetch.js";
 
 const BASE = "http://tasks.test";
 
+function client(pool: MockPool): ResilientClient {
+  return new ResilientClient(BASE, {
+    passthrough4xx: true,
+    getRequestId: () => "req-7",
+    getRemainingMs: () => 2_000,
+    _dispatcher: pool,
+  });
+}
+
 describe("resilientFetch", () => {
   meta({
     epic: "nodejs-basics",
@@ -20,15 +29,6 @@ describe("resilientFetch", () => {
   afterEach(async () => {
     await agent.close();
   });
-
-  function client(pool: MockPool): ResilientClient {
-    return new ResilientClient(BASE, {
-      passthrough4xx: true,
-      getRequestId: () => "req-7",
-      getRemainingMs: () => 2_000,
-      _dispatcher: pool,
-    });
-  }
 
   it("sends a fetch Request through the client, with the request id and the budget", async () => {
     await testCase(

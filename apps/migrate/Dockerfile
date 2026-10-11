@@ -10,8 +10,9 @@
 # plus the SQL files, on distroless Node. Run it as a Kubernetes Job / init
 # container, or as the compose service the api waits for (docker/stack.yml).
 #
-# Runtime injection:
-#   DATABASE_URL   postgresql://user:pass@host:5432/db
+# Runtime injection (@base/config, like the apps — `--config-reference`):
+#   DATABASE_URL             postgresql://user@host:5432/db
+#   DATABASE_PASSWORD_FILE   a mounted Secret with the password (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 
 ARG NODE_VERSION=24

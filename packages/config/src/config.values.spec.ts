@@ -55,7 +55,8 @@ describe("typed config values", () => {
   ] as const)("rejects a %s %j", async (type, raw, expected) => {
     await testCase("NB-965", "a value that does not parse names the key and what it wants");
     expect(() => parseConfigValue({ key: "K", type, values: ["lz4"] }, raw)).toThrow(
-      `K=${JSON.stringify(raw)}: expected ${expected}`,
+      // A JSON value may carry credentials: its text is not repeated.
+      `K=${type === "json" ? "…" : JSON.stringify(raw)}: expected ${expected}`,
     );
   });
 

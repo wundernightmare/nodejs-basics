@@ -67,10 +67,16 @@ Then:
 - `curl http://localhost:9091/admin/config` — the effective config, secrets redacted
 - `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9091/admin/log-level?level=debug&ttl=30m'` — change
   log level live
+- `curl -X POST -o api.cpuprofile 'http://localhost:9091/debug/cpu-profile?seconds=10'` — a CPU profile
+  (Chrome DevTools → Performance → Load profile)
 
 The admin ports are the ones `just stack-up` publishes too (9091 api, 9093
 worker; `ADMIN_PORT` overrides), so both apps run side by side, 9090 stays free
 (Prometheus; Cockpit on Fedora), and Prometheus finds them either way.
+The admin listener binds `ADMIN_HOST` (every interface by default) and then
+needs `ADMIN_TOKEN` — without one the app refuses to start unless the host is
+loopback or `ADMIN_INSECURE=true`, which `just dev` and `docker/stack.yml` set
+(never in production).
 
 Optional observability stack:
 
@@ -306,6 +312,11 @@ also how a budget crosses services. Bodies over `HTTP_BODY_LIMIT_BYTES`
 (1 MiB) are a **413** problem. Both statuses are in the contract. Rate
 limiting is left to the gateway / ingress in front of the service.
 
+On SIGTERM `/readyz` turns 503 first, the api keeps serving for
+`HTTP_SHUTDOWN_DELAY_MS` (2 s — the time a load balancer needs to stop
+routing; 0 in tests and `just dev`), then stops accepting and drains, and the
+admin listener closes last.
+
 ### Outbox
 
 An event that must not be lost is written in the same transaction as the
@@ -334,6 +345,199 @@ reads request → Kafka → worker. Alert on `outbox_pending` (Grafana: "Outbox
 pending") and on any `outbox_dead`. Shutdown waits up to 5 s for a batch in
 flight.
 
+### Kafka
+
+One engine for every client: **librdkafka**, through
+`@confluentinc/kafka-javascript` and its kafkajs-compatible API (`@base/kafka`).
+`kafka-config.builder.ts` turns the `KAFKA_*` keys into raw librdkafka
+properties (the names in librdkafka's `CONFIGURATION.md`, so a platform team's
+settings map one to one). Kafka is on when `KAFKA_BROKERS` is set; the worker
+requires it.
+
+#### Keys, properties, defaults
+
+Every key is also a YAML path (`--config-reference` prints both).
+
+| Key | librdkafka property | Default | Why the default is safe |
+|---|---|---|---|
+| `KAFKA_BROKERS` | `metadata.broker.list` | — (off) | presence switches Kafka on; no localhost fallback |
+| `KAFKA_CLIENT_ID` | `client.id` (+ `-producer` / `-consumer-<group>`) | `OTEL_SERVICE_NAME` | each client is told apart in broker metrics and quotas |
+| `KAFKA_SECURITY_PROTOCOL` | `security.protocol` | librdkafka: `plaintext` | set per environment; see "TLS and SASL" |
+| `KAFKA_SASL_MECHANISM` / `_USERNAME` / `_PASSWORD` / `_PASSWORD_FILE` | `sasl.mechanism` / `sasl.username` / `sasl.password` | — | the file (a mounted Secret) wins and is read once |
+| `KAFKA_SSL_CA_LOCATION` / `KAFKA_SSL_CA_PEM` | `ssl.ca.location` | system trust store | a private CA as a file, or inline PEM written to `/tmp/kafka-ca.pem` |
+| `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM` | `ssl.endpoint.identification.algorithm` | librdkafka: `https` | the broker's hostname is verified against its certificate |
+| `KAFKA_REQUEST_TIMEOUT_MS` | `socket.timeout.ms` | librdkafka: 60000 | — |
+| `KAFKA_METADATA_MAX_AGE_MS` | `topic.metadata.refresh.interval.ms` | librdkafka: 300000 | — |
+| `KAFKA_RECONNECT_BACKOFF_MS` / `_MAX_MS` | `reconnect.backoff.ms` / `.max.ms` | librdkafka: 100 / 10000 | exponential, jittered |
+| — | `socket.keepalive.enable` | `true` | NATs and load balancers drop idle connections silently |
+| `KAFKA_STATISTICS_INTERVAL_MS` | `statistics.interval.ms` | 15000 | feeds the client metrics; 0 turns them off |
+| `KAFKA_MESSAGE_MAX_BYTES` | `message.max.bytes` | 1000000 | under the broker's 1 MiB `max.message.bytes`: too big fails locally as `rejected` |
+| `KAFKA_PRODUCER_ACKS` | `acks` | `all` | a record is acknowledged once every in-sync replica has it |
+| `KAFKA_PRODUCER_ENABLE_IDEMPOTENCE` | `enable.idempotence` | `true` | retries never duplicate or reorder within a partition |
+| `KAFKA_PRODUCER_COMPRESSION_TYPE` | `compression.type` | `lz4` | cheapest codec in CPU and latency; see "Compression" |
+| `KAFKA_PRODUCER_LINGER_MS` | `linger.ms` | 5 | small batches (better compression) for at most 5 ms of latency |
+| `KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS` | `message.timeout.ms` | 30000 | librdkafka retries within it, then send() fails `unavailable` |
+| `KAFKA_PRODUCER_QUEUE_MAX_KBYTES` | `queue.buffering.max.kbytes` | 65536 | 64 MiB instead of librdkafka's 1 GiB; see "Memory" |
+| `KAFKA_PRODUCER_QUEUE_MAX_MESSAGES` | `queue.buffering.max.messages` | 100000 | the count bound next to the byte bound |
+| `KAFKA_CONSUMER_AUTO_OFFSET_RESET` | `auto.offset.reset` | `earliest` | a new group reads the retained backlog instead of skipping it |
+| `KAFKA_CONSUMER_ENABLE_AUTO_COMMIT` | `enable.auto.commit` | `false` | the runner commits after `handle()`; see "Commits" |
+| `KAFKA_CONSUMER_ASSIGNMENT_STRATEGY` | `partition.assignment.strategy` | `cooperative-sticky` | incremental rebalances; see "Rebalance" |
+| `KAFKA_CONSUMER_SESSION_TIMEOUT_MS` | `session.timeout.ms` | 45000 | the Kafka default: a GC pause or node hiccup does not trigger a rebalance; a clean shutdown leaves the group at once |
+| `KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS` | `max.poll.interval.ms` | 300000 | the longest one `handle()` may take before the partition moves |
+| `KAFKA_CONSUMER_QUEUE_MAX_KBYTES` | `queued.max.messages.kbytes` | 4096 | 4 MiB of prefetch instead of 64 MiB |
+| — | `queued.min.messages` | 1000 | prefetch target in messages instead of 100000 |
+| `KAFKA_CONSUMER_FETCH_MAX_BYTES` | `fetch.max.bytes` (`receive.message.max.bytes` = +512) | 4194304 | one fetch response ≤ 4 MiB instead of 50 MB |
+| `KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES` | `max.partition.fetch.bytes` | 1048576 | one hot partition cannot fill a whole fetch |
+| — | `allow.auto.create.topics` | `true` | the client may ask; the broker decides (see "Topics") |
+| `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` | kafkajs-compat `partitionsConsumedConcurrently` | 1 | order holds per partition at any value |
+| `KAFKA_CONSUMER_MAX_RETRIES` | — (runner) | 5 | then the message is parked; see "Commits" |
+| `KAFKA_DEAD_LETTER_TOPIC` | — (runner) | `{topic}.dlq` | `none` keeps a failing message on its partition |
+| `KAFKA_EXTRA_PROPERTIES` / `KAFKA_PRODUCER_` / `KAFKA_CONSUMER_EXTRA_PROPERTIES` | anything else | — | applied last; see "Extra properties" |
+
+The loader checks the sizes against each other at start (exit 78):
+`fetch_max_bytes` ≥ `message_max_bytes`, `partition_fetch_max_bytes` ≤
+`fetch_max_bytes`.
+
+#### Memory: what librdkafka buffers
+
+librdkafka's defaults are sized for throughput on a dedicated host — a 1 GiB
+producer queue, 64 MiB of prefetch, 50 MB fetches. In a pod with a memory
+limit that is an OOM kill waiting for the first broker outage or backlog.
+Every size is therefore an explicit key, always set by the builder, and none
+can be set from an escape hatch.
+
+- **Producer.** send() puts a record on the local queue; librdkafka batches it
+  per partition, compresses the batch and keeps it until the broker
+  acknowledges it (or `message.timeout.ms` passes). Records in the queue and
+  in flight count against `queue.buffering.max.kbytes` and
+  `queue.buffering.max.messages` — whichever is hit first makes send() fail
+  with `queue_full` (waited out for up to `waitMs`, then back-pressure for the
+  caller; the outbox keeps the rows). Worst case ≈
+  `QUEUE_MAX_KBYTES` + brokers × in-flight requests (≤ 5 with idempotence) ×
+  `MESSAGE_MAX_BYTES` of compressed copies ≈ 64 MiB + 3 × 5 × 1 MB ≈ 80 MB
+  for three brokers.
+- **Consumer.** librdkafka prefetches into one local queue for all assigned
+  partitions until it holds `queued.min.messages` or
+  `queued.max.messages.kbytes`; each broker connection has at most one fetch
+  in flight, ≤ `fetch.max.bytes` (≤ `max.partition.fetch.bytes` per
+  partition). The kafkajs-compat layer then moves batches of ≤ 32 messages
+  per worker into the JS heap (about 1.5 s of consumption). Worst case ≈
+  `CONSUMER_QUEUE_MAX_KBYTES` + brokers × `FETCH_MAX_BYTES` + the JS batch ≈
+  4 MiB + 3 × 4 MiB ≈ 16 MB for three brokers. A consumer that handles one
+  message at a time gains nothing from more; raise them for throughput, with
+  the pod's memory limit.
+
+Watch `kafka.client.producer.queue.size` against
+`kafka.client.producer.queue.size.limit`.
+
+#### Compression
+
+`lz4` by default: the cheapest codec in CPU and latency, at a ratio close to
+the others for JSON events. `zstd` when bandwidth or broker disk is the
+constraint (best ratio, more CPU); `none` for payloads that are already
+compressed. A batch is compressed as a whole, so the ratio grows with the
+batch: `linger.ms` (5 ms) lets a few records share one; a producer that sends
+one record at a time compresses little whatever the codec. The broker keeps
+the producer's codec unless the topic's `compression.type` says otherwise.
+
+#### Delivery guarantees
+
+`acks=all` + `enable.idempotence=true`: a record is acknowledged once every
+in-sync replica has it, and librdkafka's retries can neither duplicate nor
+reorder it within a partition (it limits itself to ≤ 5 requests in flight).
+Pair it with the topic's `min.insync.replicas=2` (broker side) or `all` means
+"the one replica left". Retries are librdkafka's, within
+`message.timeout.ms`; after that send() fails with a `KafkaSendError` whose
+`kind` (`KAFKA_SEND_ERRORS` in `kafka-errors.ts`) says whether the same record
+can succeed later — only `rejected` (too large, invalid, refused by a broker
+policy) cannot. Events that must not be lost go through the outbox
+("Outbox"): written in the business transaction, sent at least once.
+
+#### Rebalance
+
+`cooperative-sticky` by default: when a member joins or leaves, only the
+partitions that change owner stop; the rest keep being consumed. The eager
+strategies (`roundrobin`, which the kafkajs-compat layer would pick, and
+`range`) stop the whole group on every deploy. A group runs one protocol —
+switching an existing group between cooperative and eager takes stopping all
+its members, or a new `group.id`; a mixed group fails to rebalance. A member
+is evicted after `session.timeout.ms` (45 s) without a heartbeat, or when one
+`handle()` runs longer than `max.poll.interval.ms` (5 min) — its partitions
+then go to another member, which handles the message again.
+
+#### Commits, retries and the dead-letter topic
+
+`KafkaConsumerRunner` commits a message — explicitly, offset + 1 — once
+`handle()` resolves, so nothing handled waits uncommitted: a revoked
+partition hands over at most the message in flight, which the new owner
+handles again (at least once; handlers are idempotent — the worker's job id is
+the event id). A handler that throws gets its partition paused and the message
+again after a backoff (1 s → 60 s); after `KAFKA_CONSUMER_MAX_RETRIES` (5)
+retries the message goes to the dead-letter topic `KAFKA_DEAD_LETTER_TOPIC`
+(`{topic}.dlq` — key, value and headers as consumed, plus `dlq_reason`,
+`dlq_error`, `dlq_source_topic` / `_partition` / `_offset`, `dlq_attempts`)
+and is committed, so one poison message costs its retries, not the
+partition. The handler says what retrying cannot fix — `KafkaPermanentError`
+(the worker: not JSON, breaks the contract) is parked at once — and what is
+not the message's fault: `KafkaBackpressureError` (the job queue is full or
+down) is waited out and never parked. Until the dead-letter topic exists, or
+with `none`, the message keeps its partition. Alert on
+`kafka.consumer.dead_lettered` (log: `kafka.dead_lettered`); replay a fixed
+batch by producing the dead-letter topic back to its source.
+
+#### TLS and SASL with your own CA
+
+`SASL_SSL` + `SCRAM-SHA-512`, the CA and the password as files mounted from
+a Secret — [`examples/kafka-sasl-ssl/`](examples/kafka-sasl-ssl/) has the
+certificates script, a local broker that accepts nothing else
+(`just kafka-sasl-ssl-up`), a Kubernetes ConfigMap + Secret, and an
+integration test that produces and consumes through it. mTLS (a client
+certificate) goes through `KAFKA_EXTRA_PROPERTIES`:
+`ssl.certificate.location` / `ssl.key.location`.
+
+#### Extra properties
+
+`KAFKA_EXTRA_PROPERTIES` (every client), then
+`KAFKA_PRODUCER_EXTRA_PROPERTIES` or `KAFKA_CONSUMER_EXTRA_PROPERTIES`, are
+applied last: any librdkafka property — a JSON object in env, a mapping in
+YAML (`kafka.consumer.extra_properties`). Use them for what has no key
+(`debug`, `fetch.wait.max.ms`, `batch.size`, mTLS files). The properties a key
+owns are refused at start (exit 78, naming the key): the sizes above
+(`message.max.bytes`, `queue.buffering.max.kbytes` / `.messages`,
+`queued.max.messages.kbytes`, `fetch.max.bytes`, `receive.message.max.bytes`,
+`max.partition.fetch.bytes` / `fetch.message.max.bytes`) and
+`partition.assignment.strategy` — one place per setting. They may carry
+credentials: `/admin/config` redacts them whole, and a config error never
+repeats their text.
+
+#### Topics
+
+Topics are the broker's policy, not the app's: the app never creates or
+configures them (partitions, retention, `min.insync.replicas`). The client
+may ask (`allow.auto.create.topics`, and the runner asks for its topics
+before subscribing — otherwise a consumer would notice a new topic only at
+the next 5-minute metadata refresh); a dev broker creates them
+(`docker/deps.yml`), a provisioned cluster refuses — then a send fails
+`not_provisioned` (retryable: it goes through once the topic exists). The
+dead-letter topics are provisioned like any other.
+
+#### Observability
+
+- Metrics come from librdkafka's statistics (`kafkaClientMetrics`,
+  `statistics.interval.ms`): `kafka.client.brokers.up`,
+  `kafka.client.request.errors`, `kafka.client.producer.queue.size` /
+  `.limit`, `kafka.client.consumer.lag.max` / `.sum`,
+  `kafka.client.consumer.rebalances`, plus the runner's
+  `kafka.consumer.dead_lettered`. No topic or partition labels — with
+  hundreds of topics that is a cardinality bomb; lag is the max and the sum.
+- Traces: `send()` makes a producer span and puts `traceparent` in the record
+  headers; the runner continues it in a `process` span, so a request, its
+  outbox row, the record and the worker's job are one trace.
+- Logs: librdkafka's go through `kafkaLogger`, repeats folded for 60 s
+  (`kafka.log.suppressed`); `debug` in `KAFKA_EXTRA_PROPERTIES` turns on its
+  debug contexts (`{"debug":"broker,protocol"}`).
+- What to do about each signal: [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
 ### Migrations
 
 The schema lives in `migrations/*.sql` — plain SQL, one file per change,
@@ -352,7 +556,13 @@ CONCURRENTLY on an existing table — unless the file carries
 just deps                      # compose up + just migrate
 just migrate                   # after adding a file
 docker run --rm -e DATABASE_URL=… nodejs-basics-migrate:dev   # the image
+node apps/migrate/dist/main.js --check-config                 # --help, --config-reference
 ```
+
+It is configured like the apps (`@base/config`: env > config.yaml > the
+registry, a bad value exits 78) and reads `DATABASE_URL`,
+`DATABASE_PASSWORD_FILE`, `DATABASE_SSL_MODE` and `DATABASE_APPLICATION_NAME`;
+its log lines carry the apps' envelope.
 
 Everything that needs a schema goes through it: `docker/stack.yml` (the api
 waits for the `migrate` service to exit 0 — how a Kubernetes Job / init
@@ -498,9 +708,9 @@ Default credentials: `app` / `app` for postgres. **Change before deploying.**
 | Service        | Image                                          | Port  |
 | -------------- | ---------------------------------------------- | ----- |
 | Jaeger v2      | `jaegertracing/jaeger:2.21.0`                  | 16686 |
-| Prometheus     | `prom/prometheus:v3.14.0`                      | 9090  |
-| Grafana        | `grafana/grafana:12.4.11`                      | 3001  |
-| OTel Collector | `otel/opentelemetry-collector-contrib:0.161.0` | 4317  |
+| Prometheus     | `prom/prometheus:v3.15.0`                      | 9090  |
+| Grafana        | `grafana/grafana:12.4.12`                      | 3001  |
+| OTel Collector | `otel/opentelemetry-collector-contrib:0.162.0` | 4317  |
 
 Images are pulled through `${DOCKER_HUB}` (default `docker.io`, see
 `.env.example`), like everything else in the repo.

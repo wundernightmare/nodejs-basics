@@ -92,7 +92,7 @@ describe("valkey config builder", () => {
       /JSON object/u,
     );
     expect(() => buildValkeyConfig(config({ VALKEY_EXTRA_PROPERTIES: "{" }))).toThrow(
-      'VALKEY_EXTRA_PROPERTIES="{": expected a JSON object',
+      "VALKEY_EXTRA_PROPERTIES=…: expected a JSON object",
     );
   });
 });
