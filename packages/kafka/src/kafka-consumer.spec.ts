@@ -5,23 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { meta, testCase } from "@base/testing";
 
-import { KafkaBackpressureError, KafkaConsumerRunner } from "./kafka-consumer.js";
+import {
+  KafkaBackpressureError,
+  KafkaConsumerRunner,
+  KafkaPermanentError,
+} from "./kafka-consumer.js";
+import type { KafkaProducerService } from "./kafka.provider.js";
 
 const logger = new AppLogger(pinoLogger.child({}, { level: "silent" })).child("test");
 
-/** A runner around `handle`, with a stand-in for the connected consumer. */
-function runner(handle: () => Promise<void> = () => Promise.resolve()): {
+/** A runner around `handle`, with a stand-in for the connected consumer (and a producer). */
+function runner(
+  handle: () => Promise<void> = () => Promise.resolve(),
+  dlq?: { send?: () => Promise<unknown>; config?: Record<string, string> },
+): {
   runner: KafkaConsumerRunner;
   commitOffsets: ReturnType<typeof vi.fn>;
+  send: ReturnType<typeof vi.fn>;
 } {
-  const r = new KafkaConsumerRunner(new ConfigService({}), logger, {
+  const send = vi.fn(dlq?.send ?? (() => Promise.resolve([])));
+  const r = new KafkaConsumerRunner(new ConfigService(dlq?.config ?? {}), logger, {
     groupId: "g",
     topics: ["t"],
     handle,
+    producer: dlq === undefined ? undefined : ({ send } as unknown as KafkaProducerService),
   });
   const commitOffsets = vi.fn(() => Promise.resolve());
   Object.assign(r, { consumer: { commitOffsets } });
-  return { runner: r, commitOffsets };
+  return { runner: r, commitOffsets, send };
 }
 
 function payload(
@@ -35,6 +46,15 @@ function payload(
     heartbeat: () => Promise.resolve(),
     pause: vi.fn(() => resume),
   };
+}
+
+// A keyed message carrying its own headers, one of them a stale dlq_* the DLQ must replace.
+function dlqCandidate(): KafkaJS.EachMessagePayload {
+  const p = payload();
+  p.message.key = Buffer.from("k");
+  p.message.value = Buffer.from("v");
+  p.message.headers = { traceparent: "tp", dlq_reason: "stale" };
+  return p;
 }
 
 const failing = (err: Error = new Error("down")): (() => Promise<void>) =>
@@ -92,6 +112,71 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     const h = runner();
     h.commitOffsets.mockRejectedValueOnce(new Error("rebalance in progress"));
     await expect(h.runner.handleMessage(payload())).resolves.toBeUndefined();
+  });
+
+  it("after KAFKA_CONSUMER_MAX_RETRIES parks the message on {topic}.dlq and commits it", async () => {
+    await testCase("NB-1019", "one poison message costs its retries, not the partition");
+    const h = runner(failing(new Error("boom")), {});
+    for (let i = 0; i < 5; i++) {
+      await expect(h.runner.handleMessage(dlqCandidate())).rejects.toThrow("boom");
+    }
+    expect(h.send).not.toHaveBeenCalled();
+    await expect(h.runner.handleMessage(dlqCandidate())).resolves.toBeUndefined(); // the 6th failure
+    expect(h.send).toHaveBeenCalledWith({
+      topic: "t.dlq",
+      messages: [
+        {
+          key: Buffer.from("k"),
+          value: Buffer.from("v"),
+          headers: {
+            traceparent: "tp",
+            dlq_reason: "retries_exhausted",
+            dlq_error: "boom",
+            dlq_source_topic: "t",
+            dlq_source_partition: "0",
+            dlq_source_offset: "7",
+            dlq_attempts: "6",
+          },
+        },
+      ],
+    });
+    expect(h.commitOffsets).toHaveBeenCalledWith([{ topic: "t", partition: 0, offset: "8" }]);
+  });
+
+  it("a permanent error is parked at once; back-pressure never is", async () => {
+    await testCase("NB-1020", "the handler says which failures retrying cannot fix");
+    const permanent = runner(failing(new KafkaPermanentError("not a task.created")), {});
+    await expect(permanent.runner.handleMessage(payload())).resolves.toBeUndefined();
+    expect(permanent.send.mock.calls[0]).toMatchObject([
+      { messages: [{ headers: { dlq_reason: "permanent", dlq_attempts: "1" } }] },
+    ]);
+
+    const busy = runner(failing(new KafkaBackpressureError("queue full")), {});
+    for (let i = 0; i < 10; i++) {
+      await expect(busy.runner.handleMessage(payload())).rejects.toThrow("queue full");
+    }
+    expect(busy.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps the message when it cannot be parked: send failed, `none`, or no producer", async () => {
+    await testCase("NB-1021", "nothing is skipped unless it reached the dead-letter topic");
+    const down = runner(failing(new KafkaPermanentError("bad")), {
+      send: () => Promise.reject(new Error("unknown topic")),
+    });
+    const p = payload();
+    await expect(down.runner.handleMessage(p)).rejects.toThrow("bad");
+    expect(p.pause).toHaveBeenCalledOnce();
+    expect(down.commitOffsets).not.toHaveBeenCalled();
+
+    const none = runner(failing(new KafkaPermanentError("bad")), {
+      config: { KAFKA_DEAD_LETTER_TOPIC: "none" },
+    });
+    await expect(none.runner.handleMessage(payload())).rejects.toThrow("bad");
+    expect(none.send).not.toHaveBeenCalled();
+
+    const plain = runner(failing(new KafkaPermanentError("bad")));
+    await expect(plain.runner.handleMessage(payload())).rejects.toThrow("bad");
+    expect(plain.commitOffsets).not.toHaveBeenCalled();
   });
 
   it("is not ready until it runs", async () => {

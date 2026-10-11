@@ -32,6 +32,10 @@ describe.skipIf(infra.skip)("apps/worker on Kafka + Postgres (integration)", () 
     process.env["APP_CONFIG_FILE"] = "absent.yaml";
     process.env["ADMIN_PORT"] = "0";
     process.env["LOG_LEVEL"] ??= "warn";
+    // About pg-boss, not the topic's history: a group that never committed
+    // on a long-lived dev broker would otherwise enqueue the whole backlog
+    // (auto.offset.reset defaults to earliest) and `waiting()` stays above 0.
+    process.env["KAFKA_CONSUMER_AUTO_OFFSET_RESET"] ??= "latest";
     await import("./instrumentation.js");
     const { WorkerModule } = await import("./worker.module.js");
     app = await NestFactory.createApplicationContext(WorkerModule, { logger: false });

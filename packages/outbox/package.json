@@ -33,7 +33,7 @@
     "@base/kafka": "workspace:*",
     "@base/logger": "workspace:*",
     "@opentelemetry/api": "1.9.1",
-    "pg": "8.23.0"
+    "pg": "8.23.1"
   },
   "peerDependencies": {
     "@nestjs/common": "12.x",

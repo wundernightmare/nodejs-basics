@@ -3,12 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TaskCreatedEvent } from "@base/contracts";
 import type { JobQueue } from "@base/jobs";
-import { KafkaBackpressureError } from "@base/kafka";
+import { KafkaBackpressureError, KafkaPermanentError } from "@base/kafka";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { ReadinessService } from "@base/observability";
 import { meta, testCase } from "@base/testing";
 
-import { JobQueueFullError, TaskEventsConsumer } from "./task-events.consumer.js";
+import {
+  JobQueueFullError,
+  JobQueueUnavailableError,
+  TaskEventsConsumer,
+} from "./task-events.consumer.js";
 
 const appLogger = new AppLogger(pinoLogger.child({}, { level: "silent" }));
 
@@ -64,23 +68,40 @@ describe("TaskEventsConsumer.handle", () => {
     expect(h.add.mock.calls[0]?.[1]).toBe(TASK_ID);
   });
 
-  it("skips a task.created that breaks the contract instead of enqueuing it", async () => {
+  it("dead-letters a task.created that breaks the contract instead of enqueuing it", async () => {
     await testCase("NB-1008", "an event without a valid id never becomes a job with a random id");
     const h = harness();
     const broken = { type: "task.created", title: "t", createdAt: "2026-01-01T00:00:00Z" };
-    await h.consumer.handle(event(JSON.stringify(broken)));
-    await h.consumer.handle(event(JSON.stringify({ ...broken, id: "not-a-nanoid" })));
+    for (const value of [broken, { ...broken, id: "not-a-nanoid" }]) {
+      await expect(h.consumer.handle(event(JSON.stringify(value)))).rejects.toBeInstanceOf(
+        KafkaPermanentError,
+      );
+    }
+    await expect(h.consumer.handle(event("not json"))).rejects.toThrow("undecodable");
     expect(h.add).not.toHaveBeenCalled();
   });
 
-  it("returns (so the runner commits and skips) for anything that is not a task.created", async () => {
-    await testCase("NB-901", "kafka consumer skips poison messages");
+  it("returns (so the runner commits and skips) for an event type that is not ours", async () => {
+    await testCase("NB-901", "kafka consumer skips other event types");
     const h = harness();
-    for (const value of ["not json", "null", "42", JSON.stringify({ type: "task.deleted" })]) {
+    for (const value of ["null", "42", JSON.stringify({ type: "task.deleted" })]) {
       await h.consumer.handle(event(value));
     }
     await h.consumer.handle(null);
     expect(h.add).not.toHaveBeenCalled();
+  });
+
+  it("a job queue that is down is back-pressure, not a bad event", async () => {
+    await testCase("NB-1022", "a Valkey / Postgres blip never dead-letters good events");
+    const h = harness();
+    h.waiting.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    await expect(h.consumer.handle(event(created))).rejects.toBeInstanceOf(
+      JobQueueUnavailableError,
+    );
+    h.add.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    const err = await h.consumer.handle(event(created)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KafkaBackpressureError);
+    expect((err as Error).cause).toEqual(new Error("ECONNREFUSED"));
   });
 
   it("pushes back while the job queue is full — read at most once a second", async () => {

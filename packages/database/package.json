@@ -12,6 +12,11 @@
       "source": "./src/index.ts",
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./connection-string": {
+      "source": "./src/connection-string.ts",
+      "types": "./src/connection-string.ts",
+      "import": "./dist/connection-string.js"
     }
   },
   "scripts": {
@@ -32,7 +37,7 @@
     "@base/logger": "workspace:*",
     "@base/resilience": "workspace:*",
     "@opentelemetry/api": "1.9.1",
-    "pg": "8.23.0"
+    "pg": "8.23.1"
   },
   "peerDependencies": {
     "@nestjs/common": "12.x",

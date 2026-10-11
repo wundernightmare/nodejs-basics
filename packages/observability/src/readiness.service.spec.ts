@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AppLogger, pinoLogger } from "@base/logger";
+import { testCase } from "@base/testing";
 
 import { type ReadinessCheck, ReadinessService } from "./readiness.service.js";
 
@@ -59,10 +60,27 @@ describe("ReadinessService", () => {
 
   it("closing the gate (beforeApplicationShutdown) makes it not_ready regardless of checks", async () => {
     const s = service([ok]);
-    s.beforeApplicationShutdown("SIGTERM");
+    await s.beforeApplicationShutdown("SIGTERM");
     expect(s.isReady).toBe(false);
     expect((await s.check()).status).toBe("not_ready");
     s.setReady(true);
     expect((await s.check()).status).toBe("ok");
+  });
+
+  it("keeps serving for HTTP_SHUTDOWN_DELAY_MS after the gate closes", async () => {
+    await testCase("NB-1016", "load balancers see not_ready before the api stops listening");
+    const saved = process.env["HTTP_SHUTDOWN_DELAY_MS"];
+    process.env["HTTP_SHUTDOWN_DELAY_MS"] = "150";
+    try {
+      const s = service([ok]);
+      const started = performance.now();
+      const closing = s.beforeApplicationShutdown("SIGTERM");
+      expect((await s.check()).status).toBe("not_ready"); // at once, while the delay runs
+      await closing;
+      expect(performance.now() - started).toBeGreaterThanOrEqual(140);
+    } finally {
+      if (saved === undefined) delete process.env["HTTP_SHUTDOWN_DELAY_MS"];
+      else process.env["HTTP_SHUTDOWN_DELAY_MS"] = saved;
+    }
   });
 });

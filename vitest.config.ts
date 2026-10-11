@@ -49,6 +49,9 @@ export default defineConfig({
     setupFiles: underStryker ? [] : ["allure-vitest/setup"],
     // No retries: a flake is reported (Allure), never hidden behind a re-run.
     retry: 0,
+    // What a test process is: the admin listener on loopback (no token needed),
+    // no load-balancer grace period when an app under test closes.
+    env: { ADMIN_HOST: "127.0.0.1", HTTP_SHUTDOWN_DELAY_MS: "0" },
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts"],

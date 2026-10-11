@@ -135,6 +135,8 @@ export interface LoadOptions {
   defaults?: Readonly<Record<string, string>>;
   /** Integrations this app cannot run without (the rest are optional). */
   requires?: readonly Integration[];
+  /** The app runs the admin listener, so the ADMIN_* rules apply. Default true. */
+  admin?: boolean;
 }
 
 /** Where output goes: stdout (1) or stderr (2). */
@@ -168,25 +170,40 @@ export function loadConfigOrExit(options: LoadOptions = {}, write: Write = write
   } catch (err) {
     write(
       2,
-      `${JSON.stringify({
-        "@timestamp": new Date().toISOString(),
-        "log.level": "fatal",
-        message: err instanceof Error ? err.message : String(err),
+      envelopeLine("fatal", err instanceof Error ? err.message : String(err), {
         "event.action": "config.invalid",
-        // The envelope every line carries (docs/log-envelope.schema.json) — as
-        // @base/logger writes it, which cannot be loaded yet.
-        "ecs.version": "8.11.0",
-        "service.name":
-          process.env["OTEL_SERVICE_NAME"] ?? options.defaults?.["OTEL_SERVICE_NAME"] ?? "app",
-        "service.version":
-          process.env["SERVICE_VERSION"] ?? process.env["npm_package_version"] ?? "dev",
-        "service.environment": process.env["NODE_ENV"] ?? "development",
-        "process.pid": process.pid,
-        "host.hostname": hostname(),
-      })}\n`,
+        ...(process.env["OTEL_SERVICE_NAME"] === undefined
+          ? { "service.name": options.defaults?.["OTEL_SERVICE_NAME"] ?? "app" }
+          : {}),
+      }),
     );
     process.exit(78);
   }
+}
+
+/**
+ * One JSON log line with the envelope every line carries
+ * (docs/log-envelope.schema.json) — as @base/logger writes it, for code that
+ * runs before it can be loaded (a config error) or without it (apps/migrate).
+ */
+export function envelopeLine(
+  level: "info" | "warn" | "error" | "fatal",
+  message: string,
+  fields: Record<string, unknown> = {},
+): string {
+  return `${JSON.stringify({
+    "@timestamp": new Date().toISOString(),
+    "log.level": level,
+    message,
+    "ecs.version": "8.11.0",
+    "service.name": process.env["OTEL_SERVICE_NAME"] ?? "app",
+    "service.version":
+      process.env["SERVICE_VERSION"] ?? process.env["npm_package_version"] ?? "dev",
+    "service.environment": process.env["NODE_ENV"] ?? "development",
+    "process.pid": process.pid,
+    "host.hostname": hostname(),
+    ...fields,
+  })}\n`;
 }
 
 function load(options: LoadOptions): Record<string, unknown> {
@@ -228,6 +245,7 @@ function load(options: LoadOptions): Record<string, unknown> {
   problems.push(
     ...invalidValues(),
     ...missingRequiredKeys(),
+    ...(options.admin === false ? [] : adminProblems()),
     ...integrationProblems(
       options.requires ?? [],
       (key) => sources.get(key) === "env" || sources.get(key) === "yaml",
@@ -257,6 +275,25 @@ function applyDefaults(appDefaults: Readonly<Record<string, string>>): void {
   }
 }
 
+/**
+ * The admin listener changes the log level and dumps the heap: on an address
+ * other processes can reach it needs a token — or an explicit
+ * ADMIN_INSECURE=true (local development, docker/stack.yml).
+ */
+function adminProblems(): string[] {
+  const host = process.env["ADMIN_HOST"] ?? "";
+  if ((process.env["ADMIN_TOKEN"] ?? "") !== "" || isLoopback(host)) return [];
+  if (/^(?:true|1)$/iu.test(process.env["ADMIN_INSECURE"] ?? "")) return [];
+  return [
+    `ADMIN_TOKEN is empty and ADMIN_HOST ${JSON.stringify(host)} is not loopback: set a ` +
+      "token, or ADMIN_INSECURE=true for local development",
+  ];
+}
+
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/u.test(host);
+}
+
 function missingRequiredKeys(): string[] {
   return ENV_REGISTRY.filter((e) => e.required && process.env[e.key] === undefined).map(
     (e) => `${e.key} is required (set it in the environment or in the YAML file)`,
@@ -279,7 +316,24 @@ function invalidValues(): string[] {
       problems.push(`${err.message}${from}`);
     }
   }
-  return problems;
+  return problems.length > 0 ? problems : relativeBounds();
+}
+
+/** atLeast / atMost: bounds by another key's value — once every value parses. */
+function relativeBounds(): string[] {
+  return ENV_REGISTRY.flatMap(({ key, atLeast, atMost }) => {
+    const value = Number(process.env[key]);
+    if (process.env[key] === undefined || Number.isNaN(value)) return [];
+    const bound = (other: string | undefined, ok: (o: number) => boolean, word: string) => {
+      if (other === undefined || process.env[other] === undefined) return [];
+      const o = Number(process.env[other]);
+      return Number.isNaN(o) || ok(o) ? [] : [`${key}=${value} must be ${word} ${other}=${o}`];
+    };
+    return [
+      ...bound(atLeast, (o) => value >= o, "at least"),
+      ...bound(atMost, (o) => value <= o, "at most"),
+    ];
+  });
 }
 
 const REGISTERED = new Set(ENV_REGISTRY.map((e) => e.key));

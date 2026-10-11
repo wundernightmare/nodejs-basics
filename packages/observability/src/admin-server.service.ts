@@ -17,10 +17,12 @@
  *   DELETE /admin/log-level  Revert to the base level now                        — auth
  *   POST   /debug/heapdump   Capture a V8 heap snapshot        (if HeapSnapshotService)  — auth
  *   POST   /debug/report     Diagnostic report + heap snapshot (if CrashReportService)   — auth
+ *   POST   /debug/cpu-profile ?seconds=10 (1..60) — a .cpuprofile of the process            — auth
  *
  * auth: `Authorization: Bearer <ADMIN_TOKEN>` (constant-time compare) when
- * ADMIN_TOKEN is set; an empty token leaves the mutations open (local /
- * compose default) and the listening log line says `auth=off`.
+ * ADMIN_TOKEN is set. Without a token the config loader refuses to start
+ * unless ADMIN_HOST is loopback or ADMIN_INSECURE=true (local development,
+ * docker/stack.yml); the listening log line then says `auth=off`.
  *
  * Errors are RFC 9457 application/problem+json — including 404 for unknown
  * routes and 405 (+ Allow) for known routes with the wrong method. Every
@@ -39,7 +41,7 @@ import {
   Optional,
 } from "@nestjs/common";
 
-import { processEnv, readInt } from "@base/config";
+import { processEnv, readInt, readString } from "@base/config";
 import {
   AppLogger,
   ecsError,
@@ -57,6 +59,7 @@ import {
 
 import { type BearerGuard, requireBearer } from "./admin-auth.js";
 import { writeProblem } from "./admin-problem.js";
+import { captureCpuProfile } from "./cpu-profile.js";
 import { CrashReportService } from "./crash-report.service.js";
 import { HeapSnapshotService } from "./heap-snapshot.service.js";
 import { ReadinessService } from "./readiness.service.js";
@@ -74,6 +77,10 @@ export interface AdminServerOptions {
   /** Raw effective config for GET /admin/config (configSnapshot from @base/config). */
   configSnapshot?: (() => ConfigView) | undefined;
 }
+
+/** POST /debug/cpu-profile: default and longest sampling time. */
+const CPU_PROFILE_DEFAULT_SECONDS = 10;
+const CPU_PROFILE_MAX_SECONDS = 60;
 
 /** Process start, for /version. */
 const STARTED_AT = new Date(Date.now() - process.uptime() * 1_000);
@@ -126,6 +133,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
 
   async onApplicationBootstrap(): Promise<void> {
     const port = readInt(processEnv, "ADMIN_PORT");
+    const host = readString(processEnv, "ADMIN_HOST");
 
     const server = http.createServer((req, res) => {
       this.handleRequest(req, res);
@@ -134,7 +142,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
 
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(port, "0.0.0.0", () => {
+      server.listen(port, host, () => {
         const routes = [...this.routes.entries()].map(
           ([path, methods]) => `${Object.keys(methods).join("|")} ${path}`,
         );
@@ -231,6 +239,9 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         POST: { handler: (ctx) => this.report(ctx, crashReport), auth: true },
       });
     }
+    routes.set("/debug/cpu-profile", {
+      POST: { handler: (ctx) => this.cpuProfile(ctx), auth: true },
+    });
     return routes;
   }
 
@@ -447,6 +458,40 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         instance: url.pathname,
       });
     }
+  }
+
+  /** POST /debug/cpu-profile?seconds=N — samples for N seconds, answers with the profile. */
+  private async cpuProfile({ res, url, client }: AdminContext): Promise<void> {
+    const raw = url.searchParams.get("seconds") ?? String(CPU_PROFILE_DEFAULT_SECONDS);
+    const seconds = /^\d+$/u.test(raw) ? Number(raw) : Number.NaN;
+    if (!(seconds >= 1 && seconds <= CPU_PROFILE_MAX_SECONDS)) {
+      writeProblem(res, {
+        status: 400,
+        detail: `seconds must be a whole number from 1 to ${CPU_PROFILE_MAX_SECONDS}`,
+        instance: url.pathname,
+      });
+      return;
+    }
+    const profile = await captureCpuProfile(seconds * 1_000);
+    if (profile === null) {
+      writeProblem(res, {
+        status: 409,
+        detail: "another CPU profile is being taken",
+        instance: url.pathname,
+      });
+      return;
+    }
+    this.logger.info(
+      {
+        "event.action": "cpu_profile.captured",
+        "event.duration_ms": seconds * 1_000,
+        "client.address": client,
+      },
+      "CPU profile captured",
+    );
+    const file = `${serviceIdentity.name}-${new Date().toISOString().replaceAll(":", "-")}.cpuprofile`;
+    res.setHeader("Content-Disposition", `attachment; filename="${file}"`);
+    this.sendJson(res, 200, profile);
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────
