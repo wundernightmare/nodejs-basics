@@ -323,10 +323,13 @@ export class KafkaConsumerRunner {
       dlq_attempts: String(failed),
     });
     try {
-      await producer.send({
-        topic: deadLetterTopic,
-        messages: [{ key: message.key, value: message.value, headers }],
-      });
+      await producer.send(
+        {
+          topic: deadLetterTopic,
+          messages: [{ key: message.key, value: message.value, headers }],
+        },
+        { client: "consumer" },
+      );
     } catch (sendErr) {
       this.logger.warn(
         { ...ecsError(sendErr), "kafka.topic": topic, "kafka.dead_letter_topic": deadLetterTopic },

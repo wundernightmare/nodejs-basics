@@ -180,15 +180,26 @@ describe("KafkaProducerService", () => {
       await vi.advanceTimersByTimeAsync(0);
       await svc.send({ topic: "t", messages: [{ value: "a" }, { value: "b" }] }, { waitMs: 0 });
       const text = await capture.scrape();
-      expect(metricValue(text, "kafka_producer_records_total", { topic: "t", result: "ok" })).toBe(
-        2,
-      );
       expect(
-        metricValue(text, "kafka_producer_records_total", { topic: "t", result: "not_connected" }),
+        metricValue(text, "kafka_producer_records_total", {
+          client: "producer",
+          topic: "t",
+          result: "ok",
+        }),
+      ).toBe(2);
+      expect(
+        metricValue(text, "kafka_producer_records_total", {
+          client: "producer",
+          topic: "t",
+          result: "not_connected",
+        }),
       ).toBe(1);
-      expect(metricValue(text, "kafka_producer_send_duration_seconds_count", { topic: "t" })).toBe(
-        2,
-      );
+      expect(
+        metricValue(text, "kafka_producer_send_duration_seconds_count", {
+          client: "producer",
+          topic: "t",
+        }),
+      ).toBe(2);
     } finally {
       await capture.stop();
     }

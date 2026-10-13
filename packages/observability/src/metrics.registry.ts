@@ -143,8 +143,8 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
   {
     name: "kafka_producer_records_total",
     kind: "Counter",
-    labels: ["topic", "result"],
-    description: "Records sent, by topic and result (ok, or the KafkaSendError kind).",
+    labels: ["client", "topic", "result"],
+    description: "Records sent, by client, topic and result (ok, or the KafkaSendError kind).",
     watch:
       "result other than ok: the broker is down or slow (not_connected, queue_full, unavailable) or refuses the record (rejected).",
     source: "packages/kafka",
@@ -153,8 +153,9 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     name: "kafka_producer_send_duration_seconds",
     kind: "Histogram",
     unit: "s",
-    labels: ["topic"],
-    description: "Time from send() to the broker's acknowledgement (or failure), by topic.",
+    labels: ["client", "topic"],
+    description:
+      "Time from send() to the broker's acknowledgement (or failure), by client and topic.",
     source: "packages/kafka",
   },
   {

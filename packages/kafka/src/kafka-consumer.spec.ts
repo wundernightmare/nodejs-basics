@@ -122,24 +122,27 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     }
     expect(h.send).not.toHaveBeenCalled();
     await expect(h.runner.handleMessage(dlqCandidate())).resolves.toBeUndefined(); // the 6th failure
-    expect(h.send).toHaveBeenCalledWith({
-      topic: "t.dlq",
-      messages: [
-        {
-          key: Buffer.from("k"),
-          value: Buffer.from("v"),
-          headers: {
-            traceparent: "tp",
-            dlq_reason: "retries_exhausted",
-            dlq_error: "boom",
-            dlq_source_topic: "t",
-            dlq_source_partition: "0",
-            dlq_source_offset: "7",
-            dlq_attempts: "6",
+    expect(h.send).toHaveBeenCalledWith(
+      {
+        topic: "t.dlq",
+        messages: [
+          {
+            key: Buffer.from("k"),
+            value: Buffer.from("v"),
+            headers: {
+              traceparent: "tp",
+              dlq_reason: "retries_exhausted",
+              dlq_error: "boom",
+              dlq_source_topic: "t",
+              dlq_source_partition: "0",
+              dlq_source_offset: "7",
+              dlq_attempts: "6",
+            },
           },
-        },
-      ],
-    });
+        ],
+      },
+      { client: "consumer" }, // counted as the consumer's send, as in golang-basics
+    );
     expect(h.commitOffsets).toHaveBeenCalledWith([{ topic: "t", partition: 0, offset: "8" }]);
   });
 
@@ -149,6 +152,7 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     await expect(permanent.runner.handleMessage(payload())).resolves.toBeUndefined();
     expect(permanent.send.mock.calls[0]).toMatchObject([
       { messages: [{ headers: { dlq_reason: "permanent", dlq_attempts: "1" } }] },
+      { client: "consumer" },
     ]);
 
     const busy = runner(failing(new KafkaBackpressureError("queue full")), {});

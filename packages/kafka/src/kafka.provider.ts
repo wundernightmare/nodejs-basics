@@ -33,6 +33,12 @@ export interface KafkaSendOptions {
    * (a caller with its own retry loop, like the outbox relay).
    */
   waitMs?: number;
+  /**
+   * Which side of the app sends, for the `client` label of the producer
+   * metrics: `producer` (default) for the app's own records, `consumer` for
+   * the consumer's dead-letter sends — the same label golang-basics carries.
+   */
+  client?: "producer" | "consumer";
 }
 
 /**
@@ -52,11 +58,12 @@ export interface KafkaSendOptions {
  *     its metadata request (up to 30 s) before it can disconnect, and Nest
  *     ends the process once the close hooks return.
  *
- * Every send() counts its messages in kafka_producer_records_total{topic,
- * result} (result: ok, or the KafkaSendError kind) and its time to the
+ * Every send() counts its messages in kafka_producer_records_total{client,
+ * topic, result} (result: ok, or the KafkaSendError kind) and its time to the
  * broker's ack — back-pressure waits included — in
- * kafka_producer_send_duration_seconds{topic}. The consumer's dead-letter
- * sends go through here too (topic = the dead-letter topic).
+ * kafka_producer_send_duration_seconds{client,topic}. The consumer's
+ * dead-letter sends go through here too (client="consumer", topic = the
+ * dead-letter topic).
  */
 @Injectable()
 @Global()
@@ -66,12 +73,13 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
   private readonly records = metrics
     .getMeter("kafka")
     .createCounter("kafka_producer_records_total", {
-      description: "Records sent, by topic and result (ok, or the KafkaSendError kind).",
+      description: "Records sent, by client, topic and result (ok, or the KafkaSendError kind).",
     });
   private readonly sendDuration = metrics
     .getMeter("kafka")
     .createHistogram("kafka_producer_send_duration_seconds", {
-      description: "Time from send() to the broker's acknowledgement (or failure), by topic.",
+      description:
+        "Time from send() to the broker's acknowledgement (or failure), by client and topic.",
       unit: "s",
       advice: { explicitBucketBoundaries: KAFKA_LATENCY_BUCKETS_SECONDS },
     });
@@ -119,9 +127,13 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     options: KafkaSendOptions = {},
   ): Promise<KafkaJS.RecordMetadata[]> {
     const started = performance.now();
+    const client = options.client ?? "producer";
     const count = (result: string): void => {
-      this.sendDuration.record((performance.now() - started) / 1000, { topic: record.topic });
-      this.records.add(record.messages.length, { topic: record.topic, result });
+      this.sendDuration.record((performance.now() - started) / 1000, {
+        client,
+        topic: record.topic,
+      });
+      this.records.add(record.messages.length, { client, topic: record.topic, result });
     };
     try {
       const metadata = await this.sendWaiting(record, options);
