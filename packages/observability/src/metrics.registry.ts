@@ -355,6 +355,22 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/observability",
   },
   {
+    name: "process_open_fds",
+    kind: "ObservableGauge",
+    labels: [],
+    description: "Open file descriptors (sockets included).",
+    watch:
+      "Approaching process_max_fds: a connection or file leak — new sockets fail with EMFILE. Linux only.",
+    source: "packages/observability",
+  },
+  {
+    name: "process_max_fds",
+    kind: "ObservableGauge",
+    labels: [],
+    description: "The process's open file descriptor limit (soft RLIMIT_NOFILE).",
+    source: "packages/observability",
+  },
+  {
     name: "process_resident_memory_bytes",
     kind: "ObservableGauge",
     unit: "By",
@@ -404,6 +420,15 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     description: "Event loop delay over the last 10 s window, by quantile (0.5, 0.99, max).",
     watch:
       "quantile=0.99 above ~0.1: something blocks the event loop — every request waits for it.",
+    source: "packages/observability",
+  },
+  {
+    name: "nodejs_eventloop_utilization",
+    kind: "ObservableGauge",
+    labels: [],
+    description: "Share of the last 10 s window the event loop was busy (0..1).",
+    watch:
+      "Near 1: the loop is saturated (CPU-bound) — scale out or move the work off the loop; delay rises with it.",
     source: "packages/observability",
   },
   {

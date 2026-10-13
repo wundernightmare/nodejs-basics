@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { captureMetrics, meta, type MetricsCapture, metricValue, testCase } from "@base/testing";
 
-import { EVENT_LOOP_WINDOW_MS, registerNodeMetrics } from "./node-metrics.js";
+import { mkdtempSync, openSync, closeSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { EVENT_LOOP_WINDOW_MS, maxFds, openFds, registerNodeMetrics } from "./node-metrics.js";
 
 const noop = (): void => {};
 
@@ -74,5 +78,61 @@ describe("process and runtime metrics", () => {
     const b = await capture.scrape();
     expect(p99(a)).toBeGreaterThan(0);
     expect(p99(b)).toBe(p99(a));
+  });
+
+  it("event loop utilization is a 0..1 share over the same fixed window", async () => {
+    await testCase("NB-1060", "nodejs_eventloop_utilization: how busy the loop was");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    stop = registerNodeMetrics(metrics.getMeter("nodejs"), { version: "v", revision: "r" });
+    const until = Date.now() + 30;
+    while (Date.now() < until) {
+      // keep the loop busy
+    }
+    vi.advanceTimersByTime(EVENT_LOOP_WINDOW_MS);
+    const a = metricValue(await capture.scrape(), "nodejs_eventloop_utilization");
+    const b = metricValue(await capture.scrape(), "nodejs_eventloop_utilization");
+    expect(a).toBeGreaterThan(0);
+    expect(a).toBeLessThanOrEqual(1);
+    expect(b).toBe(a); // a second scraper sees the same window
+  });
+
+  it.runIf(process.platform === "linux")(
+    "open and max file descriptors, from /proc (Linux)",
+    async () => {
+      await testCase("NB-1061", "process_open_fds / process_max_fds track the process's fds");
+      stop = registerNodeMetrics(metrics.getMeter("nodejs"), { version: "v", revision: "r" });
+      const before = metricValue(await capture.scrape(), "process_open_fds");
+      const dir = mkdtempSync(join(tmpdir(), "fds-"));
+      const fds = [0, 1, 2].map((i) => openSync(join(dir, String(i)), "w"));
+      try {
+        const text = await capture.scrape();
+        expect(metricValue(text, "process_open_fds")).toBeGreaterThanOrEqual(before + 3);
+        expect(metricValue(text, "process_max_fds")).toBeGreaterThan(
+          metricValue(text, "process_open_fds"),
+        );
+      } finally {
+        for (const fd of fds) closeSync(fd);
+        rmSync(dir, { recursive: true });
+      }
+    },
+  );
+
+  it("fd helpers: the readdir's own fd is not counted; limits text parsed", async () => {
+    await testCase("NB-1062", "process_max_fds is the soft limit; unlimited is not a number");
+    const dir = mkdtempSync(join(tmpdir(), "fake-fd-"));
+    try {
+      for (const n of ["0", "1", "2", "3"]) closeSync(openSync(join(dir, n), "w"));
+      expect(openFds(dir)).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+    const limits = [
+      "Limit                     Soft Limit           Hard Limit           Units",
+      "Max processes             127368               127368               processes",
+      "Max open files            1024                 524288               files",
+    ].join("\n");
+    expect(maxFds(limits)).toBe(1024);
+    expect(maxFds(limits.replace("1024 ", "unlimited "))).toBeUndefined();
+    expect(maxFds("nothing here")).toBeUndefined();
   });
 });

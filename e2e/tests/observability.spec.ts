@@ -30,31 +30,43 @@ function ruleExprs(): string[] {
   return out;
 }
 
-/** Every PromQL expression of the dashboard's panels. */
+/** Every PromQL expression of every provisioned dashboard's panels. */
 function dashboardExprs(): string[] {
-  const text = fs.readFileSync(
-    path.join(ROOT, "docker/grafana/dashboards/nodejs-basics.json"),
-    "utf8",
-  );
-  return [...text.matchAll(/"expr":\s*"((?:[^"\\]|\\.)*)"/gu)].map(
-    (m) => JSON.parse(`"${m[1] ?? ""}"`) as string,
-  );
+  const dir = path.join(ROOT, "docker/grafana/dashboards");
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .flatMap((f) => {
+      const text = fs.readFileSync(path.join(dir, f), "utf8");
+      return [...text.matchAll(/"expr":\s*"((?:[^"\\]|\\.)*)"/gu)].map(
+        (m) => JSON.parse(`"${m[1] ?? ""}"`) as string,
+      );
+    });
 }
 
 /**
  * The metric names an expression reads: label matchers, `by (…)` groupings
  * and strings removed, then every identifier with an underscore that is not
  * a function call. Broker metrics (redpanda_*) come from the broker.
+ * process_open_fds / process_max_fds exist on Linux only — where e2e runs.
  */
 function metricNames(expr: string): string[] {
   const bare = expr
     .replaceAll(/"(?:[^"\\]|\\.)*"/gu, "")
     .replaceAll(/\{[^}]*\}/gu, "")
+    .replaceAll(/\[[^\]]*\]/gu, "") // range windows ($__rate_interval)
     .replaceAll(/\b(?:by|without|on|ignoring)\s*\([^)]*\)/gu, "");
   return [...bare.matchAll(/\b([a-z_][a-z0-9_]*)\b(?!\s*\()/gu)]
     .map((m) => m[1] ?? "")
-    .filter((n) => n.includes("_") && !n.startsWith("redpanda_"));
+    .filter((n) => n.includes("_") && !n.startsWith("redpanda_") && !ON_EVENT_ONLY.has(n));
 }
+
+/**
+ * Labelled counters that get a series only when their event happens (a failed
+ * query); the happy-path traffic below never makes one. Their names are still
+ * checked against the registry by packages/observability dashboards.spec.ts.
+ */
+const ON_EVENT_ONLY = new Set(["db_query_errors_total"]);
 
 test.describe("observability contract", () => {
   test("every app metric the alert rules and the dashboard read is on a live /metrics", async ({

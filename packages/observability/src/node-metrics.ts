@@ -4,11 +4,22 @@
  * cumulative counters. OTel observable instruments, so the values flow
  * through the shared MeterProvider to the Prometheus exporter.
  *
- * The event-loop delay is summarised over a fixed window on a timer, not per
- * collect: a scrape (or a curl of /metrics) never empties another scraper's
- * window.
+ * The event-loop delay and utilization are summarised over a fixed window on
+ * a timer, not per collect: a scrape (or a curl of /metrics) never empties
+ * another scraper's window.
+ *
+ * File descriptors (process_open_fds / process_max_fds) are read from /proc,
+ * so they exist on Linux only — where the services run; elsewhere they are
+ * not registered rather than reported as 0.
  */
-import { constants, monitorEventLoopDelay, PerformanceObserver } from "node:perf_hooks";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  constants,
+  monitorEventLoopDelay,
+  type EventLoopUtilization,
+  performance,
+  PerformanceObserver,
+} from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
 
 import type { Meter } from "@opentelemetry/api";
@@ -22,6 +33,19 @@ const GC_KIND: Record<number, string> = {
   [constants.NODE_PERFORMANCE_GC_INCREMENTAL]: "incremental",
   [constants.NODE_PERFORMANCE_GC_WEAKCB]: "weakcb",
 };
+
+/** Open file descriptors of this process (the readdir's own fd excluded). */
+export function openFds(dir = "/proc/self/fd"): number {
+  return readdirSync(dir).length - 1;
+}
+
+/** The soft "Max open files" limit from a /proc/<pid>/limits text, or undefined. */
+export function maxFds(limits: string): number | undefined {
+  const soft = /^Max open files\s+(\S+)/mu.exec(limits)?.[1];
+  if (soft === undefined || soft === "unlimited") return undefined;
+  const n = Number(soft);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 export interface BuildIdentity {
   version: string;
@@ -73,6 +97,25 @@ export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => v
     result.observe(startedAt);
   });
 
+  // ─── File descriptors (Linux) ───────────────────────────────────────────────
+
+  if (process.platform === "linux" && existsSync("/proc/self/fd")) {
+    const open = meter.createObservableGauge("process_open_fds", {
+      description: "Open file descriptors (sockets included).",
+    });
+    const max = meter.createObservableGauge("process_max_fds", {
+      description: "The process's open file descriptor limit (soft RLIMIT_NOFILE).",
+    });
+    meter.addBatchObservableCallback(
+      (result) => {
+        result.observe(open, openFds());
+        const limit = maxFds(readFileSync("/proc/self/limits", "utf8"));
+        if (limit !== undefined) result.observe(max, limit);
+      },
+      [open, max],
+    );
+  }
+
   // ─── Memory ────────────────────────────────────────────────────────────────
 
   const rss = meter.createObservableGauge("process_resident_memory_bytes", {
@@ -118,9 +161,17 @@ export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => v
     p99: histogram.percentile(99) / 1e9,
     max: histogram.max / 1e9,
   });
+  // Event loop utilization: the share of the window the loop spent running
+  // JavaScript (or native callbacks) rather than idle in the poll phase.
+  const started = performance.eventLoopUtilization();
+  let eluMark: EventLoopUtilization = started;
+  let elu: number | undefined;
   const roll = (): void => {
     if (histogram.count > 0) window = summary();
     histogram.reset();
+    const now = performance.eventLoopUtilization();
+    elu = performance.eventLoopUtilization(now, eluMark).utilization;
+    eluMark = now;
   };
   const timer = setInterval(roll, EVENT_LOOP_WINDOW_MS);
   timer.unref();
@@ -136,6 +187,14 @@ export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => v
     result.observe(w.p50, { quantile: "0.5" });
     result.observe(w.p99, { quantile: "0.99" });
     result.observe(w.max, { quantile: "max" });
+  });
+
+  const utilization = meter.createObservableGauge("nodejs_eventloop_utilization", {
+    description: "Share of the last 10 s window the event loop was busy (0..1).",
+  });
+  utilization.addCallback((result) => {
+    // Before the first window closes: since start.
+    result.observe(elu ?? performance.eventLoopUtilization(started).utilization);
   });
 
   // ─── GC ────────────────────────────────────────────────────────────────────
