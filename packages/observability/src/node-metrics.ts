@@ -1,167 +1,167 @@
 /**
- * Node.js default process/runtime metrics collected via the OTEL metrics API.
+ * Process and runtime metrics — the names golang-basics' Go/process
+ * collectors use where one exists (process_*), base units (seconds, bytes),
+ * cumulative counters. OTel observable instruments, so the values flow
+ * through the shared MeterProvider to the Prometheus exporter.
  *
- * Equivalent in spirit to prom-client's collectDefaultMetrics(), implemented
- * using OTEL observable instruments so the values flow through the shared
- * MeterProvider and are exported by the Prometheus exporter.
+ * The event-loop delay is summarised over a fixed window on a timer, not per
+ * collect: a scrape (or a curl of /metrics) never empties another scraper's
+ * window.
  */
-import { PerformanceObserver, monitorEventLoopDelay } from "node:perf_hooks";
+import { constants, monitorEventLoopDelay, PerformanceObserver } from "node:perf_hooks";
+import { getHeapStatistics } from "node:v8";
 
 import type { Meter } from "@opentelemetry/api";
 
-export function registerNodeMetrics(meter: Meter): void {
-  // ─── Memory ────────────────────────────────────────────────────────────────
+/** How long one event-loop delay window lasts. */
+export const EVENT_LOOP_WINDOW_MS = 10_000;
 
-  const heapUsed = meter.createObservableGauge("nodejs.heap.size.used", {
-    description: "Process heap used in bytes",
-    unit: "By",
+const GC_KIND: Record<number, string> = {
+  [constants.NODE_PERFORMANCE_GC_MINOR]: "minor",
+  [constants.NODE_PERFORMANCE_GC_MAJOR]: "major",
+  [constants.NODE_PERFORMANCE_GC_INCREMENTAL]: "incremental",
+  [constants.NODE_PERFORMANCE_GC_WEAKCB]: "weakcb",
+};
+
+export interface BuildIdentity {
+  version: string;
+  revision: string;
+}
+
+export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => void {
+  // ─── Build ─────────────────────────────────────────────────────────────────
+
+  const buildInfo = meter.createObservableGauge("build_info", {
+    description: "Build identity of the running service; always 1.",
   });
-  const heapTotal = meter.createObservableGauge("nodejs.heap.size.total", {
-    description: "Process heap total in bytes",
-    unit: "By",
-  });
-  const rss = meter.createObservableGauge("nodejs.process.rss", {
-    description: "Resident set size of the Node.js process in bytes",
-    unit: "By",
-  });
-  const external = meter.createObservableGauge("nodejs.process.memory.external", {
-    description: "Memory used by C++ objects bound to JavaScript objects in bytes",
-    unit: "By",
-  });
-  const arrayBuffers = meter.createObservableGauge("nodejs.process.memory.array_buffers", {
-    description: "Memory allocated for ArrayBuffers and SharedArrayBuffers in bytes",
-    unit: "By",
+  buildInfo.addCallback((result) => {
+    result.observe(1, { version: build.version, revision: build.revision });
   });
 
+  const versionInfo = meter.createObservableGauge("nodejs_version_info", {
+    description: "Node.js version of the running process; always 1.",
+  });
+  versionInfo.addCallback((result) => {
+    result.observe(1, { version: process.version });
+  });
+
+  // ─── CPU (cumulative since process start) ──────────────────────────────────
+
+  const cpuUser = meter.createObservableCounter("process_cpu_user_seconds_total", {
+    description: "User-mode CPU time consumed by the process since it started.",
+    unit: "s",
+  });
+  const cpuSystem = meter.createObservableCounter("process_cpu_system_seconds_total", {
+    description: "Kernel-mode CPU time consumed by the process since it started.",
+    unit: "s",
+  });
   meter.addBatchObservableCallback(
     (result) => {
-      const mem = process.memoryUsage();
-      result.observe(heapUsed, mem.heapUsed);
-      result.observe(heapTotal, mem.heapTotal);
-      result.observe(rss, mem.rss);
-      result.observe(external, mem.external);
-      result.observe(arrayBuffers, mem.arrayBuffers);
-    },
-    [heapUsed, heapTotal, rss, external, arrayBuffers],
-  );
-
-  // ─── CPU ───────────────────────────────────────────────────────────────────
-
-  let prevCpu = process.cpuUsage();
-
-  const cpuUser = meter.createObservableCounter("nodejs.process.cpu.user", {
-    description: "Total user-mode CPU time consumed by the process in microseconds",
-    unit: "us",
-  });
-  const cpuSystem = meter.createObservableCounter("nodejs.process.cpu.system", {
-    description: "Total kernel-mode CPU time consumed by the process in microseconds",
-    unit: "us",
-  });
-
-  meter.addBatchObservableCallback(
-    (result) => {
-      const cpu = process.cpuUsage(prevCpu);
-      prevCpu = process.cpuUsage();
-      result.observe(cpuUser, cpu.user);
-      result.observe(cpuSystem, cpu.system);
+      const cpu = process.cpuUsage();
+      result.observe(cpuUser, cpu.user / 1e6);
+      result.observe(cpuSystem, cpu.system / 1e6);
     },
     [cpuUser, cpuSystem],
   );
 
-  // ─── Uptime ────────────────────────────────────────────────────────────────
-
-  const uptime = meter.createObservableGauge("nodejs.process.uptime", {
-    description: "Number of seconds the Node.js process has been running",
+  const startTime = meter.createObservableGauge("process_start_time_seconds", {
+    description: "Start time of the process since the Unix epoch.",
     unit: "s",
   });
-
-  uptime.addCallback((result) => {
-    result.observe(process.uptime());
+  const startedAt = Math.round(Date.now() / 1000 - process.uptime());
+  startTime.addCallback((result) => {
+    result.observe(startedAt);
   });
 
-  // ─── Event loop lag ────────────────────────────────────────────────────────
+  // ─── Memory ────────────────────────────────────────────────────────────────
+
+  const rss = meter.createObservableGauge("process_resident_memory_bytes", {
+    description: "Resident set size of the process.",
+    unit: "By",
+  });
+  const heapUsed = meter.createObservableGauge("nodejs_heap_used_bytes", {
+    description: "V8 heap in use.",
+    unit: "By",
+  });
+  const heapTotal = meter.createObservableGauge("nodejs_heap_total_bytes", {
+    description: "V8 heap allocated.",
+    unit: "By",
+  });
+  const heapLimit = meter.createObservableGauge("nodejs_heap_limit_bytes", {
+    description: "V8 heap size limit; reaching it is an out-of-memory crash.",
+    unit: "By",
+  });
+  const external = meter.createObservableGauge("nodejs_external_memory_bytes", {
+    description: "Memory of C++ objects bound to JavaScript objects (Buffers included).",
+    unit: "By",
+  });
+  const limit = getHeapStatistics().heap_size_limit;
+  meter.addBatchObservableCallback(
+    (result) => {
+      const mem = process.memoryUsage();
+      result.observe(rss, mem.rss);
+      result.observe(heapUsed, mem.heapUsed);
+      result.observe(heapTotal, mem.heapTotal);
+      result.observe(heapLimit, limit);
+      result.observe(external, mem.external);
+    },
+    [rss, heapUsed, heapTotal, heapLimit, external],
+  );
+
+  // ─── Event loop delay (fixed window) ───────────────────────────────────────
 
   const histogram = monitorEventLoopDelay({ resolution: 20 });
   histogram.enable();
+  let window: { p50: number; p99: number; max: number } | undefined;
+  const summary = (): { p50: number; p99: number; max: number } => ({
+    p50: histogram.percentile(50) / 1e9,
+    p99: histogram.percentile(99) / 1e9,
+    max: histogram.max / 1e9,
+  });
+  const roll = (): void => {
+    if (histogram.count > 0) window = summary();
+    histogram.reset();
+  };
+  const timer = setInterval(roll, EVENT_LOOP_WINDOW_MS);
+  timer.unref();
 
-  const eventLoopMin = meter.createObservableGauge("nodejs.eventloop.delay.min", {
-    description: "Minimum recorded event loop delay in nanoseconds",
-    unit: "ns",
+  const eventLoopDelay = meter.createObservableGauge("nodejs_eventloop_delay_seconds", {
+    description: "Event loop delay over the last 10 s window, by quantile (0.5, 0.99, max).",
+    unit: "s",
   });
-  const eventLoopMax = meter.createObservableGauge("nodejs.eventloop.delay.max", {
-    description: "Maximum recorded event loop delay in nanoseconds",
-    unit: "ns",
-  });
-  const eventLoopMean = meter.createObservableGauge("nodejs.eventloop.delay.mean", {
-    description: "Mean recorded event loop delay in nanoseconds",
-    unit: "ns",
-  });
-  const eventLoopP99 = meter.createObservableGauge("nodejs.eventloop.delay.p99", {
-    description: "99th percentile event loop delay in nanoseconds",
-    unit: "ns",
+  eventLoopDelay.addCallback((result) => {
+    // Before the first window closes: the samples so far (read, not reset).
+    const w = window ?? (histogram.count > 0 ? summary() : undefined);
+    if (w === undefined) return;
+    result.observe(w.p50, { quantile: "0.5" });
+    result.observe(w.p99, { quantile: "0.99" });
+    result.observe(w.max, { quantile: "max" });
   });
 
-  meter.addBatchObservableCallback(
-    (result) => {
-      result.observe(eventLoopMin, histogram.min);
-      result.observe(eventLoopMax, histogram.max);
-      result.observe(eventLoopMean, histogram.mean);
-      result.observe(eventLoopP99, histogram.percentile(99));
-      histogram.reset();
+  // ─── GC ────────────────────────────────────────────────────────────────────
+
+  const gcDuration = meter.createHistogram("nodejs_gc_duration_seconds", {
+    description: "Garbage collection pauses, by kind (minor, major, incremental, weakcb).",
+    unit: "s",
+    advice: {
+      explicitBucketBoundaries: [
+        0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1,
+      ],
     },
-    [eventLoopMin, eventLoopMax, eventLoopMean, eventLoopP99],
-  );
-
-  // ─── GC durations ──────────────────────────────────────────────────────────
-
-  const gcDuration = meter.createHistogram("nodejs.gc.duration", {
-    description: "Garbage collection duration in milliseconds",
-    unit: "ms",
   });
-
   const gcObserver = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
-      const detail = (entry as PerformanceEntry & { detail?: { kind?: string } }).detail;
-      gcDuration.record(entry.duration, { gc_type: detail?.kind ?? "unknown" });
+      const kind = (entry as PerformanceEntry & { detail?: { kind?: number } }).detail?.kind;
+      gcDuration.record(entry.duration / 1000, {
+        kind: (kind !== undefined ? GC_KIND[kind] : undefined) ?? "other",
+      });
     }
   });
+  gcObserver.observe({ entryTypes: ["gc"] });
 
-  gcObserver.observe({ type: "gc" });
-
-  // ─── Active handles / requests ────────────────────────────────────────────
-
-  const activeHandles = meter.createObservableGauge("nodejs.active_handles", {
-    description: "Number of active libuv handles",
-  });
-  const activeRequests = meter.createObservableGauge("nodejs.active_requests", {
-    description: "Number of active libuv requests",
-  });
-
-  meter.addBatchObservableCallback(
-    (result) => {
-      const proc = process as typeof process & {
-        _getActiveHandles?: () => unknown[];
-        _getActiveRequests?: () => unknown[];
-      };
-      result.observe(activeHandles, proc._getActiveHandles?.()?.length ?? 0);
-      result.observe(activeRequests, proc._getActiveRequests?.()?.length ?? 0);
-    },
-    [activeHandles, activeRequests],
-  );
-
-  // ─── Node.js version info ─────────────────────────────────────────────────
-
-  const versionInfo = meter.createObservableGauge("nodejs.version_info", {
-    description: "Node.js version metadata (value always 1)",
-  });
-
-  const { major, minor, patch } = parseVersion(process.version);
-  versionInfo.addCallback((result) => {
-    result.observe(1, { major: String(major), minor: String(minor), patch: String(patch) });
-  });
-}
-
-function parseVersion(v: string): { major: number; minor: number; patch: number } {
-  const [major = 0, minor = 0, patch = 0] = v.replace("v", "").split(".").map(Number);
-  return { major, minor, patch };
+  return () => {
+    clearInterval(timer);
+    histogram.disable();
+    gcObserver.disconnect();
+  };
 }

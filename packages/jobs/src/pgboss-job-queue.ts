@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { type Job, PgBoss } from "pg-boss";
 import type { Pool } from "pg";
 
+import { withDbOperation } from "@base/database";
+
+import { JobMetrics } from "./job-metrics.js";
 import type { JobQueue } from "./job-queue.js";
 import { traceProcess, traceSend } from "./job-tracing.js";
 
@@ -20,7 +23,9 @@ interface Envelope<T> {
  */
 export function createPgBoss(pool: Pool): PgBoss {
   return new PgBoss({
-    db: { executeSql: (text, values) => pool.query(text, values) },
+    db: {
+      executeSql: (text, values) => withDbOperation("jobs.pgboss", () => pool.query(text, values)),
+    },
     schema: "pgboss",
   });
 }
@@ -34,19 +39,25 @@ export function keyToUuid(key: string): string {
   return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
 }
 
+/** Retries after the first attempt: 3 attempts, as BullMQ's DEFAULT_JOB_OPTIONS. */
+const RETRY_LIMIT = 2;
+
 /** JobQueue on pg-boss (Postgres): the job id is the key's UUID, completed jobs kept 24 h. */
 export class PgBossJobQueue<T extends object> implements JobQueue<T> {
   #ready: Promise<void> | undefined;
+  readonly #metrics: JobMetrics;
 
   constructor(
     readonly name: string,
     private readonly boss: PgBoss,
-  ) {}
+  ) {
+    this.#metrics = new JobMetrics(name);
+  }
 
   /** The queue, created once (createQueue is a no-op for an existing one). */
   #setup(): Promise<void> {
     this.#ready ??= this.boss.createQueue(this.name, {
-      retryLimit: 2,
+      retryLimit: RETRY_LIMIT,
       retryDelay: 5,
       retryBackoff: true,
       expireInSeconds: 30,
@@ -82,8 +93,12 @@ export class PgBossJobQueue<T extends object> implements JobQueue<T> {
       { batchSize: 1, pollingIntervalSeconds: 1 },
       async ([job]: Job<Envelope<T>>[]) => {
         if (job === undefined) return;
-        await traceProcess("pg-boss", this.name, job.id, job.data.trace, {}, () =>
-          handler(job.data.data),
+        await this.#metrics.run(
+          () =>
+            traceProcess("pg-boss", this.name, job.id, job.data.trace, {}, () =>
+              handler(job.data.data),
+            ),
+          () => job.retryCount >= RETRY_LIMIT,
         );
       },
     );

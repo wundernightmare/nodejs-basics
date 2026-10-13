@@ -11,12 +11,21 @@
  * Optimistic locking lives here: every UPDATE includes `WHERE version = $expected`
  * and bumps `version = version + 1`. Zero rows updated → row was modified
  * concurrently → `OptimisticLockConflictError` (from @base/common).
+ *
+ * Each method runs under its own `withDbOperation` name, the
+ * `operation` label of db_query_duration_seconds / db_query_errors_total.
  */
 import { Inject, Injectable } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import { OptimisticLockConflictError } from "@base/common";
-import { commit, currentTransaction, limitTransaction, PG_POOL } from "@base/database";
+import {
+  commit,
+  currentTransaction,
+  limitTransaction,
+  PG_POOL,
+  withDbOperation,
+} from "@base/database";
 
 import { type Task, TaskStatus } from "../domain/task.entity.js";
 import { TaskNotFoundError } from "../domain/task.errors.js";
@@ -88,104 +97,114 @@ export class SqlTaskRepository implements TaskRepository {
   // ── Reads ─────────────────────────────────────────────────────────────────
 
   async findById(id: string): Promise<Task | null> {
-    const result = await this.db().query<TaskRow>(
-      `SELECT id, title, description, status, created_at, updated_at, version
-       FROM tasks WHERE id = $1`,
-      [id],
-    );
-    const row = result.rows[0];
-    return row ? rowToTask(row) : null;
+    return withDbOperation("tasks.get", async () => {
+      const result = await this.db().query<TaskRow>(
+        `SELECT id, title, description, status, created_at, updated_at, version
+         FROM tasks WHERE id = $1`,
+        [id],
+      );
+      const row = result.rows[0];
+      return row ? rowToTask(row) : null;
+    });
   }
 
   async list(limit: number, offset: number): Promise<Task[]> {
-    const result = await this.db().query<TaskRow>(
-      `SELECT id, title, description, status, created_at, updated_at, version
-       FROM tasks
-       ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
-    );
-    return result.rows.map(rowToTask);
+    return withDbOperation("tasks.list", async () => {
+      const result = await this.db().query<TaskRow>(
+        `SELECT id, title, description, status, created_at, updated_at, version
+         FROM tasks
+         ORDER BY created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      );
+      return result.rows.map(rowToTask);
+    });
   }
 
   // ── Writes ────────────────────────────────────────────────────────────────
 
   async create(input: CreateTaskInput): Promise<Task> {
-    return this.withTx(async (db) => {
-      const result = await db.query<TaskRow>(
-        `INSERT INTO tasks (id, title, description, status)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, title, description, status, created_at, updated_at, version`,
-        [input.id, input.title, input.description, TaskStatus.ACTIVE],
-      );
-      const row = result.rows[0];
-      if (!row) throw new Error("INSERT ... RETURNING produced no row");
-      return rowToTask(row);
+    return withDbOperation("tasks.create", async () => {
+      return this.withTx(async (db) => {
+        const result = await db.query<TaskRow>(
+          `INSERT INTO tasks (id, title, description, status)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, title, description, status, created_at, updated_at, version`,
+          [input.id, input.title, input.description, TaskStatus.ACTIVE],
+        );
+        const row = result.rows[0];
+        if (!row) throw new Error("INSERT ... RETURNING produced no row");
+        return rowToTask(row);
+      });
     });
   }
 
   async update(id: string, expectedVersion: number, patch: UpdateTaskInput): Promise<Task> {
-    return this.withTx(async (db) => {
-      // Build dynamic SET — only patch the fields the caller specified.
-      // COALESCE-on-undefined is awkward in raw SQL, so build the clause
-      // explicitly. For one or two fields this is clearest.
-      const sets: string[] = [];
-      const values: unknown[] = [];
-      let i = 1;
-      if (patch.title !== undefined) {
-        sets.push(`title = $${i++}`);
-        values.push(patch.title);
-      }
-      if (patch.description !== undefined) {
-        sets.push(`description = $${i++}`);
-        values.push(patch.description);
-      }
-      sets.push(`updated_at = NOW()`, `version = version + 1`);
+    return withDbOperation("tasks.update", async () => {
+      return this.withTx(async (db) => {
+        // Build dynamic SET — only patch the fields the caller specified.
+        // COALESCE-on-undefined is awkward in raw SQL, so build the clause
+        // explicitly. For one or two fields this is clearest.
+        const sets: string[] = [];
+        const values: unknown[] = [];
+        let i = 1;
+        if (patch.title !== undefined) {
+          sets.push(`title = $${i++}`);
+          values.push(patch.title);
+        }
+        if (patch.description !== undefined) {
+          sets.push(`description = $${i++}`);
+          values.push(patch.description);
+        }
+        sets.push(`updated_at = NOW()`, `version = version + 1`);
 
-      values.push(id, expectedVersion);
+        values.push(id, expectedVersion);
 
-      const result = await db.query<TaskRow>(
-        `UPDATE tasks
-         SET ${sets.join(", ")}
-         WHERE id = $${i++} AND version = $${i++}
-         RETURNING id, title, description, status, created_at, updated_at, version`,
-        values,
-      );
+        const result = await db.query<TaskRow>(
+          `UPDATE tasks
+           SET ${sets.join(", ")}
+           WHERE id = $${i++} AND version = $${i++}
+           RETURNING id, title, description, status, created_at, updated_at, version`,
+          values,
+        );
 
-      const row = result.rows[0];
-      if (!row) {
-        // Either the row vanished or its version moved. Disambiguate so the
-        // 409 message is accurate; the use case has already verified existence
-        // inside the same tx, so the row almost certainly exists with a newer
-        // version → optimistic-lock conflict.
-        const stillExists = await db.query<{ id: string }>(`SELECT id FROM tasks WHERE id = $1`, [
-          id,
-        ]);
-        if (stillExists.rowCount === 0) throw new TaskNotFoundError(id);
-        throw new OptimisticLockConflictError();
-      }
-      return rowToTask(row);
+        const row = result.rows[0];
+        if (!row) {
+          // Either the row vanished or its version moved. Disambiguate so the
+          // 409 message is accurate; the use case has already verified existence
+          // inside the same tx, so the row almost certainly exists with a newer
+          // version → optimistic-lock conflict.
+          const stillExists = await db.query<{ id: string }>(`SELECT id FROM tasks WHERE id = $1`, [
+            id,
+          ]);
+          if (stillExists.rowCount === 0) throw new TaskNotFoundError(id);
+          throw new OptimisticLockConflictError();
+        }
+        return rowToTask(row);
+      });
     });
   }
 
   async archive(id: string, expectedVersion: number): Promise<Task> {
-    return this.withTx(async (db) => {
-      const result = await db.query<TaskRow>(
-        `UPDATE tasks
-         SET status = $1, updated_at = NOW(), version = version + 1
-         WHERE id = $2 AND version = $3
-         RETURNING id, title, description, status, created_at, updated_at, version`,
-        [TaskStatus.ARCHIVED, id, expectedVersion],
-      );
-      const row = result.rows[0];
-      if (!row) {
-        const stillExists = await db.query<{ id: string }>(`SELECT id FROM tasks WHERE id = $1`, [
-          id,
-        ]);
-        if (stillExists.rowCount === 0) throw new TaskNotFoundError(id);
-        throw new OptimisticLockConflictError();
-      }
-      return rowToTask(row);
+    return withDbOperation("tasks.archive", async () => {
+      return this.withTx(async (db) => {
+        const result = await db.query<TaskRow>(
+          `UPDATE tasks
+           SET status = $1, updated_at = NOW(), version = version + 1
+           WHERE id = $2 AND version = $3
+           RETURNING id, title, description, status, created_at, updated_at, version`,
+          [TaskStatus.ARCHIVED, id, expectedVersion],
+        );
+        const row = result.rows[0];
+        if (!row) {
+          const stillExists = await db.query<{ id: string }>(`SELECT id FROM tasks WHERE id = $1`, [
+            id,
+          ]);
+          if (stillExists.rowCount === 0) throw new TaskNotFoundError(id);
+          throw new OptimisticLockConflictError();
+        }
+        return rowToTask(row);
+      });
     });
   }
 }

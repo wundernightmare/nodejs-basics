@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { captureMetrics, metricValue, testCase } from "@base/testing";
+
 import { OutboundError } from "./resilient-client.errors.js";
 import {
   FunctionConfigAdapter,
@@ -204,6 +206,46 @@ describe("ResilientPool", () => {
       (e: unknown) => e instanceof OutboundError && e.kind === "transient",
     );
     await pool.shutdown(1_000);
+  });
+
+  it("exports the contract metrics: outcome by status class or error kind, retries, breaker", async () => {
+    await testCase("NB-1045", "http_client_* — the names golang-basics' client exports");
+    const capture = captureMetrics();
+    try {
+      const pool = ResilientPool.fromAdapter(
+        new StaticConfigAdapter([
+          {
+            name: "local_api",
+            selector: `http://127.0.0.1:${port}`,
+            connections: 1,
+            retry: { maxRetries: 1, minTimeout: 1, maxTimeout: 1 },
+            circuitBreaker: { volumeThreshold: 100, timeout: 5_000 },
+          },
+        ]),
+      );
+      const url = `http://127.0.0.1:${port}/x`;
+      await pool.send(url, { method: "GET", path: "/x" });
+      responses.push({ status: 503, body: "" }, { status: 503, body: "" });
+      await expect(pool.send(url, { method: "GET", path: "/x" })).rejects.toThrow();
+      const text = await capture.scrape();
+      const calls = (outcome: string): number =>
+        metricValue(text, "http_client_requests_total", {
+          target: "local_api",
+          method: "GET",
+          outcome,
+        });
+      expect([calls("2xx"), calls("5xx")]).toEqual([1, 1]);
+      expect(metricValue(text, "http_client_retries_total", { target: "local_api" })).toBe(1);
+      expect(
+        metricValue(text, "http_client_request_duration_seconds_count", { target: "local_api" }),
+      ).toBe(2);
+      expect(metricValue(text, "http_client_circuit_breaker_state", { target: "local_api" })).toBe(
+        0,
+      );
+      await pool.shutdown(1_000);
+    } finally {
+      await capture.stop();
+    }
   });
 
   it("returns response from the correct target path", async () => {

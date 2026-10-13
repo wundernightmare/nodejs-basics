@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from "@nestjs/common";
-import { metrics } from "@opentelemetry/api";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { generateErrorId } from "../utils/nanoid.js";
@@ -25,10 +24,6 @@ const noopLogger: FilterLogger = {
 @Catch(HttpException)
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger: FilterLogger;
-  private readonly errorsCounter = metrics.getMeter("http.server").createCounter("errors.total", {
-    description: "Total HTTP errors by type and route",
-    unit: "{error}",
-  });
 
   constructor(options: { logger?: FilterLogger } = {}) {
     this.logger = options.logger ?? noopLogger;
@@ -55,17 +50,6 @@ export class HttpExceptionFilter implements ExceptionFilter {
         detail = b["message"];
       }
     }
-
-    const route =
-      (request as FastifyRequest).routeOptions !== undefined
-        ? ((request as FastifyRequest).routeOptions.url ?? "unknown")
-        : "unknown";
-
-    this.errorsCounter.add(1, {
-      "error.type": exception.constructor.name,
-      "http.route": route,
-      "http.response.status_code": String(status),
-    });
 
     if (status >= 500) {
       this.logger.error(

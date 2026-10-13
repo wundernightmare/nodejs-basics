@@ -8,7 +8,7 @@
  * app.module.ts): an integration that is off is never connected to, and what
  * depended on it runs on a substitute — never registered only to throw when
  * called. Each process reports what it runs with at startup
- * (`integrations.resolved`, the `app.integration.enabled` gauge).
+ * (`integrations.resolved`, the `app_integration_enabled` gauge).
  *
  * The loader closes the gaps a missing variable could slip through: another
  * variable of the group set without the connection one (`VALKEY_PASSWORD`

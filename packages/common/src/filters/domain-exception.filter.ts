@@ -1,5 +1,4 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpStatus } from "@nestjs/common";
-import { metrics } from "@opentelemetry/api";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { generateErrorId } from "../utils/nanoid.js";
@@ -52,10 +51,6 @@ export function createDomainExceptionFilter(
   options: { logger?: FilterLogger } = {},
 ): ExceptionFilter {
   const logger = options.logger ?? noopLogger;
-  const errorsCounter = metrics.getMeter("http.server").createCounter("errors.total", {
-    description: "Total HTTP errors by type and route",
-    unit: "{error}",
-  });
 
   @Catch(...domainErrors)
   class DomainExceptionFilter implements ExceptionFilter {
@@ -70,12 +65,6 @@ export function createDomainExceptionFilter(
         { "error.type": exception.name, "error.message": exception.message, "error.id": errorId },
         "Domain error",
       );
-
-      errorsCounter.add(1, {
-        "error.type": exception.name,
-        "http.route": request.routeOptions?.url ?? "unknown",
-        "http.response.status_code": String(mapping.status),
-      });
 
       // Never leak the raw message for 5xx — use the explicit `fallbackMessage`
       // when present, otherwise emit a generic title.

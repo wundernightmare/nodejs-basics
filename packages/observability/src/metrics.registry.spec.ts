@@ -50,7 +50,7 @@ function createdInstruments(sources: Map<string, string>): Created[] {
   const created: Created[] = [];
   for (const [file, text] of sources) {
     for (const m of text.matchAll(
-      /\.create(Counter|UpDownCounter|Histogram|ObservableCounter|ObservableGauge|ObservableUpDownCounter|Gauge)(?:<[^>]*>)?\(\s*"([^"]+)"\s*(?:,\s*\{([\s\S]*?)\})?\s*\)/gu,
+      /\.create(Counter|UpDownCounter|Histogram|ObservableCounter|ObservableGauge|ObservableUpDownCounter|Gauge)(?:<[^>]*>)?\(\s*"([^"]+)"\s*(?:,\s*\{([\s\S]*?)\}\s*,?)?\s*\)/gu,
     )) {
       const opts = m[3] ?? "";
       const description = /description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)/u.exec(opts)?.[1];
@@ -125,7 +125,7 @@ describe("metrics registry", () => {
   it("prints a line per metric, with when to worry where it matters", async () => {
     await testCase("NB-991", "--metrics-reference");
     const text = metricsReference();
-    expect(text).toContain("outbox.dead  ObservableGauge  {message}  no labels");
+    expect(text).toContain("outbox_dead  ObservableGauge  no labels");
     expect(text).toContain("watch: > 0: events that will never be published");
     expect(text.split("\n\n")).toHaveLength(METRIC_REGISTRY.length);
   });

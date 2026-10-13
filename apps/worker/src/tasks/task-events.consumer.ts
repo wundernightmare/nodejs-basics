@@ -8,6 +8,9 @@
  * itself: decode the event, hand it off — and say which failures retrying
  * cannot fix (KafkaPermanentError: parked on tasks.events.dlq) and which are
  * the job queue's, not the event's (KafkaBackpressureError: waited out).
+ *
+ * Its metrics are the runner's (kafka_consumer_records_total{topic="tasks.events"})
+ * and the job queue's (job_runs_total{queue="task-events"}) — nothing of its own.
  */
 import {
   Inject,
@@ -16,7 +19,6 @@ import {
   type OnApplicationShutdown,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { metrics } from "@opentelemetry/api";
 
 import { readInt } from "@base/config";
 import { isTaskCreatedEvent, TASK_EVENTS_TOPIC, type TaskCreatedEvent } from "@base/contracts";
@@ -61,14 +63,6 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly maxWaiting: number;
   private queueDepth: { waiting: number; at: number } | undefined;
-  // Prometheus-style name on purpose (e2e greps `worker_tasks_consumed_total`
-  // and that is what dashboards expect); OTel semconv would spell it
-  // `worker.tasks.consumed` with unit "{task}" and let the exporter add `_total`.
-  private readonly consumed = metrics
-    .getMeter("worker")
-    .createCounter("worker_tasks_consumed_total", {
-      description: "task.created events consumed from Kafka and enqueued.",
-    });
 
   constructor(
     config: ConfigService,
@@ -124,7 +118,6 @@ export class TaskEventsConsumer implements OnApplicationBootstrap, OnApplication
     }
     const event = decoded;
     await this.ensureQueueRoom();
-    this.consumed.add(1);
     // Keyed by task id: a redelivered event does not become a second job.
     await this.queue.send(event, event.id).catch((err: unknown) => {
       throw new JobQueueUnavailableError(err);

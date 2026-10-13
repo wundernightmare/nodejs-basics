@@ -11,7 +11,6 @@ export {
   type CrashReportResult,
   type CrashReportTrigger,
 } from "./crash-report.service.js";
-export { DbMetricsService } from "./db-metrics.service.js";
 export { HeapSnapshotService } from "./heap-snapshot.service.js";
 export { registerHttpInstrumentation } from "./http-metrics.js";
 export { registerNodeMetrics } from "./node-metrics.js";

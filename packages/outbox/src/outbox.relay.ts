@@ -11,7 +11,7 @@
  *     yet, unknown): the row stays as it is and goes out on a later pass —
  *     never counted, so no outage or back-pressure can dead-letter an event;
  *   - not retryable (`rejected`: too large, invalid): a poison row — `attempts + 1` and `last_error`; after OUTBOX_MAX_ATTEMPTS it is
- *     left in the table for an operator (the `outbox.dead` gauge) instead of
+ *     left in the table for an operator (the `outbox_dead` gauge) instead of
  *     being retried forever.
  *
  * Any failure backs the relay off (up to 30 s). A row that is retried gives
@@ -30,6 +30,16 @@
  * Each record is sent in the trace context stored with its row, so the
  * `send` span is a child of the request that wrote it and the consumer's
  * `process` span follows (@base/kafka traceparent headers).
+ *
+ * Metrics (the contract shared with golang-basics), refreshed by one query at
+ * the end of every pass — never by the scrape, so N scrapers or N replicas do
+ * not each count the table on their own schedule:
+ *   outbox_pending              rows still to be published
+ *   outbox_dead                 rows given up on (OUTBOX_MAX_ATTEMPTS rejections)
+ *   outbox_oldest_age_seconds   age of the oldest pending row (0 when empty)
+ * Alert on the age, not the count: a backlog that moves is fine, an event
+ * older than a minute means the broker (or the relay) is stuck. The sends
+ * themselves are kafka_producer_records_total.
  */
 import {
   type BeforeApplicationShutdown,
@@ -42,7 +52,7 @@ import { context, metrics, propagation, ROOT_CONTEXT } from "@opentelemetry/api"
 import type { Pool } from "pg";
 
 import { readInt } from "@base/config";
-import { PG_POOL } from "@base/database";
+import { PG_POOL, withDbOperation } from "@base/database";
 import { KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, ecsError } from "@base/logger";
 
@@ -59,6 +69,12 @@ const MAX_BACKOFF_MS = 30_000;
 // pool closes anyway and the batch rolls back (sent again by the next relay).
 const DRAIN_TIMEOUT_MS = 5_000;
 
+interface OutboxStats {
+  pending: number;
+  dead: number;
+  oldestAgeSeconds: number;
+}
+
 @Injectable()
 export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShutdown {
   private readonly logger: ReturnType<AppLogger["child"]>;
@@ -71,6 +87,8 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
   private failures = 0;
   // The last pass had rows that failed while it still made progress.
   private partial = false;
+  // As of the last pass; undefined until the first stats query succeeded.
+  private stats: OutboxStats | undefined;
 
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
@@ -82,34 +100,49 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
     this.intervalMs = readInt(config, "OUTBOX_POLL_INTERVAL_MS");
     this.batchSize = readInt(config, "OUTBOX_BATCH_SIZE");
     this.maxAttempts = readInt(config, "OUTBOX_MAX_ATTEMPTS");
-    // The numbers to alert on: rows waiting to be published, rows given up on.
+    // The numbers to alert on — read from the last pass, not queried here.
     const meter = metrics.getMeter("outbox");
-    const pending = meter.createObservableGauge("outbox.pending", {
-      description: "Outbox rows not yet published to Kafka.",
-      unit: "{message}",
+    const pending = meter.createObservableGauge("outbox_pending", {
+      description: "Outbox rows not yet published to Kafka (as of the relay's last pass).",
     });
-    const dead = meter.createObservableGauge("outbox.dead", {
-      description: "Outbox rows that failed OUTBOX_MAX_ATTEMPTS times and are no longer sent.",
-      unit: "{message}",
+    const dead = meter.createObservableGauge("outbox_dead", {
+      description: "Outbox rows rejected OUTBOX_MAX_ATTEMPTS times and no longer sent.",
+    });
+    const oldest = meter.createObservableGauge("outbox_oldest_age_seconds", {
+      description: "Age of the oldest unpublished outbox row (0 when the outbox is empty).",
+      unit: "s",
     });
     meter.addBatchObservableCallback(
-      async (result) => {
-        if (this.stopping) return;
-        try {
-          const { rows } = await this.pool.query<{ pending: number; dead: number }>(
-            `SELECT count(*) FILTER (WHERE attempts < $1)::int AS pending,
-                    count(*) FILTER (WHERE attempts >= $1)::int AS dead
-               FROM outbox`,
-            [this.maxAttempts],
-          );
-          result.observe(pending, rows[0]?.pending ?? 0);
-          result.observe(dead, rows[0]?.dead ?? 0);
-        } catch {
-          // no sample this scrape (database unreachable)
-        }
+      (result) => {
+        if (this.stats === undefined) return;
+        result.observe(pending, this.stats.pending);
+        result.observe(dead, this.stats.dead);
+        result.observe(oldest, this.stats.oldestAgeSeconds);
       },
-      [pending, dead],
+      [pending, dead, oldest],
     );
+  }
+
+  /** Re-reads the gauges' numbers; a failure keeps the previous ones. Public for tests. */
+  async refreshStats(): Promise<void> {
+    try {
+      const { rows } = await withDbOperation("outbox.stats", () =>
+        this.pool.query<{ pending: number; dead: number; oldest: number }>(
+          `SELECT count(*) FILTER (WHERE attempts < $1)::int AS pending,
+                  count(*) FILTER (WHERE attempts >= $1)::int AS dead,
+                  coalesce(extract(epoch FROM now() - min(created_at)
+                    FILTER (WHERE attempts < $1)), 0)::float8 AS oldest
+             FROM outbox`,
+          [this.maxAttempts],
+        ),
+      );
+      const row = rows[0];
+      if (row !== undefined) {
+        this.stats = { pending: row.pending, dead: row.dead, oldestAgeSeconds: row.oldest };
+      }
+    } catch (err) {
+      this.logger.debug({ ...ecsError(err) }, "Outbox stats not refreshed");
+    }
   }
 
   onApplicationBootstrap(): void {
@@ -136,6 +169,10 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
    * every send failed (nothing changes then). Public for tests.
    */
   async relayOnce(): Promise<number> {
+    return withDbOperation("outbox.relay", () => this.relayBatch());
+  }
+
+  private async relayBatch(): Promise<number> {
     const client = await this.pool.connect();
     let broken = false; // ROLLBACK failed → destroy, don't pool
     try {
@@ -243,6 +280,7 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
         "Outbox relay failed — rows stay queued",
       );
     }
+    await this.refreshStats();
     this.schedule(delay);
   }
 }

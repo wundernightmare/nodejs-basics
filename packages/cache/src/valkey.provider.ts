@@ -40,7 +40,7 @@ export const valkeyProvider: FactoryProvider<Valkey> = {
 };
 
 /**
- * OTel `valkey.client.*` metrics bound to the shared client. Registered as
+ * `valkey_client_*` metrics bound to the shared client. Registered as
  * a separate provider so the lifecycle service can dispose the batch-
  * observable callback on shutdown — otherwise OTel SDK keeps the gauge
  * callback registered and tests leak cross-suite.
@@ -48,8 +48,7 @@ export const valkeyProvider: FactoryProvider<Valkey> = {
 export const valkeyMetricsProvider: FactoryProvider<ValkeyMetricsHandle> = {
   provide: VALKEY_METRICS,
   inject: [VALKEY_CLIENT],
-  useFactory: (client: Valkey): ValkeyMetricsHandle =>
-    registerValkeyMetrics(client, { client_id: process.env["OTEL_SERVICE_NAME"] ?? "app" }),
+  useFactory: (client: Valkey): ValkeyMetricsHandle => registerValkeyMetrics(client),
 };
 
 /**

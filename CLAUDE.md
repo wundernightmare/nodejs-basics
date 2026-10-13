@@ -142,8 +142,17 @@ high-signal, easy-to-miss bits.
 - **Metrics**: every instrument is an entry of `METRIC_REGISTRY`
   (`@base/observability/metrics-registry`, data only) with the same name,
   unit and description — `metrics.registry.spec.ts` enforces it; labels of
-  bounded cardinality only. `--metrics-reference` prints it, `docs/RUNBOOK.md`
-  says what to do about the `watch` ones.
+  bounded cardinality only. The names are the contract shared with
+  golang-basics (README "Metrics"): the instrument name IS the Prometheus
+  name (`http_request_duration_seconds`, unit `"s"`; the exporter appends no
+  unit and setupTelemetry drops `otel_scope_*` / `target_info`), base units
+  only. Nothing the broker or a server measures better (consumer lag, server
+  state, queue depth) and nothing derivable from another metric. Tests read
+  the real exposition with `captureMetrics()` + `metricValue()` from
+  @base/testing (start the capture before constructing the code: instruments
+  bind at creation). `--metrics-reference` prints it, `docs/RUNBOOK.md`
+  says what to do about the `watch` ones; e2e checks every name the rules
+  (`docker/prometheus/rules.yml`) and the dashboard read.
 - **Logs as a contract**: the envelope is `docs/log-envelope.schema.json`
   (`logEnvelopeProblems()` from `@base/testing`; checked on the logger and on
   the spawned apps' output in e2e). A line meant for machines gets an
@@ -215,7 +224,7 @@ high-signal, easy-to-miss bits.
   not call `kafka.send()` from a request path for an event that must not be
   lost. The relay keeps the request's trace (context stored per row). Only a
   non-retryable `KafkaSendError` counts `attempts`; at `OUTBOX_MAX_ATTEMPTS`
-  the row stays in the table (`outbox.dead` gauge). Retryable failures (outage,
+  the row stays in the table (`outbox_dead` gauge). Retryable failures (outage,
   queue full) never count — never dead-letter an event for back-pressure.
 - **Kafka (`@base/kafka`)** — the rules the code encodes; read its JSDoc first.
   - Produce with `KafkaProducerService.send()`: it connects in the background
@@ -244,9 +253,11 @@ high-signal, easy-to-miss bits.
     consumer subscribed to a missing topic notices it only at the next 5-min
     metadata refresh), a provisioned cluster answers "exists" or refuses; a
     missing topic on send is `not_provisioned`, retryable.
-  - Metrics come from librdkafka statistics (`kafkaClientMetrics`) — never a
-    topic/partition label on them; logs go through `kafkaLogger`, repeats
-    folded for 60 s.
+  - Metrics: the producer service and the runner count records
+    (`kafka_producer_records_total`, `kafka_consumer_records_total{result}`);
+    librdkafka statistics (`kafkaClientMetrics`) give what only the client
+    sees — never a partition label, and no lag (the broker's number); logs
+    go through `kafkaLogger`, repeats folded for 60 s.
 - **Schema = migrations/*.sql**, applied by `apps/migrate` (forward-only,
   checksummed, advisory lock; `just migrate`, `just deps` runs it). Never
   create tables from app code or edit an applied file — add a new one.

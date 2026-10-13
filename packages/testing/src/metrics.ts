@@ -4,7 +4,7 @@
  * `testx.Metric` convention — so a test can distinguish "zero" from "not
  * exported". `labels` must all match; extra labels on the sample are fine.
  *
- *   metricValue(text, "http_server_request_duration_milliseconds_count", { http_route: "/tasks" })
+ *   metricValue(text, "http_request_duration_seconds_count", { route: "/tasks" })
  */
 export function metricValue(
   text: string,

@@ -1,6 +1,6 @@
 # @base/observability
 
-OpenTelemetry SDK setup, Node/HTTP/DB metrics, heap-snapshot + crash-report
+OpenTelemetry SDK setup, process/HTTP/readiness metrics, heap-snapshot + crash-report
 services and the **admin server** — the operational surface every service gets
 for free on `ADMIN_PORT` (default 9090), separate from the API port.
 
@@ -15,9 +15,13 @@ labels (bounded cardinality only), description and, for the ones worth an
 alert, what a bad value means. `metrics.registry.spec.ts` fails on an
 instrument that is missing there or differs from it; `node dist/main.js
 --metrics-reference` prints the list. New metric → add the entry, create the
-instrument with the same name, unit and description. The e2e suite checks the
-other direction on the running apps: every `# HELP` on `/metrics` is a
-registry description.
+instrument with the same name, unit and description. The name is the
+Prometheus name, the one golang-basics exports for the same thing (README
+"Metrics"): the exporter is set up to print it as is — no unit suffix, no
+`otel_scope_*` labels, no `target_info`. The e2e suite checks the other
+direction on the running apps: every family on `/metrics` is a registry
+entry with its description, and every name the alert rules and the dashboard
+read is there.
 
 Names, labels and units are a contract — alerts and dashboards depend on them
 and break silently. Adding a metric or a label value is free; renaming or

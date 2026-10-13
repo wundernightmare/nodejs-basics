@@ -14,15 +14,20 @@ const api = createTasksClient({ baseUrl: API_URL });
 
 const FEATURE = { ...E2E, feature: "tasks API" };
 
-/** Read a counter value out of the worker's Prometheus /metrics text. */
-async function workerConsumed(
+/** Task jobs the worker ran to completion, from its Prometheus /metrics text. */
+async function workerProcessed(
   request: import("@playwright/test").APIRequestContext,
 ): Promise<number> {
   const res = await request.get(`${WORKER_ADMIN_URL}/metrics`);
   if (!res.ok()) return 0;
   const line = (await res.text())
     .split("\n")
-    .find((l) => l.startsWith("worker_tasks_consumed_total"));
+    .find(
+      (l) =>
+        l.startsWith("job_runs_total{") &&
+        l.includes('queue="task-events"') &&
+        l.includes('result="completed"'),
+    );
   return line ? Number(line.split(/\s+/u).at(-1)) : 0;
 }
 
@@ -81,14 +86,14 @@ test.describe("tasks API", () => {
   test("creating a task drives the worker (Kafka → BullMQ)", async ({ request }) => {
     await meta(FEATURE);
     await testCase("NB-514", "cross-process flow api → Kafka → worker");
-    const before = await workerConsumed(request);
+    const before = await workerProcessed(request);
 
     const created = await api.POST("/tasks", { body: { title: "for the worker" } });
     expect(created.response.status).toBe(201);
 
-    // task.created goes api → outbox → relay → Kafka → worker.
+    // task.created goes api → outbox → relay → Kafka → worker → job queue → job.
     await expect
-      .poll(async () => workerConsumed(request), { timeout: 15_000, intervals: [500] })
+      .poll(async () => workerProcessed(request), { timeout: 15_000, intervals: [500] })
       .toBeGreaterThan(before);
   });
 });

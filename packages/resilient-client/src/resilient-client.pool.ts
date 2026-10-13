@@ -1,5 +1,5 @@
 import { metrics } from "@opentelemetry/api";
-import type { Counter, Histogram, Meter, ObservableGauge, UpDownCounter } from "@opentelemetry/api";
+import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 
 import type { CacheConfig } from "./resilient-client.cache.js";
 import { OutboundError } from "./resilient-client.errors.js";
@@ -100,15 +100,46 @@ export class FunctionConfigAdapter implements ConfigAdapter {
 interface PoolMetrics {
   requestDuration: Histogram;
   requestsTotal: Counter;
-  activeRequests: UpDownCounter;
-  cbState: ObservableGauge;
 }
+
+/** Latency buckets (seconds) shared with the HTTP server, db and Kafka histograms. */
+const LATENCY_BUCKETS_SECONDS = [
+  0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+];
+
+const STANDARD_METHODS = new Set([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "CONNECT",
+  "OPTIONS",
+  "TRACE",
+]);
+
+/** The outcome label of a call: the status class of the last response, else the error kind. */
+export function outcomeOf(status: number | undefined, err?: OutboundError): string {
+  if (status !== undefined && status >= 100 && status < 600) return `${Math.floor(status / 100)}xx`;
+  return err?.errorType ?? "unknown";
+}
+
+/** Breaker state as a gauge value — the scale golang-basics uses. */
+const BREAKER_STATE = { closed: 0, open: 1, halfOpen: 2 } as const;
 
 /**
  * Multi-target outbound HTTP pool.
  *
  * Manages one `ResilientClient` per configured outbound target. Incoming requests
  * are routed by matching the full URL against each target's `selector` pattern.
+ *
+ * Metrics (the contract shared with golang-basics' resilient-http-client;
+ * `target` is the configured name, never the URL):
+ *   http_client_requests_total{target,method,outcome}   outcome: 2xx…5xx, or the error kind
+ *   http_client_request_duration_seconds{target,method}
+ *   http_client_retries_total{target}                    attempts after the first
+ *   http_client_circuit_breaker_state{target}            0 closed, 1 open, 2 half-open
  *
  * Usage:
  *   const pool = ResilientPool.fromAdapter(new StaticConfigAdapter(targets));
@@ -174,7 +205,6 @@ export class ResilientPool {
     const path = parsed.pathname + parsed.search;
 
     this.#inFlight++;
-    this.#m.activeRequests.add(1, { outbound_target: name });
 
     const start = Date.now();
     const method = (opts.method as string | undefined) ?? "GET";
@@ -226,7 +256,6 @@ export class ResilientPool {
       throw outErr;
     } finally {
       this.#inFlight--;
-      this.#m.activeRequests.add(-1, { outbound_target: name });
     }
   }
 
@@ -276,64 +305,49 @@ export class ResilientPool {
   }
 
   #initMetrics(): PoolMetrics {
-    const requestDuration = this.meter.createHistogram("http.client.request.duration", {
-      description: "Duration of outbound HTTP requests in ms",
-      unit: "ms",
-      advice: {
-        explicitBucketBoundaries: [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000],
-      },
+    const requestDuration = this.meter.createHistogram("http_client_request_duration_seconds", {
+      description:
+        "Outbound HTTP call latency in seconds (retries included), by target and method.",
+      unit: "s",
+      advice: { explicitBucketBoundaries: LATENCY_BUCKETS_SECONDS },
     });
 
-    const requestsTotal = this.meter.createCounter("http.client.requests.total", {
-      description: "Total outbound HTTP requests by target, method, status, and error type",
+    const requestsTotal = this.meter.createCounter("http_client_requests_total", {
+      description:
+        "Outbound HTTP calls by target, method and outcome (status class or error kind).",
     });
 
-    const activeRequests = this.meter.createUpDownCounter("http.client.active_requests", {
-      description: "Number of outbound HTTP requests currently in flight",
-      unit: "{request}",
+    const retries = this.meter.createObservableCounter("http_client_retries_total", {
+      description: "Retries sent (attempts after the first), by target.",
+    });
+    retries.addCallback((result) => {
+      for (const [name, client] of this.#clients) result.observe(client.retries, { target: name });
     });
 
-    const cbState = this.meter.createObservableGauge("http.client.circuit_breaker_state", {
-      description: "Circuit breaker state per target: 0=closed, 0.5=half-open, 1=open",
+    const cbState = this.meter.createObservableGauge("http_client_circuit_breaker_state", {
+      description: "Circuit breaker state per target: 0 closed, 1 open, 2 half-open.",
     });
     cbState.addCallback((result) => {
       for (const [name, client] of this.#clients) {
-        const state = client.breakerState;
-        result.observe(state === "closed" ? 0 : state === "halfOpen" ? 0.5 : 1, {
-          outbound_target: name,
-        });
+        result.observe(BREAKER_STATE[client.breakerState], { target: name });
       }
     });
 
-    return { requestDuration, requestsTotal, activeRequests, cbState };
+    return { requestDuration, requestsTotal };
+  }
+
+  #record(target: string, rawMethod: string, outcome: string, durationMs: number): void {
+    const method = STANDARD_METHODS.has(rawMethod) ? rawMethod : "_OTHER";
+    this.#m.requestsTotal.add(1, { target, method, outcome });
+    this.#m.requestDuration.record(durationMs / 1000, { target, method });
   }
 
   #recordSuccess(target: string, method: string, status: number, durationMs: number): void {
-    const attrs = {
-      outbound_target: target,
-      "http.request.method": method,
-      "http.response.status_code": String(status),
-      "error.type": "",
-    };
-    this.#m.requestsTotal.add(1, attrs);
-    this.#m.requestDuration.record(durationMs, {
-      outbound_target: target,
-      "http.request.method": method,
-    });
+    this.#record(target, method, outcomeOf(status), durationMs);
   }
 
   #recordFailure(target: string, method: string, err: OutboundError, durationMs: number): void {
-    const attrs = {
-      outbound_target: target,
-      "http.request.method": method,
-      "http.response.status_code": String(err.statusCode ?? 0),
-      "error.type": err.errorType,
-    };
-    this.#m.requestsTotal.add(1, attrs);
-    this.#m.requestDuration.record(durationMs, {
-      outbound_target: target,
-      "http.request.method": method,
-    });
+    this.#record(target, method, outcomeOf(err.statusCode, err), durationMs);
   }
 }
 
