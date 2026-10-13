@@ -47,7 +47,7 @@ groups:
     rules:
       # Scrape target down: the process (or its admin listener) is gone.
       - alert: ServiceDown
-        expr: up{job=~"api|worker"} == 0
+        expr: up{service=~"api|worker"} == 0
         for: 2m
         labels: { severity: page }
         annotations:

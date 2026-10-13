@@ -1,53 +1,355 @@
 {
-  "uid": "nodejs-basics",
+  "uid": "nodejs-basics-overview",
   "title": "nodejs-basics",
+  "description": "Service overview: RED, routes, client-side dependencies, Kafka & outbox, jobs, health.",
   "tags": [
     "nodejs-basics"
   ],
-  "timezone": "browser",
-  "schemaVersion": 39,
-  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
   "refresh": "10s",
+  "schemaVersion": 41,
+  "version": 1,
   "time": {
-    "from": "now-30m",
+    "from": "now-1h",
     "to": "now"
   },
-  "editable": true,
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(build_info, service)",
+          "refId": "service"
+        },
+        "definition": "label_values(build_info, service)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "hide": 0
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(build_info{service=~\"$service\"}, instance)",
+          "refId": "instance"
+        },
+        "definition": "label_values(build_info{service=~\"$service\"}, instance)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1,
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Dashboards",
+      "type": "dashboards",
+      "tags": [
+        "nodejs-basics"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false,
+      "icon": "external link"
+    }
+  ],
   "panels": [
     {
       "type": "row",
-      "title": "API — RED",
       "id": 1,
+      "title": "RED",
       "collapsed": false,
       "gridPos": {
-        "h": 1,
-        "w": 24,
         "x": 0,
-        "y": 0
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests / s",
+      "description": "Throughput by service (API listener; the admin listener is not counted).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio",
+      "description": "Share of responses that are 5xx (solid) and 4xx (dashed). HighErrorRatio fires above 5 % of 5xx.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\", status=~\"5..\"}[$__rate_interval])) or 0 * sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))) / (sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])) > 0)",
+          "legendFormat": "{{service}} 5xx",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "(sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\", status=~\"4..\"}[$__rate_interval])) or 0 * sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))) / (sum by (service) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])) > 0)",
+          "legendFormat": "{{service}} 4xx",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* 4xx"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 8,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency",
+      "description": "p50 / p95 / p99 by service. HighP99Latency fires on p99 > 1 s per route.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (service, le) (rate(http_request_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} p50",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} p95",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (service, le) (rate(http_request_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} p99",
+          "refId": "C",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "row",
+      "id": 5,
+      "title": "HTTP by route",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
       },
       "panels": []
     },
     {
       "type": "timeseries",
       "title": "Requests / s by route",
-      "id": 2,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 1
-      },
+      "description": "Route templates (unmatched = no route), never raw paths.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, method, route) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{method}} {{route}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 10
-          }
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -57,42 +359,240 @@
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 by route",
+      "description": "Which route is slow.",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "sum by (method, route) (rate(http_requests_total{job=\"api\"}[1m]))",
-          "legendFormat": "{{method}} {{route}}",
-          "refId": "A"
+          "expr": "histogram_quantile(0.95, sum by (service, route, le) (rate(http_request_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} {{route}}",
+          "refId": "A",
+          "range": true
         }
       ],
-      "description": "Rate: every finished request, by method and route template."
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 6,
+        "y": 10,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
     },
     {
       "type": "timeseries",
-      "title": "Errors",
-      "id": 3,
+      "title": "Errors / s by status",
+      "description": "4xx/5xx by status; 'unhandled' = 500s nobody planned (HttpUnhandledErrors).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, status) (rate(http_requests_total{service=~\"$service\", instance=~\"$instance\", status=~\"[45]..\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{status}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service) (rate(http_unhandled_errors_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} unhandled",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 6,
+        "h": 8
+      },
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "In-flight requests",
+      "description": "Requests being handled right now (499 = the client left first).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service) (http_requests_in_flight{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
       },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 9,
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 1
+        "x": 18,
+        "y": 10,
+        "w": 6,
+        "h": 8
       },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "row",
+      "id": 10,
+      "title": "Dependencies (client side)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "DB pool saturation",
+      "description": "Connections in use / pool max. DbPoolSaturated fires above 90 %.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, pool) (db_pool_connections{service=~\"$service\", instance=~\"$instance\", state=\"in_use\"}) / max by (service, pool) (db_pool_max_connections{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} {{pool}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 10
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
           }
         },
         "overrides": []
@@ -103,216 +603,48 @@
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "(sum(rate(http_requests_total{job=\"api\",status=~\"5..\"}[1m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[1m]))",
-          "legendFormat": "5xx ratio",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "(sum(rate(http_requests_total{job=\"api\",status=~\"4..\"}[1m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[1m]))",
-          "legendFormat": "4xx ratio",
-          "refId": "B"
-        }
-      ],
-      "description": "Errors: share of requests answered 5xx (the SLO signal) and 4xx (client errors; a jump usually means a contract change)."
-    },
-    {
-      "type": "timeseries",
-      "title": "Latency",
-      "id": 4,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "id": 11,
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 1
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p99",
-          "refId": "C"
-        }
-      ],
-      "description": "Duration: server-side request latency quantiles over 5 minutes (http_request_duration_seconds)."
-    },
-    {
-      "type": "timeseries",
-      "title": "p95 by route",
-      "id": 5,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
         "x": 0,
-        "y": 9
+        "y": 19,
+        "w": 8,
+        "h": 8
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "{{route}}",
-          "refId": "A"
-        }
-      ]
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
     },
     {
       "type": "timeseries",
-      "title": "Errors by status",
-      "id": 6,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 9
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
+      "title": "DB pool waits",
+      "description": "Callers waiting for a connection right now. DbPoolStarved fires when it stays above 0.",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "sum by (status) (rate(http_requests_total{job=\"api\",status=~\"[45]..\"}[1m]))",
-          "legendFormat": "{{status}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(rate(http_unhandled_errors_total{job=\"api\"}[1m]))",
-          "legendFormat": "unhandled (500 nobody planned)",
-          "refId": "B"
+          "expr": "max by (service, pool) (db_pool_pending_acquires{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} {{pool}}",
+          "refId": "A",
+          "range": true
         }
       ],
-      "description": "4xx/5xx responses by status (http_requests_total), and the 500s nobody planned (http_unhandled_errors_total: a bug — the log line has the stack). The error class of each is in the logs and the trace."
-    },
-    {
-      "type": "timeseries",
-      "title": "In-flight requests",
-      "id": 7,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 9
-      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 10
-          }
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -322,55 +654,170 @@
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
+      "id": 12,
+      "gridPos": {
+        "x": 8,
+        "y": 19,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Valkey client",
+      "description": "Client-side connection health (server-side state: valkey-exporter).",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "sum(http_requests_in_flight{job=\"api\"})",
-          "legendFormat": "in flight",
-          "refId": "A"
+          "expr": "min by (service) (valkey_client_connected{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} connected",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service) (rate(valkey_client_reconnects_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} reconnects/s",
+          "refId": "B",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service) (rate(valkey_client_errors_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} errors/s",
+          "refId": "C",
+          "range": true
         }
-      ]
-    },
-    {
-      "type": "row",
-      "title": "Worker",
-      "id": 8,
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 17
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
       },
-      "panels": []
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 16,
+        "y": 19,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
     },
     {
       "type": "timeseries",
-      "title": "Events and jobs / s",
-      "id": 9,
+      "title": "DB query p95 by operation",
+      "description": "Client-side query latency by operation (the store method, else the SQL keyword).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, pool, operation, le) (rate(db_query_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} {{pool}} {{operation}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      },
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 18
-      },
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "DB query errors / s by operation",
+      "description": "Failed queries (SQLSTATE in the logs and spans).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, pool, operation) (rate(db_query_errors_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{pool}} {{operation}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
           "unit": "ops",
           "custom": {
             "lineWidth": 1,
-            "fillOpacity": 10
-          }
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -380,177 +827,541 @@
           "placement": "bottom"
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (result) (rate(kafka_consumer_records_total{job=\"worker\"}[1m]))",
-          "legendFormat": "consumed: {{result}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (result) (rate(job_runs_total{job=\"worker\"}[1m]))",
-          "legendFormat": "jobs: {{result}}",
-          "refId": "B"
-        }
-      ],
-      "description": "Records the worker consumed from Kafka by outcome (kafka_consumer_records_total) and the jobs it ran by result (job_runs_total)."
-    },
-    {
-      "type": "timeseries",
-      "title": "Consumer lag (from the broker)",
-      "id": 10,
+      "id": 15,
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      },
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 18
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum)",
-          "legendFormat": "{{redpanda_group}}",
-          "refId": "A"
-        }
-      ],
-      "description": "The consumer group's lag as the broker sees it (Redpanda /public_metrics, docker/deps.yml turns it on) — not exported by the apps."
-    },
-    {
-      "type": "timeseries",
-      "title": "Outbox",
-      "id": 17,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "description": "Events committed by the api but not yet on Kafka (@base/outbox), and the ones the broker rejected for good. Pending flat at ~0 normally; growing = the relay cannot publish.",
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 18
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max(outbox_pending{job=\"api\"})",
-          "legendFormat": "pending",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max(outbox_dead{job=\"api\"})",
-          "legendFormat": "dead",
-          "refId": "B"
-        }
-      ]
+        "uid": "${datasource}"
+      }
     },
     {
       "type": "row",
-      "title": "Runtime & dependencies",
-      "id": 11,
+      "id": 16,
+      "title": "Kafka & outbox",
       "collapsed": false,
       "gridPos": {
-        "h": 1,
-        "w": 24,
         "x": 0,
-        "y": 26
+        "y": 35,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Produced records / s",
+      "description": "By client (consumer = dead-letter sends), topic and result.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, client, topic, result) (rate(kafka_producer_records_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{client}} {{topic}} {{result}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Consumed records / s",
+      "description": "Final outcome per record: ok, retried, dead_lettered (KafkaDeadLettering), failed.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, topic, result) (rate(kafka_consumer_records_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{topic}} {{result}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 8,
+        "y": 36,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka latency p95",
+      "description": "Send = send() to broker ack; handle = one handler attempt.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, client, topic, le) (rate(kafka_producer_send_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "send {{service}} {{client}} {{topic}}",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, topic, le) (rate(kafka_consumer_handler_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "handle {{service}} {{topic}}",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "x": 16,
+        "y": 36,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Consumer-group lag (broker)",
+      "description": "From the broker (Redpanda /public_metrics), one series per group — not filtered by service. KafkaConsumerLagHigh fires above 1000.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum)",
+          "legendFormat": "{{redpanda_group}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox oldest event age",
+      "description": "Age of the oldest unpublished event. OutboxStuck fires above 60 s.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (service) (outbox_oldest_age_seconds{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox pending / dead",
+      "description": "Backlog (max over replicas: every replica sees the same table). Dead rows need a person (OutboxDeadEvents).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (service) (outbox_pending{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} pending",
+          "refId": "A",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (service) (outbox_dead{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} dead",
+          "refId": "B",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 22,
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "row",
+      "id": 23,
+      "title": "Jobs",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Job runs / s",
+      "description": "Attempts by queue and result: completed, retried, failed (final).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (service, queue, result) (rate(job_runs_total{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{service}} {{queue}} {{result}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Job duration p95",
+      "description": "One attempt, by queue.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (service, queue, le) (rate(job_duration_seconds_bucket{service=~\"$service\", instance=~\"$instance\"}[$__rate_interval])))",
+          "legendFormat": "{{service}} {{queue}}",
+          "refId": "A",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "row",
+      "id": 26,
+      "title": "Health & build",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 24,
+        "h": 1
       },
       "panels": []
     },
     {
       "type": "stat",
-      "title": "Scrape targets",
-      "id": 12,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 27
-      },
-      "description": "1 = Prometheus reaches the app's admin /metrics (host ports 9091 / 9093).",
+      "title": "Targets up",
+      "description": "Scrape target reachable (ServiceDown).",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "min by (service) (up{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}}",
+          "refId": "A",
+          "range": false,
+          "instant": true
+        }
+      ],
       "fieldConfig": {
         "defaults": {
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "0": {
-                  "text": "down",
-                  "color": "red"
-                },
-                "1": {
-                  "text": "up",
-                  "color": "green"
-                }
-              }
-            }
-          ],
+          "unit": "short",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -563,245 +1374,173 @@
                 "value": 1
               }
             ]
-          }
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
       "options": {
         "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
-          ]
+          ],
+          "values": false
         }
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "refId": "A",
-          "expr": "up{job=~\"api|worker\"}",
-          "legendFormat": "{{job}}"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Event loop delay p99",
-      "id": 13,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "id": 27,
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 27
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "nodejs_eventloop_delay_seconds{quantile=\"0.99\"}",
-          "legendFormat": "{{job}}",
-          "refId": "A"
-        }
-      ],
-      "description": "Saturation: a blocked event loop delays every request (p99 over a 10 s window)."
-    },
-    {
-      "type": "timeseries",
-      "title": "Heap",
-      "id": 14,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 27
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "nodejs_heap_used_bytes",
-          "legendFormat": "{{job}} used",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "nodejs_heap_limit_bytes",
-          "legendFormat": "{{job}} limit",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "type": "timeseries",
-      "title": "Postgres pool",
-      "id": 15,
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
         "x": 0,
-        "y": 35
+        "y": 62,
+        "w": 6,
+        "h": 6
       },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (job, pool, state) (db_pool_connections)",
-          "legendFormat": "{{job}} {{pool}} {{state}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (job, pool) (db_pool_pending_acquires)",
-          "legendFormat": "{{job}} {{pool}} waiting for a connection",
-          "refId": "B"
-        }
-      ],
-      "description": "Connections of each pg.Pool (primary, readonly) by state; anything waiting means the pool is too small or queries are slow."
-    },
-    {
-      "type": "timeseries",
-      "title": "Valkey client",
-      "id": 16,
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 35
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "lineWidth": 1,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      },
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Readiness checks",
+      "description": "1 = healthy. critical=true gates /readyz (ReadinessCheckFailing); false = degraded (OptionalDependencyDegraded).",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "max by (job) (valkey_client_connected)",
-          "legendFormat": "{{job}} connected",
-          "refId": "A"
+          "expr": "min by (service, check, critical) (health_check_up{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "{{service}} {{check}} (critical={{critical}})",
+          "refId": "A",
+          "range": false,
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green"
+                }
+              }
+            }
+          ]
         },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "id": 28,
+      "gridPos": {
+        "x": 6,
+        "y": 62,
+        "w": 10,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Running versions",
+      "description": "Instances per service, version and revision — a rollout in progress shows two rows.",
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
-          "expr": "sum by (job) (increase(valkey_client_reconnects_total[5m]))",
-          "legendFormat": "{{job}} reconnects (5 m)",
-          "refId": "B"
+          "expr": "count by (service, version, revision) (build_info{service=~\"$service\", instance=~\"$instance\"})",
+          "legendFormat": "",
+          "refId": "A",
+          "range": false,
+          "instant": true,
+          "format": "table"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "instances"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "id": 29,
+      "gridPos": {
+        "x": 16,
+        "y": 62,
+        "w": 8,
+        "h": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
     }
-  ],
-  "templating": {
-    "list": []
-  },
-  "annotations": {
-    "list": []
-  },
-  "description": "RED for the api, throughput for the worker, runtime and pool saturation. Metrics from the apps' admin /metrics (docker/prometheus/prometheus.yml)."
+  ]
 }

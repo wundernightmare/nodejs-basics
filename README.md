@@ -344,8 +344,8 @@ large, invalid) makes it a poison row — `attempts`/`last_error`, and after `OU
 table instead of being retried forever. Delivery is at least once, so consumers
 are idempotent (the worker's BullMQ `jobId` is the task id). The relay sends
 each record in the trace of the request that wrote it, so the trace still
-reads request → Kafka → worker. Alert on `outbox_pending` (Grafana: "Outbox
-pending") and on any `outbox_dead`. Shutdown waits up to 5 s for a batch in
+reads request → Kafka → worker. Alert on `outbox_oldest_age_seconds`
+(Grafana: "Outbox oldest event age", `OutboxStuck`) and on any `outbox_dead`. Shutdown waits up to 5 s for a batch in
 flight.
 
 ### Kafka
@@ -737,11 +737,8 @@ it — Prometheus is just unscraped, traces are dropped.
 - **Metrics**: Prometheus scrapes the admin `/metrics` of the api (host 9091)
   and the worker (host 9093) — the same ports under `just dev` and
   `just stack-up` — and the broker's `/public_metrics`, and evaluates
-  `docker/prometheus/rules.yml`. Grafana opens on the provisioned
-  `nodejs-basics` dashboard (`docker/grafana/dashboards/`): RED for the api
-  (rate, 5xx / 4xx ratio, p50/p95/p99), worker records and jobs, consumer
-  lag from the broker, outbox, event loop, heap, pg pools, Valkey. What each
-  metric is: [Metrics](#metrics) below.
+  `docker/prometheus/rules.yml`. What each metric is:
+  [Metrics](#metrics) below; the dashboards: [Dashboards](#dashboards).
 - **Back-pressure**: `KafkaProducerService.send()` fails only with a
   `KafkaSendError` — `kind` + `retryable` from the `KAFKA_SEND_ERRORS`
   registry (JSDoc lists each kind and what to do). It waits out a full local
@@ -777,7 +774,7 @@ read is on a live `/metrics`).
 | Jobs | `job_runs_total{queue,result}`, `job_duration_seconds{queue}` |
 | Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total` |
 | Readiness, build | `health_check_up{check,critical}`, `app_integration_enabled{integration}`, `build_info{version,revision}` |
-| Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `nodejs_heap_{used,total,limit}_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
+| Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds` (Linux), `nodejs_heap_{used,total,limit}_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_eventloop_utilization`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
 
 The rules behind it:
 
@@ -799,6 +796,35 @@ The rules behind it:
 - **Nothing twice**: no count that another metric already gives (the
   worker's events are `kafka_consumer_records_total`, its jobs
   `job_runs_total`; dead-lettered records are a `result`).
+
+### Dashboards
+
+Two provisioned dashboards (`docker/grafana/dashboards/`, the same layout as
+golang-basics'), linked to each other, with `$datasource`, `$service` and
+`$instance` variables:
+
+- **`nodejs-basics`** (overview, the Grafana home): RED by service
+  (requests/s, 5xx and 4xx ratio, p50/p95/p99) → HTTP by route (rate, p95,
+  errors by status + unhandled, in-flight) → client-side dependencies (DB pool
+  saturation and waits, query p95 and errors by operation, Valkey client) →
+  Kafka & outbox (records by client/topic/result, send and handle p95,
+  consumer-group lag from the broker, outbox oldest age, pending, dead) → jobs
+  (runs by result, p95) → health & build (targets up, readiness checks,
+  running versions).
+- **`nodejs-basics — runtime`** (reference): process CPU user/system, RSS,
+  open fds / limit, uptime and restarts; event loop delay and utilization,
+  heap used / limit, external memory, time in GC and GC rate by kind, Node.js
+  versions — per instance.
+
+The rules they follow (`dashboards.spec.ts` in @base/observability enforces
+them, and e2e checks the names on a live `/metrics`): every app query is
+scoped by `service=~"$service", instance=~"$instance"` (never a `job`), every
+window is `$__rate_interval` (`$__range` for "in range" stats), aggregation
+only by bounded labels (per instance only on the runtime dashboard), ratios
+never divide by zero, and the threshold lines are the alerts' thresholds.
+No exemplars: the OTel Prometheus exporter does not emit them, so the
+latency panels cannot link to a trace; find the trace from the logs
+(`trace.id` on every line) or in Jaeger by route.
 
 ### How spans are made
 

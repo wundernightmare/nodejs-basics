@@ -1,5 +1,5 @@
 # Observability stack: OTel Collector → Jaeger v2 (traces), Prometheus (metrics),
-# Grafana (one provisioned dashboard over both).
+# Grafana (two provisioned dashboards: overview + runtime).
 #
 # Attaches to the deps network as `external: true`. Bring `deps.yml` up first.
 #
