@@ -12,6 +12,22 @@ import {
   withDeadline,
 } from "./deadline.js";
 
+/** remainingMs() seen by a handler behind registerRequestContext(options). */
+async function budgetLeft(
+  options: Parameters<typeof registerRequestContext>[1],
+  headers: Record<string, string>,
+): Promise<number> {
+  const app = Fastify({ genReqId: genRequestId, logger: false });
+  registerRequestContext(app, options);
+  app.get("/", async () => ({ left: remainingMs() }));
+  await app.ready();
+  try {
+    return (await app.inject({ url: "/", headers })).json<{ left: number }>().left;
+  } finally {
+    await app.close();
+  }
+}
+
 describe("request deadline", () => {
   meta({
     epic: "nodejs-basics",
@@ -52,6 +68,29 @@ describe("request deadline", () => {
     for (const bad of [undefined, "", "0", "-5", "1.5", "10s", "9999999999"]) {
       expect(parseTimeoutMs(bad)).toBeUndefined();
     }
+  });
+
+  it("a caller cannot shorten the budget below HTTP_REQUEST_TIMEOUT_MIN_MS", async () => {
+    await testCase("NB-1035", "x-request-timeout-ms: 1 does not make a 504 on demand");
+    const one = { "x-request-timeout-ms": "1" };
+    const floored = await budgetLeft({ requestTimeoutMs: 5_000, minRequestTimeoutMs: 1_000 }, one);
+    expect(floored).toBeGreaterThan(900);
+    expect(floored).toBeLessThanOrEqual(1_000);
+    // Above the floor the caller still shortens it.
+    expect(
+      await budgetLeft(
+        { requestTimeoutMs: 5_000, minRequestTimeoutMs: 1_000 },
+        { "x-request-timeout-ms": "2000" },
+      ),
+    ).toBeLessThanOrEqual(2_000);
+    // A floor above the configured budget: the budget wins.
+    expect(
+      await budgetLeft({ requestTimeoutMs: 500, minRequestTimeoutMs: 1_000 }, one),
+    ).toBeLessThanOrEqual(500);
+    // 0 = no floor.
+    expect(
+      await budgetLeft({ requestTimeoutMs: 5_000, minRequestTimeoutMs: 0 }, one),
+    ).toBeLessThanOrEqual(1);
   });
 
   it("starts each request with HTTP_REQUEST_TIMEOUT_MS, shortened (never extended) by the caller", async () => {

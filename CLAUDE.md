@@ -197,7 +197,8 @@ high-signal, easy-to-miss bits.
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
 - **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
-  (registerRequestContext; `x-request-timeout-ms` can shorten it). Outbound
+  (registerRequestContext; `x-request-timeout-ms` can shorten it, not below
+  `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound
   calls honour it: Postgres (guardPgPool — ROLLBACK always passes; UoW sets
   `SET LOCAL statement_timeout`), Valkey (guardValkeyClient), HTTP
   (ResilientClient `getRemainingMs` → AbortSignal + header). Spent →

@@ -150,6 +150,20 @@ const REGISTRY = [
   },
 
   {
+    key: "HTTP_REQUEST_TIMEOUT_MIN_MS",
+    yaml: "app.http.request_timeout_min_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "1000",
+    description:
+      "The shortest budget a caller's x-request-timeout-ms can ask for; 0 = no floor. " +
+      "Without it a client sending `1` turns its requests into 504s and drives the 5xx " +
+      "rate the alerts watch. Above HTTP_REQUEST_TIMEOUT_MS, that one wins.",
+    usedIn: ["apps/api/src/app.ts", "common"],
+  },
+
+  {
     key: "HTTP_SHUTDOWN_DELAY_MS",
     yaml: "app.http.shutdown_delay_ms",
     type: "int",
@@ -1327,10 +1341,15 @@ const REGISTRY = [
     min: 1,
     required: false,
     default: "300000",
+    // librdkafka refuses a consumer whose max.poll.interval.ms is below
+    // session.timeout.ms — at connect, so the worker would sit in its reconnect
+    // loop, never ready. Checked at boot instead.
+    atLeast: "KAFKA_CONSUMER_SESSION_TIMEOUT_MS",
     description:
       "Consumer max.poll.interval.ms — the longest one handler call may take before the " +
       "member is considered stuck and its partitions are reassigned (the message is then " +
-      "handled again elsewhere). Above the slowest handler, with its retries' backoff.",
+      "handled again elsewhere). Above the slowest handler, with its retries' backoff; " +
+      "at least KAFKA_CONSUMER_SESSION_TIMEOUT_MS.",
     usedIn: ["kafka", "apps/worker"],
   },
 

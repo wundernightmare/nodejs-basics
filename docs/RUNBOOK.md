@@ -31,6 +31,15 @@ none — the startup line `integrations.resolved` says what a pod runs with):
 `503 not_ready` is a critical dependency down — the pod gets no traffic until
 it recovers, no restart needed. `degraded` is an optional one.
 
+A worker whose `kafka` check says `consumer has not joined its group yet` for
+longer than a rebalance is kept out of its consumer group. The usual cause is
+a rollout that changes the assignment strategy (eager `roundrobin` / `range` ↔
+`cooperative-sticky`): the broker refuses the new pods while an old one is in
+the group — `Inconsistent group protocol` in their logs. Finish it with a
+recreate (scale the old release to zero first), or give the new release a new
+`group.id` (it starts from `KAFKA_CONSUMER_AUTO_OFFSET_RESET`, `earliest`:
+expect the retained backlog again — handlers are idempotent).
+
 ## Something is wrong — where to look
 
 Logs are one JSON object per line (envelope: `docs/log-envelope.schema.json`);
@@ -57,6 +66,11 @@ What each means is in `--metrics-reference` (`watch:`); what to do:
   attempts, last_error FROM outbox WHERE attempts >= <OUTBOX_MAX_ATTEMPTS>`;
   fix the cause, then `UPDATE outbox SET attempts = 0 …` to resend or delete
   the rows.
+- **504s from the api** — a request ran out of its budget
+  (`HTTP_REQUEST_TIMEOUT_MS`, or less when the caller sent
+  `x-request-timeout-ms` — never below `HTTP_REQUEST_TIMEOUT_MIN_MS`, so a
+  client cannot produce them on purpose): the trace shows which Postgres /
+  Valkey / HTTP call took the time.
 - **`outbox.pending` growing** — Kafka is down or slow: `kafka.client.brokers.up`,
   the relay's warn logs. Nothing is lost; it drains when Kafka is back.
 - **`kafka.client.consumer.lag.max` growing** — the worker falls behind, the
