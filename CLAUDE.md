@@ -152,7 +152,11 @@ high-signal, easy-to-miss bits.
   @base/testing (start the capture before constructing the code: instruments
   bind at creation). `--metrics-reference` prints it, `docs/RUNBOOK.md`
   says what to do about the `watch` ones; e2e checks every name the rules
-  (`docker/prometheus/rules.yml`) and the dashboard read.
+  (`docker/prometheus/rules.yml`) and the dashboards read. Dashboards
+  (`docker/grafana/dashboards/`: overview + runtime, same layout as
+  golang-basics) scope every query by `$service` / `$instance` and window it
+  with `$__rate_interval` — `dashboards.spec.ts` rejects a `job=` selector, a
+  fixed `[1m]` or a name the registry does not list.
 - **Logs as a contract**: the envelope is `docs/log-envelope.schema.json`
   (`logEnvelopeProblems()` from `@base/testing`; checked on the logger and on
   the spawned apps' output in e2e). A line meant for machines gets an
