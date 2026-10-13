@@ -58,4 +58,20 @@ describe.skipIf(infra.skip)("pg pool (integration)", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(warnings.map((w) => `${w.name}: ${w.message}`)).toEqual([]);
   });
+
+  it("hands out the connection when the server refuses the session init", async () => {
+    await testCase("NB-1070", "a failing SET is logged, never a pod-wide outage");
+    const pool = pgPoolProvider.useFactory(
+      new ConfigService({
+        DATABASE_URL: infra.url("postgres"),
+        // Past Postgres' INT_MAX ms: the server rejects the SET.
+        DATABASE_STATEMENT_TIMEOUT_MS: "3000000000",
+      }),
+    ) as import("pg").Pool;
+    try {
+      expect((await pool.query("SELECT 1 AS ok")).rows).toEqual([{ ok: 1 }]);
+    } finally {
+      await pool.end();
+    }
+  });
 });
