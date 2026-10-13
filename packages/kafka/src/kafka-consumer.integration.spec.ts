@@ -32,6 +32,15 @@ async function until(cond: () => boolean, ms = 30_000): Promise<void> {
   }
 }
 
+function ready(runner: KafkaConsumerRunner): boolean {
+  try {
+    runner.assertRunning();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
   meta({
     epic: "nodejs-basics",
@@ -137,5 +146,39 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
       dlq_source_offset: "0",
       dlq_attempts: "1",
     });
+  }, 90_000);
+  it("is ready only once the group lets it in", async () => {
+    await testCase("NB-1034", "a member kept out of its group is not ready");
+    const shared = unique("it-protocol-group");
+    const source = unique("it-protocol-topic");
+    await producer.send({ topic: source, messages: [{ value: "x" }] }, { waitMs: 15_000 });
+    const member = (strategy: string, name: string): KafkaConsumerRunner => {
+      const runner = new KafkaConsumerRunner(
+        new ConfigService({
+          KAFKA_BROKERS: infra.url("kafka"),
+          KAFKA_CONSUMER_ASSIGNMENT_STRATEGY: strategy,
+        }),
+        appLogger.child(name),
+        { groupId: shared, topics: [source], handle: () => Promise.resolve() },
+      );
+      runner.start();
+      return runner;
+    };
+    // The release before the switch: an eager member holds the group.
+    const eager = member("roundrobin", "it-eager");
+    await until(() => ready(eager));
+    // The new release joins with cooperative-sticky: the broker refuses it
+    // (INCONSISTENT_GROUP_PROTOCOL) — running, but not ready, so a rollout stops here.
+    const cooperative = member("cooperative-sticky", "it-cooperative");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 8_000);
+    });
+    expect(ready(cooperative)).toBe(false);
+    expect(() => {
+      cooperative.assertRunning();
+    }).toThrow("has not joined its group yet");
+    await eager.stop();
+    await until(() => ready(cooperative));
+    await cooperative.stop();
   }, 90_000);
 });

@@ -9,7 +9,7 @@
  *   });
  *   runner.start();            // onApplicationBootstrap — does not wait for the broker
  *   await runner.stop();       // onApplicationShutdown
- *   runner.assertRunning();    // a readiness check
+ *   runner.assertRunning();    // a readiness check: connected and in its group
  *
  * Per message: the `x-request-id` header (or a fresh id) in the log context,
  * `x-debug-logging` turns on debug logging, a `process` span continues the
@@ -115,6 +115,13 @@ type Logger = ReturnType<AppLogger["child"]>;
 export class KafkaConsumerRunner {
   private consumer: KafkaJS.Consumer | undefined;
   private running = false;
+  /**
+   * The group has handed this member its (possibly empty) assignment once.
+   * Readiness waits for it: a member the broker keeps out of the group — an
+   * eager member still holds it (INCONSISTENT_GROUP_PROTOCOL during a switch
+   * to cooperative-sticky) — is running but consumes nothing.
+   */
+  private joined = false;
   private readonly failures = new Map<string, number>();
   /** Per partition: the message being retried and how often its handler failed. */
   private readonly attempts = new Map<string, { offset: string; failed: number }>();
@@ -157,6 +164,7 @@ export class KafkaConsumerRunner {
   /** Throws unless the consumer is connected and running — a readiness check. */
   assertRunning(): void {
     if (!this.running || this.consumer === undefined) throw new Error("consumer not running");
+    if (!this.joined) throw new Error("consumer has not joined its group yet");
     this.consumer.assignment();
   }
 
@@ -170,6 +178,7 @@ export class KafkaConsumerRunner {
       this.logger.warn({ ...ecsError(err) }, "Kafka consumer disconnect failed");
     } finally {
       this.running = false;
+      this.joined = false;
       this.clientMetrics.dispose();
     }
   }
@@ -313,9 +322,16 @@ export class KafkaConsumerRunner {
       ...buildKafkaClientConfig(this.config, this.options.groupId),
       kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
     });
+    this.joined = false;
     const consumer = kafka.consumer({
       ...buildConsumerConfig(this.config, this.options.groupId),
       stats_cb: this.clientMetrics.statsCb,
+      // Observes only (returns nothing): the compat layer still applies the
+      // assignment. Called with an empty one too when the group has no
+      // partition left for this member.
+      rebalance_cb: (err: { code: number }) => {
+        if (err.code === KafkaJS.ErrorCodes.ERR__ASSIGN_PARTITIONS) this.joined = true;
+      },
     });
     this.consumer = consumer;
     try {

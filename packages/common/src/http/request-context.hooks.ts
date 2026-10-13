@@ -64,6 +64,13 @@ export interface RequestContextOptions {
    * Unset → no deadline.
    */
   requestTimeoutMs?: number;
+  /**
+   * The shortest budget a caller's `x-request-timeout-ms` can ask for
+   * (HTTP_REQUEST_TIMEOUT_MIN_MS); 0/unset → no floor. Without it any client
+   * could send `1` and turn its requests into 504s — the 5xx rate the alerts
+   * watch would be the caller's to set. Above `requestTimeoutMs`, that wins.
+   */
+  minRequestTimeoutMs?: number | undefined;
 }
 
 export function registerRequestContext(
@@ -72,10 +79,12 @@ export function registerRequestContext(
 ): void {
   const debugToken = options.debugToken ?? "";
   const budget = options.requestTimeoutMs;
+  const floor = options.minRequestTimeoutMs ?? 0;
 
   fastify.addHook("onRequest", (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
     void reply.header(REQUEST_ID_HEADER, req.id);
-    const asked = parseTimeoutMs(req.headers[REQUEST_TIMEOUT_HEADER]);
+    const header = parseTimeoutMs(req.headers[REQUEST_TIMEOUT_HEADER]);
+    const asked = header === undefined ? undefined : Math.max(header, floor);
     const timeoutMs =
       budget === undefined ? asked : asked === undefined ? budget : Math.min(asked, budget);
     const run = (): void => {

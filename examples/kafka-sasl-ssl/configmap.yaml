@@ -2,8 +2,13 @@
 # app's config.yaml), credentials in a Secret, both mounted as files.
 #
 #   kubectl create secret generic worker-kafka \
-#     --from-file=ca.crt=certs/ca.crt --from-literal=sasl-password=app-secret
+#     --from-file=ca.crt=certs/ca.crt --from-literal=sasl-password=app-secret \
+#     --from-literal=admin-token="$(openssl rand -hex 32)"
 #   kubectl apply -f configmap.yaml
+#
+# The admin listener binds every interface (kubelet probes reach it there), so
+# the worker refuses to start without ADMIN_TOKEN (exit 78) — it guards the
+# log-level / heap-dump / profile switches; the probes need no token.
 #
 # Only what the app reads lives here; every key, its YAML path, type and
 # default: ENV_REGISTRY in @base/config (`node dist/main.js --config-reference`).
@@ -68,6 +73,15 @@ spec:
           env:
             - name: APP_CONFIG_FILE
               value: /etc/app/config.yaml
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: { name: worker-kafka, key: admin-token }
+          ports:
+            - { name: admin, containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: admin }
+          livenessProbe:
+            httpGet: { path: /livez, port: admin }
           volumeMounts:
             - { name: config, mountPath: /etc/app, readOnly: true }
             - { name: kafka-secret, mountPath: /etc/kafka-secret, readOnly: true }

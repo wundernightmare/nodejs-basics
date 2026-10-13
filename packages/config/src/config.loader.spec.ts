@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseAllDocuments } from "yaml";
 
 import { logEnvelopeProblems, meta, testCase, workspaceRoot } from "@base/testing";
 
@@ -182,6 +183,36 @@ describe("yamlConfigLoader + configSnapshot", () => {
     expect(configSnapshot().sources["DATABASE_URL"]).toBe("yaml");
   });
 
+  it("the Kubernetes example boots: its config.yaml plus the env its Deployment sets", async () => {
+    await testCase("NB-1033", "examples/kafka-sasl-ssl/configmap.yaml stays a working start");
+    const docs = parseAllDocuments(
+      readFileSync(join(workspaceRoot(), "examples/kafka-sasl-ssl/configmap.yaml"), "utf8"),
+    ).map((d) => d.toJS() as Record<string, any>); // oxlint-disable-line no-explicit-any
+    const configYaml = docs.find((d) => d["kind"] === "ConfigMap")?.["data"]["config.yaml"];
+    const container = docs.find((d) => d["kind"] === "Deployment")?.["spec"]["template"]["spec"][
+      "containers"
+    ][0];
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, String(configYaml));
+    // The container's env, a Secret reference standing for its value; the image
+    // default ADMIN_HOST (every interface), not the tests' loopback.
+    const env: Record<string, string> = {};
+    for (const e of container["env"] as { name: string; value?: string }[]) {
+      env[e.name] = e.name === "APP_CONFIG_FILE" ? path : (e.value ?? "from-secret");
+    }
+    const host = process.env["ADMIN_HOST"];
+    try {
+      delete process.env["ADMIN_HOST"];
+      await expect(load(env)).resolves.toBeUndefined();
+      expect(process.env["KAFKA_SECURITY_PROTOCOL"]).toBe("SASL_SSL"); // the file was read
+      const { ADMIN_TOKEN: _token, ...withoutToken } = env;
+      await expect(load(withoutToken)).rejects.toThrow("ADMIN_TOKEN is empty");
+    } finally {
+      if (host === undefined) delete process.env["ADMIN_HOST"];
+      else process.env["ADMIN_HOST"] = host;
+    }
+  });
+
   it("an entry point exits 78 with one ECS line on a bad configuration", async () => {
     await testCase("NB-971", "boot.ts: a config error is a clean, machine-readable exit");
     file("databse:\n  url: x\n");
@@ -309,6 +340,19 @@ describe("yamlConfigLoader + configSnapshot", () => {
         "KAFKA_CONSUMER_FETCH_MAX_BYTES=1048576",
     ]);
     expect(await problems("kafka:\n  brokers: k:9092\n")).toEqual([]); // the defaults agree
+  });
+
+  it("max.poll.interval below the session timeout fails the boot, not the connect", async () => {
+    await testCase("NB-1030", "librdkafka's poll ≥ session rule is checked at boot");
+    expect(
+      await problems(
+        "kafka:\n  brokers: k:9092\n  consumer:\n    session_timeout_ms: 45000\n" +
+          "    max_poll_interval_ms: 30000\n",
+      ),
+    ).toEqual([
+      "  - KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS=30000 must be at least " +
+        "KAFKA_CONSUMER_SESSION_TIMEOUT_MS=45000",
+    ]);
   });
 
   it("joins a YAML list into the comma-separated value the code splits", async () => {

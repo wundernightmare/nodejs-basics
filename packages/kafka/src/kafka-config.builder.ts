@@ -187,6 +187,7 @@ export function buildConsumerConfig(
 ): KafkaRdKafkaConfig {
   const base = buildKafkaClientConfig(config, clientIdSuffix ?? `consumer-${groupId}`);
   const fetchMaxBytes = readInt(config, "KAFKA_CONSUMER_FETCH_MAX_BYTES");
+  const partitionFetchMaxBytes = readInt(config, "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES");
 
   const out: KafkaRdKafkaConfig = {
     ...base,
@@ -211,7 +212,11 @@ export function buildConsumerConfig(
     "queued.min.messages": 1_000,
     "queued.max.messages.kbytes": readInt(config, "KAFKA_CONSUMER_QUEUE_MAX_KBYTES"),
     "fetch.max.bytes": fetchMaxBytes,
-    "max.partition.fetch.bytes": readInt(config, "KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES"),
+    "max.partition.fetch.bytes": partitionFetchMaxBytes,
+    // Its librdkafka alias, set too: the kafkajs-compat layer injects
+    // `fetch.message.max.bytes = 10 MiB` when its own maxBytes is unset, and
+    // that alias lands after ours in the merged config — it would win.
+    "fetch.message.max.bytes": partitionFetchMaxBytes,
     // librdkafka refuses a response above it; it must exceed a full fetch.
     "receive.message.max.bytes": fetchMaxBytes + 512,
   };

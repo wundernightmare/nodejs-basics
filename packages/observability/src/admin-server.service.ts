@@ -109,6 +109,8 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
   private readonly authMode: "bearer" | "off";
   private readonly routes: RouteTable;
   private server: http.Server | null = null;
+  /** Aborted on shutdown: ends a running CPU profile instead of waiting it out. */
+  private readonly closing = new AbortController();
 
   constructor(
     private readonly readiness: ReadinessService,
@@ -168,6 +170,9 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     const server = this.server;
     if (!server) return;
     this.logger.info({ "process.signal": signal ?? null }, "Admin server shutting down");
+    // A request still running (a CPU profile samples up to 60 s) would hold
+    // server.close() — and the pod's grace period — open: end it now.
+    this.closing.abort();
     await new Promise<void>((resolve, reject) => {
       server.close((err) => {
         if (err) reject(err);
@@ -472,7 +477,20 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       });
       return;
     }
-    const profile = await captureCpuProfile(seconds * 1_000);
+    let profile: object | null;
+    try {
+      profile = await captureCpuProfile(seconds * 1_000, this.closing.signal);
+    } catch (err) {
+      if (!this.closing.signal.aborted) throw err;
+      // No keep-alive: server.close() is waiting for this connection.
+      res.setHeader("Connection", "close");
+      writeProblem(res, {
+        status: 503,
+        detail: "the process is shutting down; the CPU profile was stopped",
+        instance: url.pathname,
+      });
+      return;
+    }
     if (profile === null) {
       writeProblem(res, {
         status: 409,

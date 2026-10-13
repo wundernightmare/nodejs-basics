@@ -13,20 +13,35 @@ import { setTimeout as delay } from "node:timers/promises";
 
 let running = false;
 
-/** The profile, or null when another one is still being taken. */
-export async function captureCpuProfile(durationMs: number): Promise<object | null> {
+/**
+ * The profile, or null when another one is still being taken. `signal` ends
+ * the sampling early (the admin listener's shutdown): the profiler stops and
+ * the call rejects with the signal's AbortError — a shutdown never waits out
+ * a 60 s profile.
+ */
+export async function captureCpuProfile(
+  durationMs: number,
+  signal?: AbortSignal,
+): Promise<object | null> {
   if (running) return null;
   running = true;
   const session = new Session();
-  session.connect();
   try {
+    // Inside the try: a connect that throws must still release the lock, or
+    // every later request is a 409.
+    session.connect();
     await session.post("Profiler.enable");
     await session.post("Profiler.start");
-    await delay(durationMs);
+    await delay(durationMs, undefined, signal === undefined ? {} : { signal });
     const { profile } = await session.post("Profiler.stop");
     return profile;
   } finally {
-    session.disconnect();
+    // Disconnecting also stops a profiler that is still sampling.
+    try {
+      session.disconnect();
+    } catch {
+      // never connected
+    }
     running = false;
   }
 }

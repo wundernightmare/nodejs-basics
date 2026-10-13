@@ -308,7 +308,9 @@ is left of it:
 
 A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
 caller can ask for less with `x-request-timeout-ms` (never more), which is
-also how a budget crosses services. Bodies over `HTTP_BODY_LIMIT_BYTES`
+also how a budget crosses services — but not below `HTTP_REQUEST_TIMEOUT_MIN_MS`
+(1 s; 0 = no floor), so no client can make 504s on demand and drive the 5xx
+rate the alerts watch. Bodies over `HTTP_BODY_LIMIT_BYTES`
 (1 MiB) are a **413** problem. Both statuses are in the contract. Rate
 limiting is left to the gateway / ingress in front of the service.
 
@@ -383,11 +385,11 @@ Every key is also a YAML path (`--config-reference` prints both).
 | `KAFKA_CONSUMER_ENABLE_AUTO_COMMIT` | `enable.auto.commit` | `false` | the runner commits after `handle()`; see "Commits" |
 | `KAFKA_CONSUMER_ASSIGNMENT_STRATEGY` | `partition.assignment.strategy` | `cooperative-sticky` | incremental rebalances; see "Rebalance" |
 | `KAFKA_CONSUMER_SESSION_TIMEOUT_MS` | `session.timeout.ms` | 45000 | the Kafka default: a GC pause or node hiccup does not trigger a rebalance; a clean shutdown leaves the group at once |
-| `KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS` | `max.poll.interval.ms` | 300000 | the longest one `handle()` may take before the partition moves |
+| `KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS` | `max.poll.interval.ms` | 300000 | the longest one `handle()` may take before the partition moves; at least the session timeout (librdkafka refuses less — checked at boot) |
 | `KAFKA_CONSUMER_QUEUE_MAX_KBYTES` | `queued.max.messages.kbytes` | 4096 | 4 MiB of prefetch instead of 64 MiB |
 | — | `queued.min.messages` | 1000 | prefetch target in messages instead of 100000 |
 | `KAFKA_CONSUMER_FETCH_MAX_BYTES` | `fetch.max.bytes` (`receive.message.max.bytes` = +512) | 4194304 | one fetch response ≤ 4 MiB instead of 50 MB |
-| `KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES` | `max.partition.fetch.bytes` | 1048576 | one hot partition cannot fill a whole fetch |
+| `KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES` | `max.partition.fetch.bytes` (+ its alias `fetch.message.max.bytes`, which the compat layer would otherwise set to 10 MiB) | 1048576 | one hot partition cannot fill a whole fetch |
 | — | `allow.auto.create.topics` | `true` | the client may ask; the broker decides (see "Topics") |
 | `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` | kafkajs-compat `partitionsConsumedConcurrently` | 1 | order holds per partition at any value |
 | `KAFKA_CONSUMER_MAX_RETRIES` | — (runner) | 5 | then the message is parked; see "Commits" |
@@ -460,7 +462,13 @@ partitions that change owner stop; the rest keep being consumed. The eager
 strategies (`roundrobin`, which the kafkajs-compat layer would pick, and
 `range`) stop the whole group on every deploy. A group runs one protocol —
 switching an existing group between cooperative and eager takes stopping all
-its members, or a new `group.id`; a mixed group fails to rebalance. A member
+its members, or a new `group.id`; a mixed group fails to rebalance. **Upgrading
+from a release that ran the compat default (`roundrobin`)** is such a switch:
+roll it out with the `Recreate` strategy (or a new `group.id`). A rolling
+update stalls safely — the worker is ready only once the group has handed it
+an assignment (`assertRunning()`), so the refused new pods never turn ready
+and the rollout stops with the old pods still consuming; see RUNBOOK "A pod is
+not ready". A member
 is evicted after `session.timeout.ms` (45 s) without a heartbeat, or when one
 `handle()` runs longer than `max.poll.interval.ms` (5 min) — its partitions
 then go to another member, which handles the message again.
