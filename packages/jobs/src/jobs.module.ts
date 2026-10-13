@@ -10,7 +10,6 @@ import { AppLogger, ecsError } from "@base/logger";
 
 import { BullMQJobQueue } from "./bullmq-job-queue.js";
 import { createBullMQConnection } from "./bullmq-connection.factory.js";
-import { BullMQMetricsService } from "./bullmq-metrics.service.js";
 import { type JobQueue, jobQueueToken } from "./job-queue.js";
 import { createPgBoss, PgBossJobQueue } from "./pgboss-job-queue.js";
 
@@ -60,7 +59,6 @@ interface Backend {
 function bullmq(names: readonly string[]): Backend {
   return {
     providers: [
-      BullMQMetricsService,
       {
         provide: BULLMQ_CONNECTION,
         inject: [ConfigService],
@@ -68,9 +66,8 @@ function bullmq(names: readonly string[]): Backend {
       },
       ...names.map((name) => ({
         provide: jobQueueToken(name),
-        inject: [BULLMQ_CONNECTION, BullMQMetricsService],
-        useFactory: (connection: ConnectionOptions, metrics: BullMQMetricsService) =>
-          new BullMQJobQueue(name, connection, metrics),
+        inject: [BULLMQ_CONNECTION],
+        useFactory: (connection: ConnectionOptions) => new BullMQJobQueue(name, connection),
       })),
     ],
     inject: [],

@@ -1,6 +1,13 @@
-import { type ConnectionOptions, type DefaultJobOptions, type Job, Queue, Worker } from "bullmq";
+import {
+  type ConnectionOptions,
+  type DefaultJobOptions,
+  type Job,
+  Queue,
+  UnrecoverableError,
+  Worker,
+} from "bullmq";
 
-import type { BullMQMetricsService } from "./bullmq-metrics.service.js";
+import { JobMetrics } from "./job-metrics.js";
 import type { JobQueue } from "./job-queue.js";
 import { addTraced, traceJob } from "./job-tracing.js";
 
@@ -12,17 +19,24 @@ export const DEFAULT_JOB_OPTIONS: DefaultJobOptions = {
   removeOnFail: { count: 1_000, age: 7 * 86_400 },
 };
 
+/** Whether a failed attempt is the job's last: no attempt left, or BullMQ never retries the error. */
+export function isFinalAttempt(job: Pick<Job, "attemptsMade" | "opts">, err: unknown): boolean {
+  // attemptsMade counts the attempts before this one.
+  return err instanceof UnrecoverableError || job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+}
+
 /** JobQueue on BullMQ (Valkey): the job id is the key, completed jobs kept 24 h / 500. */
 export class BullMQJobQueue<T extends object> implements JobQueue<T> {
   readonly #queue: Queue;
+  readonly #metrics: JobMetrics;
   #worker: Worker | undefined;
 
   constructor(
     readonly name: string,
     private readonly connection: ConnectionOptions,
-    private readonly metrics: BullMQMetricsService,
   ) {
     this.#queue = new Queue(name, { connection, defaultJobOptions: DEFAULT_JOB_OPTIONS });
+    this.#metrics = new JobMetrics(name);
   }
 
   async send(data: T, key: string): Promise<void> {
@@ -34,7 +48,12 @@ export class BullMQJobQueue<T extends object> implements JobQueue<T> {
   }
 
   work(handler: (data: T) => Promise<void>): Promise<void> {
-    this.#worker = new Worker(this.name, (job: Job<T>) => traceJob(job, () => handler(job.data)), {
+    const run = (job: Job<T>): Promise<void> =>
+      this.#metrics.run(
+        () => traceJob(job, () => handler(job.data)),
+        (err) => isFinalAttempt(job, err),
+      );
+    this.#worker = new Worker(this.name, run, {
       connection: this.connection,
       // One job at a time; a job whose lock is not renewed for 30 s is
       // stalled and moved back to wait (once — the second stall fails it).
@@ -43,7 +62,6 @@ export class BullMQJobQueue<T extends object> implements JobQueue<T> {
       stalledInterval: 30_000,
       maxStalledCount: 1,
     });
-    this.metrics.observe(this.#worker);
     return Promise.resolve();
   }
 

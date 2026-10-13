@@ -31,7 +31,6 @@
   },
   "peerDependencies": {
     "@nestjs/common": "12.x",
-    "@opentelemetry/api": "1.x",
     "fastify": "5.x"
   },
   "devDependencies": {

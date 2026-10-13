@@ -6,7 +6,15 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PgUnitOfWork } from "@base/database";
 import { type KafkaProducerService, toKafkaSendError } from "@base/kafka";
 import { AppLogger, pinoLogger } from "@base/logger";
-import { captureSpans, integration, meta, testCase, unique } from "@base/testing";
+import {
+  captureMetrics,
+  captureSpans,
+  integration,
+  meta,
+  metricValue,
+  testCase,
+  unique,
+} from "@base/testing";
 
 import { OutboxRelay } from "./outbox.relay.js";
 import { OutboxOutsideTransactionError, OutboxWriter } from "./outbox.writer.js";
@@ -157,6 +165,39 @@ describe.skipIf(infra.skip)("outbox (integration)", () => {
     );
     expect(await mine()).toBe(1);
     await pool.query("DELETE FROM outbox WHERE topic = $1 AND key = 'poison'", [topic]);
+  });
+
+  it("refreshes its gauges from one query per pass: pending, dead, the oldest one's age", async () => {
+    await testCase("NB-1053", "outbox_* gauges are computed by the relay, not by every scrape");
+    const capture = captureMetrics(); // before the relay: its gauges bind at construction
+    try {
+      const r = new OutboxRelay(
+        pool,
+        kafka,
+        new ConfigService({ OUTBOX_BATCH_SIZE: "1000", OUTBOX_MAX_ATTEMPTS: "1" }),
+        logger,
+      );
+      expect(metricValue(await capture.scrape(), "outbox_pending")).toBe(-1); // no pass yet
+      await uow.runInTransaction(async () => {
+        await writer.add({ topic, key: "poison", value: {} });
+        await writer.add({ topic, key: "waiting", value: {} });
+      });
+      await pool.query(
+        "UPDATE outbox SET created_at = now() - interval '90 seconds' WHERE topic = $1 AND key = 'waiting'",
+        [topic],
+      );
+      brokerDown = true;
+      await r.relayOnce().catch(() => {}); // poison rejected (dead at 1), "waiting" kept
+      brokerDown = false;
+      await r.refreshStats();
+      const text = await capture.scrape();
+      expect(metricValue(text, "outbox_dead")).toBeGreaterThanOrEqual(1);
+      expect(metricValue(text, "outbox_pending")).toBeGreaterThanOrEqual(1);
+      expect(metricValue(text, "outbox_oldest_age_seconds")).toBeGreaterThanOrEqual(89);
+    } finally {
+      await pool.query("DELETE FROM outbox WHERE topic = $1", [topic]);
+      await capture.stop();
+    }
   });
 
   it("a retryable failure of part of a batch (queue full) is kept, never counted", async () => {

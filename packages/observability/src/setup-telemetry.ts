@@ -34,7 +34,7 @@ import { PrometheusExporter } from "@opentelemetry/exporter-prometheus";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
 import { type Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { MeterProvider } from "@opentelemetry/sdk-metrics";
+import { AggregationType, MeterProvider } from "@opentelemetry/sdk-metrics";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 import Pyroscope from "@pyroscope/nodejs";
@@ -53,6 +53,9 @@ export { TELEMETRY_HANDLE, type TelemetryHandle };
  * keeps the two in step).
  */
 export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.43.0";
+
+/** Meters of library instrumentations whose metrics are not exported. */
+export const THIRD_PARTY_METERS = ["@opentelemetry/instrumentation-undici"] as const;
 
 export interface SetupTelemetryOptions {
   serviceName?: string;
@@ -97,11 +100,29 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
 
   // ─── Metrics (Prometheus) ──────────────────────────────────────────────────
   // preventServerStart: AdminServerService serves /metrics, not the exporter.
-  const prometheusExporter = new PrometheusExporter({ preventServerStart: true });
+  // The exposition is the metrics contract shared with golang-basics: the
+  // instrument names are the Prometheus names (the exporter appends nothing
+  // but `_total` to a counter that lacks it, never a unit), and no OTel
+  // extras ride along — no otel_scope_* label on every series, no
+  // target_info (build_info carries the version; the scrape adds the
+  // service and instance labels).
+  const prometheusExporter = new PrometheusExporter({
+    preventServerStart: true,
+    withoutScopeInfo: true,
+    withoutTargetInfo: true,
+  });
 
   const meterProvider = new MeterProvider({
     resource,
     readers: [prometheusExporter],
+    // Library instrumentations are here for their spans. Their metrics would
+    // be a second, differently named and labelled view of what the packages
+    // already measure (undici: http_client_request_duration with the target
+    // host as a label), so they are dropped.
+    views: THIRD_PARTY_METERS.map((meterName) => ({
+      meterName,
+      aggregation: { type: AggregationType.DROP },
+    })),
   });
   metrics.setGlobalMeterProvider(meterProvider);
 
@@ -139,7 +160,10 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   }
 
   // ─── Default Node.js process metrics ──────────────────────────────────────
-  registerNodeMetrics(metrics.getMeter("nodejs"));
+  registerNodeMetrics(metrics.getMeter("nodejs"), {
+    version: serviceVersion,
+    revision: process.env["GIT_COMMIT"] ?? "unknown",
+  });
 
   // ─── Pyroscope continuous profiling ───────────────────────────────────────
   // Wall-clock CPU samples shipped to a Pyroscope server. No-op when

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AppLogger, pinoLogger } from "@base/logger";
-import { testCase } from "@base/testing";
+import { captureMetrics, metricValue, testCase } from "@base/testing";
 
 import { type ReadinessCheck, ReadinessService } from "./readiness.service.js";
 
@@ -31,6 +31,19 @@ describe("ReadinessService", () => {
       ok: false,
       checks: { db: "ok", kafka: "not connected" },
     });
+  });
+
+  it("exports each check's last result as health_check_up{check,critical}", async () => {
+    await testCase("NB-1046", "readiness checks are visible on /metrics");
+    const capture = captureMetrics();
+    try {
+      await service([ok, { ...failing, optional: true }]).check();
+      const text = await capture.scrape();
+      expect(metricValue(text, "health_check_up", { check: "db", critical: "true" })).toBe(1);
+      expect(metricValue(text, "health_check_up", { check: "kafka", critical: "false" })).toBe(0);
+    } finally {
+      await capture.stop();
+    }
   });
 
   it("a failing optional check is degraded but still ready", async () => {

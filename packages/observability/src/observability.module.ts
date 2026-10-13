@@ -6,7 +6,6 @@ import {
   type ConfigView,
 } from "./admin-server.service.js";
 import { CrashReportService } from "./crash-report.service.js";
-import { DbMetricsService } from "./db-metrics.service.js";
 import { HeapSnapshotService } from "./heap-snapshot.service.js";
 import { IntegrationsReportService } from "./integrations-report.service.js";
 import { OtelShutdownService } from "./otel-shutdown.service.js";
@@ -28,8 +27,6 @@ export interface ObservabilityModuleOptions {
    * server (redact() from @base/logger). Without it the route is absent (404).
    */
   configSnapshot?: () => ConfigView;
-  /** Register DbMetricsService (requires PG_POOL). */
-  enableDbMetrics?: boolean;
   /**
    * Register HeapSnapshotService — listens for SIGUSR2, polls heap usage,
    * captures + uploads V8 snapshots. Optional S3 upload via HEAP_SNAPSHOT_S3_BUCKET.
@@ -62,9 +59,6 @@ export class ObservabilityModule {
       IntegrationsReportService,
     ];
 
-    if (options.enableDbMetrics === true) {
-      providers.push(DbMetricsService);
-    }
     if (options.enableHeapSnapshot === true) {
       providers.push(HeapSnapshotService);
     }

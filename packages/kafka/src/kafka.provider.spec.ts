@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppLogger, pinoLogger } from "@base/logger";
-import { meta, testCase } from "@base/testing";
+import { captureMetrics, meta, metricValue, testCase } from "@base/testing";
 
 import { KafkaSendError } from "./kafka-errors.js";
 import { KafkaProducerService } from "./kafka.provider.js";
@@ -166,5 +166,42 @@ describe("KafkaProducerService", () => {
     const outcome = expect(sent).rejects.toMatchObject({ kind: "queue_full" });
     await vi.advanceTimersByTimeAsync(400);
     await outcome;
+  });
+
+  it("counts sent messages by topic and result, and times every send", async () => {
+    await testCase("NB-1042", "kafka_producer_records_total / _send_duration_seconds");
+    const capture = captureMetrics();
+    try {
+      const svc = new TestService([() => fake()]);
+      await expect(svc.send(record, { waitMs: 0 })).rejects.toMatchObject({
+        kind: "not_connected",
+      });
+      svc.onApplicationBootstrap();
+      await vi.advanceTimersByTimeAsync(0);
+      await svc.send({ topic: "t", messages: [{ value: "a" }, { value: "b" }] }, { waitMs: 0 });
+      const text = await capture.scrape();
+      expect(
+        metricValue(text, "kafka_producer_records_total", {
+          client: "producer",
+          topic: "t",
+          result: "ok",
+        }),
+      ).toBe(2);
+      expect(
+        metricValue(text, "kafka_producer_records_total", {
+          client: "producer",
+          topic: "t",
+          result: "not_connected",
+        }),
+      ).toBe(1);
+      expect(
+        metricValue(text, "kafka_producer_send_duration_seconds_count", {
+          client: "producer",
+          topic: "t",
+        }),
+      ).toBe(2);
+    } finally {
+      await capture.stop();
+    }
   });
 });

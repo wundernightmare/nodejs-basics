@@ -87,7 +87,7 @@ export const LOG_EVENTS: readonly LogEvent[] = [
     level: "warn",
     description:
       "Kafka rejected outbox rows for good (too large, invalid); they count towards " +
-      "OUTBOX_MAX_ATTEMPTS and end up in `outbox.dead`.",
+      "OUTBOX_MAX_ATTEMPTS and end up in `outbox_dead`.",
     fields: ["error.code", "error.message", "outbox.poison", "outbox.failed", "outbox.sent"],
     source: "packages/outbox",
   },

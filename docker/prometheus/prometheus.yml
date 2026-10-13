@@ -1,16 +1,30 @@
 global:
   scrape_interval: 15s
 
+# Alert rules: the set golang-basics ships, on the shared metric names.
+rule_files:
+  - /etc/prometheus/rules.yml
+
 # The apps' admin servers (/metrics), at the host ports both ways of running
 # them use: `just dev` / `just dev-worker` pass --admin-port 9091 / 9093
 # (scripts/dev.mjs) and `just stack-up` publishes the containers' 9090 there
 # (docker/stack.yml). So one config covers apps on the host and in the stack.
 # host.docker.internal is mapped to the host gateway in observability.yml
-# (Docker on Linux has no such name by default; Podman does).
+# (Docker on Linux has no such name by default; Podman does). The `service`
+# label is what the rules and the dashboard key on.
 scrape_configs:
   - job_name: api
     static_configs:
       - targets: ["host.docker.internal:9091"]
+        labels: { service: api }
   - job_name: worker
     static_configs:
       - targets: ["host.docker.internal:9093"]
+        labels: { service: worker }
+  # The broker's own metrics — consumer-group lag among them (docker/deps.yml
+  # turns them on). Prometheus shares the deps network, so by service name.
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+        labels: { service: redpanda }

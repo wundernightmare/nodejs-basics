@@ -288,6 +288,7 @@ export class ResilientClient {
   readonly #breaker: CircuitBreaker<[Dispatcher.RequestOptions], Dispatcher.ResponseData>;
   readonly #shortLived: boolean;
   readonly #retryStatusCodes: ReadonlySet<number>;
+  #retries = 0;
   readonly #retryErrorCodes: ReadonlySet<string>;
   readonly #rejectOnRateLimit: boolean;
   readonly #maxRetries: number;
@@ -344,6 +345,11 @@ export class ResilientClient {
   }
 
   /** Current circuit breaker state. */
+  /** Retries sent so far (attempts after the first) — http_client_retries_total. */
+  get retries(): number {
+    return this.#retries;
+  }
+
   get breakerState(): "closed" | "open" | "halfOpen" {
     if (this.#breaker.opened) return "open";
     if (this.#breaker.halfOpen) return "halfOpen";
@@ -577,6 +583,7 @@ export class ResilientClient {
    * spec fields without re-allocating a config object every attempt.
    */
   #backoff(attempt: number): Promise<void> {
+    this.#retries++;
     const delay = computeJitteredDelay(
       {
         minTimeout: this.#minTimeout,

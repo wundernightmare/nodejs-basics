@@ -8,7 +8,7 @@ export type OutboundErrorKind = "transient" | "fatal";
 export class OutboundError extends Error {
   constructor(
     public readonly kind: OutboundErrorKind,
-    /** Short label for metric `error_type` attribute. */
+    /** Short label: the `outcome` of http_client_requests_total when no response came back. */
     public readonly errorType: string,
     message: string,
     /** The original thrown value. */

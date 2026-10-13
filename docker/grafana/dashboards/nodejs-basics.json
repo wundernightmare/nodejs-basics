@@ -1,7 +1,9 @@
 {
   "uid": "nodejs-basics",
   "title": "nodejs-basics",
-  "tags": ["nodejs-basics"],
+  "tags": [
+    "nodejs-basics"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -14,7 +16,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "API \u2014 RED",
+      "title": "API — RED",
       "id": 1,
       "collapsed": false,
       "gridPos": {
@@ -64,9 +66,9 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum by (http_request_method, http_route) (rate(http_server_request_duration_count{job=\"api\"}[1m]))",
-          "legendFormat": "{{http_request_method}} {{http_route}}"
+          "expr": "sum by (method, route) (rate(http_requests_total{job=\"api\"}[1m]))",
+          "legendFormat": "{{method}} {{route}}",
+          "refId": "A"
         }
       ],
       "description": "Rate: every finished request, by method and route template."
@@ -110,18 +112,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "(sum(rate(http_server_request_duration_count{job=\"api\",http_response_status_code=~\"5..\"}[1m])) or vector(0)) / sum(rate(http_server_request_duration_count{job=\"api\"}[1m]))",
-          "legendFormat": "5xx ratio"
+          "expr": "(sum(rate(http_requests_total{job=\"api\",status=~\"5..\"}[1m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[1m]))",
+          "legendFormat": "5xx ratio",
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "B",
-          "expr": "(sum(rate(http_server_request_duration_count{job=\"api\",http_response_status_code=~\"4..\"}[1m])) or vector(0)) / sum(rate(http_server_request_duration_count{job=\"api\"}[1m]))",
-          "legendFormat": "4xx ratio"
+          "expr": "(sum(rate(http_requests_total{job=\"api\",status=~\"4..\"}[1m])) or vector(0)) / sum(rate(http_requests_total{job=\"api\"}[1m]))",
+          "legendFormat": "4xx ratio",
+          "refId": "B"
         }
       ],
       "description": "Errors: share of requests answered 5xx (the SLO signal) and 4xx (client errors; a jump usually means a contract change)."
@@ -142,7 +144,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "custom": {
             "lineWidth": 1,
             "fillOpacity": 10
@@ -165,30 +167,30 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_server_request_duration_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p50"
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p95"
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "C",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "p99"
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
         }
       ],
-      "description": "Duration: server-side request latency quantiles over 5 minutes (http.server.request.duration, ms)."
+      "description": "Duration: server-side request latency quantiles over 5 minutes (http_request_duration_seconds)."
     },
     {
       "type": "timeseries",
@@ -206,7 +208,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ms",
+          "unit": "s",
           "custom": {
             "lineWidth": 1,
             "fillOpacity": 10
@@ -229,15 +231,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_bucket{job=\"api\"}[5m])))",
-          "legendFormat": "{{http_route}}"
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{job=\"api\"}[5m])))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
         }
       ]
     },
     {
       "type": "timeseries",
-      "title": "Errors by type",
+      "title": "Errors by status",
       "id": 6,
       "datasource": {
         "type": "prometheus",
@@ -274,12 +276,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum by (error_type, http_response_status_code) (rate(errors_total{job=\"api\"}[1m]))",
-          "legendFormat": "{{http_response_status_code}} {{error_type}}"
+          "expr": "sum by (status) (rate(http_requests_total{job=\"api\",status=~\"[45]..\"}[1m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(http_unhandled_errors_total{job=\"api\"}[1m]))",
+          "legendFormat": "unhandled (500 nobody planned)",
+          "refId": "B"
         }
       ],
-      "description": "The domain error behind each 4xx/5xx (errors_total, from the global problem+json filter)."
+      "description": "4xx/5xx responses by status (http_requests_total), and the 500s nobody planned (http_unhandled_errors_total: a bug — the log line has the stack). The error class of each is in the logs and the trace."
     },
     {
       "type": "timeseries",
@@ -320,9 +331,9 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum(http_server_active_requests{job=\"api\"})",
-          "legendFormat": "in flight"
+          "expr": "sum(http_requests_in_flight{job=\"api\"})",
+          "legendFormat": "in flight",
+          "refId": "A"
         }
       ]
     },
@@ -341,7 +352,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Events / s",
+      "title": "Events and jobs / s",
       "id": 9,
       "datasource": {
         "type": "prometheus",
@@ -378,25 +389,25 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum(rate(worker_tasks_consumed_total{job=\"worker\"}[1m]))",
-          "legendFormat": "consumed from Kafka"
+          "expr": "sum by (result) (rate(kafka_consumer_records_total{job=\"worker\"}[1m]))",
+          "legendFormat": "consumed: {{result}}",
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "B",
-          "expr": "sum(rate(worker_tasks_processed_total{job=\"worker\"}[1m]))",
-          "legendFormat": "processed by BullMQ"
+          "expr": "sum by (result) (rate(job_runs_total{job=\"worker\"}[1m]))",
+          "legendFormat": "jobs: {{result}}",
+          "refId": "B"
         }
       ],
-      "description": "task.created events taken off Kafka and jobs finished by the BullMQ processor; a growing gap is a backlog."
+      "description": "Records the worker consumed from Kafka by outcome (kafka_consumer_records_total) and the jobs it ran by result (job_runs_total)."
     },
     {
       "type": "timeseries",
-      "title": "Backlog (consumed \u2212 processed, 15 m)",
+      "title": "Consumer lag (from the broker)",
       "id": 10,
       "datasource": {
         "type": "prometheus",
@@ -433,21 +444,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum(increase(worker_tasks_consumed_total{job=\"worker\"}[15m])) - sum(increase(worker_tasks_processed_total{job=\"worker\"}[15m]))",
-          "legendFormat": "backlog"
+          "expr": "max by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum)",
+          "legendFormat": "{{redpanda_group}}",
+          "refId": "A"
         }
-      ]
+      ],
+      "description": "The consumer group's lag as the broker sees it (Redpanda /public_metrics, docker/deps.yml turns it on) — not exported by the apps."
     },
     {
       "type": "timeseries",
-      "title": "Outbox pending",
+      "title": "Outbox",
       "id": 17,
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Events committed by the api but not yet on Kafka (@base/outbox). Flat at ~0 normally; growing = the relay cannot publish.",
+      "description": "Events committed by the api but not yet on Kafka (@base/outbox), and the ones the broker rejected for good. Pending flat at ~0 normally; growing = the relay cannot publish.",
       "gridPos": {
         "h": 8,
         "w": 8,
@@ -479,9 +491,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
           "expr": "max(outbox_pending{job=\"api\"})",
-          "legendFormat": "pending"
+          "legendFormat": "pending",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(outbox_dead{job=\"api\"})",
+          "legendFormat": "dead",
+          "refId": "B"
         }
       ]
     },
@@ -549,7 +570,9 @@
       "options": {
         "colorMode": "background",
         "reduceOptions": {
-          "calcs": ["lastNotNull"]
+          "calcs": [
+            "lastNotNull"
+          ]
         }
       },
       "targets": [
@@ -580,7 +603,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "ns",
+          "unit": "s",
           "custom": {
             "lineWidth": 1,
             "fillOpacity": 10
@@ -603,16 +626,16 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "nodejs_eventloop_delay_p99",
-          "legendFormat": "{{job}}"
+          "expr": "nodejs_eventloop_delay_seconds{quantile=\"0.99\"}",
+          "legendFormat": "{{job}}",
+          "refId": "A"
         }
       ],
-      "description": "Saturation: a blocked event loop delays every request."
+      "description": "Saturation: a blocked event loop delays every request (p99 over a 10 s window)."
     },
     {
       "type": "timeseries",
-      "title": "Heap used",
+      "title": "Heap",
       "id": 14,
       "datasource": {
         "type": "prometheus",
@@ -649,9 +672,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "nodejs_heap_size_used",
-          "legendFormat": "{{job}}"
+          "expr": "nodejs_heap_used_bytes",
+          "legendFormat": "{{job}} used",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "nodejs_heap_limit_bytes",
+          "legendFormat": "{{job}} limit",
+          "refId": "B"
         }
       ]
     },
@@ -694,21 +726,21 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
-          "expr": "sum by (db_client_connection_state) (db_client_connection_count{job=\"api\"})",
-          "legendFormat": "{{db_client_connection_state}}"
+          "expr": "sum by (job, pool, state) (db_pool_connections)",
+          "legendFormat": "{{job}} {{pool}} {{state}}",
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "B",
-          "expr": "sum(db_client_connection_pending_requests{job=\"api\"})",
-          "legendFormat": "waiting for a connection"
+          "expr": "sum by (job, pool) (db_pool_pending_acquires)",
+          "legendFormat": "{{job}} {{pool}} waiting for a connection",
+          "refId": "B"
         }
       ],
-      "description": "pg.Pool connections by state; anything waiting means the pool is too small or queries are slow."
+      "description": "Connections of each pg.Pool (primary, readonly) by state; anything waiting means the pool is too small or queries are slow."
     },
     {
       "type": "timeseries",
@@ -749,18 +781,18 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "A",
           "expr": "max by (job) (valkey_client_connected)",
-          "legendFormat": "{{job}} connected"
+          "legendFormat": "{{job}} connected",
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "refId": "B",
-          "expr": "sum by (job) (valkey_client_command_queue_size)",
-          "legendFormat": "{{job}} queued commands"
+          "expr": "sum by (job) (increase(valkey_client_reconnects_total[5m]))",
+          "legendFormat": "{{job}} reconnects (5 m)",
+          "refId": "B"
         }
       ]
     }

@@ -2,11 +2,18 @@ import { ConfigService } from "@nestjs/config";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { integration, meta, testCase, unique } from "@base/testing";
+import {
+  captureMetrics,
+  integration,
+  meta,
+  type MetricsCapture,
+  metricValue,
+  testCase,
+  unique,
+} from "@base/testing";
 
 import { BullMQJobQueue } from "./bullmq-job-queue.js";
 import { createBullMQConnection } from "./bullmq-connection.factory.js";
-import { BullMQMetricsService } from "./bullmq-metrics.service.js";
 import type { JobQueue } from "./job-queue.js";
 import { createPgBoss, PgBossJobQueue } from "./pgboss-job-queue.js";
 
@@ -46,7 +53,7 @@ const backends: Backend[] = [
       const connection = createBullMQConnection(
         new ConfigService({ VALKEY_URL: valkey.url("valkey") }),
       );
-      const queue = new BullMQJobQueue<{ n: number }>(name, connection, new BullMQMetricsService());
+      const queue = new BullMQJobQueue<{ n: number }>(name, connection);
       return Promise.resolve({ queue, close: () => queue.close() });
     },
   },
@@ -55,13 +62,17 @@ const backends: Backend[] = [
 describe.each(backends)("JobQueue on $name (integration)", (backend) => {
   meta({ epic: "nodejs-basics", feature: "jobs", owner: "@team-platform", tags: ["integration"] });
   const closers: Array<() => Promise<void>> = [];
+  let capture: MetricsCapture | undefined;
   afterAll(async () => {
     await Promise.all(closers.map((close) => close()));
+    await capture?.stop();
   });
 
   it.skipIf(backend.skip)("runs a job once per key, and counts what waits", async () => {
     await testCase("NB-1012", "send is idempotent per key; work runs each job");
-    const { queue, close } = await backend.open(unique("jobs-contract"));
+    capture = captureMetrics(); // before the queue: its instruments bind at construction
+    const name = unique("jobs-contract");
+    const { queue, close } = await backend.open(name);
     closers.push(close);
 
     await queue.send({ n: 1 }, "k1");
@@ -80,5 +91,28 @@ describe.each(backends)("JobQueue on $name (integration)", (backend) => {
     await done;
     expect(seen.toSorted((a, b) => a - b)).toEqual([1, 2]);
     await queue.ping();
+    await expect
+      .poll(async () =>
+        metricValue(await capture!.scrape(), "job_runs_total", {
+          queue: name,
+          result: "completed",
+        }),
+      )
+      .toBe(2);
+  });
+
+  it.skipIf(backend.skip)("counts a failed attempt that will be retried as retried", async () => {
+    await testCase("NB-1056", "job_runs_total sees failures on either backend");
+    capture ??= captureMetrics();
+    const name = unique("jobs-fail");
+    const { queue, close } = await backend.open(name);
+    closers.push(close);
+    await queue.send({ n: 1 }, "k");
+    void queue.work(() => Promise.reject(new Error("not yet")));
+    await expect
+      .poll(async () =>
+        metricValue(await capture!.scrape(), "job_runs_total", { queue: name, result: "retried" }),
+      )
+      .toBeGreaterThanOrEqual(1);
   });
 });

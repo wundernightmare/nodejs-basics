@@ -30,20 +30,21 @@ packages/
                          per-tenant DB rate limiter.
   database               pg.Pool with TLS, multi-host failover, password from a
                          mounted file, circuit breaker, AsyncLocalStorage
-                         transaction context. (No ORM — bring your own.)
+                         transaction context, pool + query metrics. (No ORM —
+                         bring your own.)
   cache                  Valkey/Redis client with config builder shared with
-                         BullMQ, OTel client metrics.
+                         BullMQ, client connection metrics.
   kafka                  Confluent Kafka producer (reconnecting, one error
                          type: KafkaSendError) + KafkaConsumerRunner (commit,
                          pause/backoff, tracing — you write handle()) +
-                         librdkafka config builder + OTel client metrics.
+                         librdkafka config builder + record and client metrics.
   outbox                 Transactional outbox: OutboxWriter (inside the UoW
                          transaction) + OutboxRelay (→ Kafka, at least once).
   jobs                   JobQueue port + BullMQ (Valkey) / pg-boss (Postgres)
-                         adapters, traced; BullMQ metrics, BullBoard wiring.
+                         adapters, traced and measured alike; BullBoard wiring.
   idempotency            Idempotency-Key interceptor + decorator with pluggable
                          KV store (default: Valkey).
-  observability          OpenTelemetry SDK setup, Node/HTTP/DB metrics,
+  observability          OpenTelemetry SDK setup, process/HTTP/readiness metrics,
                          admin server (/metrics, /livez, /readyz, /admin/*).
 ```
 
@@ -89,7 +90,7 @@ just obs                           # Jaeger :16686, Prometheus :9090, Grafana :3
 ```sh
 just stack-up                      # build + run deps + api + worker images
 curl -XPOST localhost:3000/tasks -H 'content-type: application/json' -d '{"title":"hi"}'
-curl -s localhost:9093/metrics | grep worker_tasks   # the worker drained the event
+curl -s localhost:9093/metrics | grep job_runs_total   # the worker ran the job
 just stack-down
 ```
 
@@ -429,8 +430,8 @@ can be set from an escape hatch.
   message at a time gains nothing from more; raise them for throughput, with
   the pod's memory limit.
 
-Watch `kafka.client.producer.queue.size` against
-`kafka.client.producer.queue.size.limit`.
+Watch `kafka_producer_queue_bytes` against
+`kafka_producer_queue_max_bytes`.
 
 #### Compression
 
@@ -490,7 +491,7 @@ partition. The handler says what retrying cannot fix — `KafkaPermanentError`
 not the message's fault: `KafkaBackpressureError` (the job queue is full or
 down) is waited out and never parked. Until the dead-letter topic exists, or
 with `none`, the message keeps its partition. Alert on
-`kafka.consumer.dead_lettered` (log: `kafka.dead_lettered`); replay a fixed
+`kafka_consumer_records_total{result="dead_lettered"}` (log: `kafka.dead_lettered`); replay a fixed
 batch by producing the dead-letter topic back to its source.
 
 #### TLS and SASL with your own CA
@@ -531,13 +532,20 @@ dead-letter topics are provisioned like any other.
 
 #### Observability
 
-- Metrics come from librdkafka's statistics (`kafkaClientMetrics`,
-  `statistics.interval.ms`): `kafka.client.brokers.up`,
-  `kafka.client.request.errors`, `kafka.client.producer.queue.size` /
-  `.limit`, `kafka.client.consumer.lag.max` / `.sum`,
-  `kafka.client.consumer.rebalances`, plus the runner's
-  `kafka.consumer.dead_lettered`. No topic or partition labels — with
-  hundreds of topics that is a cardinality bomb; lag is the max and the sum.
+- Metrics: what the app does with records — `kafka_producer_records_total`
+  / `kafka_producer_send_duration_seconds` (`send()`, the dead-letter sends
+  included) and `kafka_consumer_records_total{result}` /
+  `kafka_consumer_handler_duration_seconds`, `kafka_consumer_rebalances_total`,
+  `kafka_consumer_assigned_partitions`, `kafka_consumer_commit_errors_total`
+  (the runner) — and what only the client sees, from librdkafka's statistics
+  (`kafkaClientMetrics`, `statistics.interval.ms`): `kafka_client_brokers_up`,
+  `kafka_client_request_errors_total`, `kafka_producer_queue_bytes` /
+  `_max_bytes`. The `topic` label is a topic named in the code or the
+  subscription (a regex match counts as `other`); no partition label.
+  Consumer lag is not exported by the apps: it is the broker's number
+  (Redpanda `redpanda_kafka_consumer_group_lag_sum{redpanda_group}` with
+  `enable_consumer_group_metrics`, docker/deps.yml; kafka-exporter or Burrow
+  on Kafka) — one series per group, there even when every consumer is down.
 - Traces: `send()` makes a producer span and puts `traceparent` in the record
   headers; the runner continues it in a `process` span, so a request, its
   outbox row, the record and the worker's job are one trace.
@@ -655,7 +663,7 @@ otherwise. Both pass the same contract test (`job-queue.integration.spec.ts`).
 | Load on the database | none | job writes, autovacuum on `pgboss.job` |
 | Features | rate limits, priorities, flows, repeatable jobs, BullBoard UI | priorities, cron, throttling, dead-letter queues, no UI here |
 | Schema | none | pg-boss owns the `pgboss` schema and migrates it on start; the one schema not in `migrations/` |
-| Observability here | `bullmq.job.*` metrics | spans only; `waiting()` is a `count(*)` |
+| Observability here | `job_runs_total` / `job_duration_seconds`, spans | the same; `waiting()` is a `count(*)` |
 
 Pick pg-boss when jobs are modest and one less moving part matters. Pick
 BullMQ for volume, low latency, or its rate limiting and flows.
@@ -728,18 +736,12 @@ it — Prometheus is just unscraped, traces are dropped.
 
 - **Metrics**: Prometheus scrapes the admin `/metrics` of the api (host 9091)
   and the worker (host 9093) — the same ports under `just dev` and
-  `just stack-up`. Grafana opens on the provisioned `nodejs-basics` dashboard
-  (`docker/grafana/dashboards/`): RED for the api (rate, 5xx / 4xx ratio,
-  p50/p95/p99), worker throughput and backlog, event loop, heap, pg pool,
-  Valkey.
-- **Kafka client metrics** come from librdkafka's own statistics
-  (`KAFKA_STATISTICS_INTERVAL_MS`, 15 s; `stats_cb` → `@base/kafka`
-  `kafkaClientMetrics`), only what an application acts on: brokers up,
-  request errors, the producer's local queue against its bound
-  (`kafka_client_producer_queue_size` / `_limit`), consumer lag (max and
-  sum), rebalances. No series has a topic or partition label: 4–5 series per
-  client whether it uses one topic or hundreds — per-partition lag is the
-  broker side's job.
+  `just stack-up` — and the broker's `/public_metrics`, and evaluates
+  `docker/prometheus/rules.yml`. Grafana opens on the provisioned
+  `nodejs-basics` dashboard (`docker/grafana/dashboards/`): RED for the api
+  (rate, 5xx / 4xx ratio, p50/p95/p99), worker records and jobs, consumer
+  lag from the broker, outbox, event loop, heap, pg pools, Valkey. What each
+  metric is: [Metrics](#metrics) below.
 - **Back-pressure**: `KafkaProducerService.send()` fails only with a
   `KafkaSendError` — `kind` + `retryable` from the `KAFKA_SEND_ERRORS`
   registry (JSDoc lists each kind and what to do). It waits out a full local
@@ -756,6 +758,47 @@ it — Prometheus is just unscraped, traces are dropped.
   `COMMIT`) → `send tasks.events` → worker `process tasks.events` →
   `send task-events` → `process task-events`. Every log line carries the
   `trace.id` of the span it was written in.
+
+### Metrics
+
+One contract with golang-basics: the same names, labels and units, so one
+set of alerts and dashboards reads either repo. `--metrics-reference` prints
+the whole list (`METRIC_REGISTRY`, @base/observability — the spec keeps it
+equal to the code; e2e checks that every name the rules and the dashboard
+read is on a live `/metrics`).
+
+| Area | Metrics |
+| --- | --- |
+| HTTP in | `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route}`, `http_requests_in_flight`, `http_unhandled_errors_total` |
+| HTTP out (ResilientPool) | `http_client_requests_total{target,method,outcome}`, `http_client_request_duration_seconds{target,method}`, `http_client_retries_total{target}`, `http_client_circuit_breaker_state{target}` |
+| Postgres | `db_pool_connections{pool,state}`, `db_pool_max_connections{pool}`, `db_pool_pending_acquires{pool}`, `db_query_duration_seconds{pool,operation}`, `db_query_errors_total{pool,operation}` |
+| Kafka | `kafka_producer_records_total{client,topic,result}`, `kafka_producer_send_duration_seconds{client,topic}`, `kafka_consumer_records_total{topic,result}`, `kafka_consumer_handler_duration_seconds{topic}`, `kafka_consumer_commit_errors_total`, `kafka_consumer_rebalances_total{event}`, `kafka_consumer_assigned_partitions`, `kafka_client_brokers_up{client}`, `kafka_client_request_errors_total{client}`, `kafka_producer_queue_bytes`, `kafka_producer_queue_max_bytes` |
+| Outbox | `outbox_pending`, `outbox_dead`, `outbox_oldest_age_seconds` |
+| Jobs | `job_runs_total{queue,result}`, `job_duration_seconds{queue}` |
+| Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total` |
+| Readiness, build | `health_check_up{check,critical}`, `app_integration_enabled{integration}`, `build_info{version,revision}` |
+| Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `nodejs_heap_{used,total,limit}_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
+
+The rules behind it:
+
+- **Base units in the name** (`_seconds`, `_bytes`, counters `_total`). The
+  OTel instruments carry the Prometheus name itself: the exporter appends no
+  unit, and `setupTelemetry` turns off its `otel_scope_*` labels and
+  `target_info` — the scrape adds `service` and `instance`.
+- **Bounded labels only**: a route template (`unmatched` for a 404/405), a
+  standard method or `_OTHER`, a status code (499: the client left), a
+  configured target or pool, a topic named in the code or the subscription
+  (else `other`), an operation named with `withDbOperation()` (else the
+  statement's keyword). Never an id, a URL, a key or an error message.
+- **Not in the app what the server measures better**: consumer-group lag
+  (the broker: `redpanda_kafka_consumer_group_lag_sum{redpanda_group}`),
+  server-side Postgres / Valkey state (their exporters), job queue depth
+  (Valkey / `pgboss.job`). Library instrumentations are kept for their
+  spans; their metrics are dropped (undici would add a second, host-labelled
+  `http_client_*`).
+- **Nothing twice**: no count that another metric already gives (the
+  worker's events are `kafka_consumer_records_total`, its jobs
+  `job_runs_total`; dead-lettered records are a `result`).
 
 ### How spans are made
 

@@ -6,6 +6,7 @@ import { pinoLogger } from "@base/logger";
 import { DependencyCircuitBreaker } from "@base/resilience";
 
 import { guardPgPool } from "./pg-deadline.js";
+import { measurePgPool } from "./pg-metrics.js";
 import { pgTarget, tracePgPool } from "./pg-tracing.js";
 import { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 
@@ -68,6 +69,8 @@ function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"):
   tracePgPool(pool, { ...pgTarget(built.poolOptions), "db.client.connection.pool.name": label });
   // The request budget (pg-deadline.ts); registered after tracing so it runs first.
   guardPgPool(pool);
+  // db_pool_* and db_query_* (pg-metrics.ts), labelled with this pool.
+  measurePgPool(pool, label);
 
   // Each fresh connection — including a libpq-native reconnect after
   // a primary failover — receives the full session-init batch. Errors

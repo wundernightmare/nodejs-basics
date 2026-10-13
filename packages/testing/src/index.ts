@@ -8,6 +8,7 @@
  * - `captureLogs`: a real pino logger writing into memory
  * - `captureSpans`: the real tracing SDK with an in-memory exporter
  * - `metricValue`: read a sample out of Prometheus text
+ * - `captureMetrics`: the real metrics SDK read through the Prometheus exporter
  * - `propertyRuns`: the fast-check budget of a property spec (FC_NUM_RUNS)
  */
 export {
@@ -23,6 +24,7 @@ export { logEnvelopeProblems } from "./log-envelope.js";
 export { captureLogs, type LogCapture } from "./logs.js";
 export { meta, severity, Severity, testCase, type Meta } from "./meta.js";
 export { metricValue } from "./metrics.js";
+export { captureMetrics, type MetricsCapture } from "./metrics-capture.js";
 export { propertyRuns } from "./property.js";
 export { captureSpans, type SpanCapture } from "./spans.js";
 export { integration, unique, type Integration, type Service } from "./services.js";

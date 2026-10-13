@@ -1287,7 +1287,7 @@ const REGISTRY = [
     required: false,
     default: "15000",
     description:
-      "statistics.interval.ms — how often librdkafka reports the stats behind the kafka.client.* " +
+      "statistics.interval.ms — how often librdkafka reports the stats behind the kafka_client_* / kafka_producer_queue_* " +
       "metrics. 0 disables them. The report lists every topic and partition " +
       "(~2.4 MB / ~5 ms to parse at 300 topics × 12 partitions): raise it for thousands of topics.",
     usedIn: ["kafka"],
@@ -1400,7 +1400,7 @@ const REGISTRY = [
     description:
       "Failed sends after which an outbox row is no longer published. Only a rejected record " +
       "counts (KAFKA_SEND_ERRORS: too large, invalid) — an outage, back-pressure or a missing " +
-      "topic never does. The row stays with last_error; outbox.dead counts them.",
+      "topic never does. The row stays with last_error; outbox_dead counts them.",
     usedIn: ["outbox"],
   },
 

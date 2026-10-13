@@ -26,7 +26,7 @@ export class IntegrationsReportService implements OnModuleInit {
     );
     metrics
       .getMeter("app")
-      .createObservableGauge("app.integration.enabled", {
+      .createObservableGauge("app_integration_enabled", {
         description:
           "1 when the integration is on in this process, 0 when its connection variable is unset.",
       })
