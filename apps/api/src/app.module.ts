@@ -41,7 +41,6 @@ const kafka = integrationEnabled("kafka");
       telemetry,
       // GET /admin/config — the effective ENV_REGISTRY values (redacted).
       configSnapshot,
-      enableDbMetrics: true,
       enableHeapSnapshot: true,
       enableCrashReport: true,
       readinessChecks: {

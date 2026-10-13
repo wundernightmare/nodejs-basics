@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 
 import { type BeforeApplicationShutdown, Inject, Injectable } from "@nestjs/common";
+import { metrics } from "@opentelemetry/api";
 
 import { processEnv, readInt } from "@base/config";
 import { AppLogger } from "@base/logger";
@@ -75,18 +76,34 @@ export const READINESS_CHECKS = Symbol("READINESS_CHECKS");
  * — the same order as golang-basics' httpx.Server.Run (SetReady(false) → API → admin),
  * so load balancers stop routing before the socket goes away and probes keep
  * answering while the API drains.
+ *
+ * Each check's last result is health_check_up{check,critical} (1 passing,
+ * 0 failing), as of the last /readyz probe — the metric golang-basics
+ * exports under the same name.
  */
 @Injectable()
 export class ReadinessService implements BeforeApplicationShutdown {
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly registered: ReadinessCheck[] = [];
   private ready = true;
+  private last: { name: string; up: boolean; optional: boolean }[] = [];
 
   constructor(
     @Inject(READINESS_CHECKS) private readonly checks: ReadinessCheck[],
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(ReadinessService.name);
+    metrics
+      .getMeter("health")
+      .createObservableGauge("health_check_up", {
+        description:
+          "Readiness check result as of the last probe: 1 passing, 0 failing; critical checks gate /readyz.",
+      })
+      .addCallback((result) => {
+        for (const { name, up, optional } of this.last) {
+          result.observe(up ? 1 : 0, { check: name, critical: String(!optional) });
+        }
+      });
   }
 
   /** Adds (or replaces, by name) a readiness check at runtime. */
@@ -145,6 +162,11 @@ export class ReadinessService implements BeforeApplicationShutdown {
       }),
     );
 
+    this.last = results.map(({ name, value, optional }) => ({
+      name,
+      up: value === "ok",
+      optional,
+    }));
     const checks: Record<string, string> = {};
     let criticalFailing = false;
     let optionalFailing = false;

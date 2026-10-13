@@ -1,6 +1,7 @@
 import { KafkaJS } from "@confluentinc/kafka-javascript";
 import { Global, Injectable, OnApplicationBootstrap, OnApplicationShutdown } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { metrics } from "@opentelemetry/api";
 
 import { remainingMs } from "@base/common";
 import { AppLogger, ecsError } from "@base/logger";
@@ -8,7 +9,11 @@ import { AppLogger, ecsError } from "@base/logger";
 import { buildKafkaClientConfig, buildProducerConfig } from "./kafka-config.builder.js";
 import { KafkaSendError, toKafkaSendError } from "./kafka-errors.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
-import { type KafkaClientMetrics, kafkaClientMetrics } from "./kafka-metrics.js";
+import {
+  KAFKA_LATENCY_BUCKETS_SECONDS,
+  type KafkaClientMetrics,
+  kafkaClientMetrics,
+} from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
 import { Reconnect } from "./reconnect.js";
 
@@ -46,12 +51,30 @@ export interface KafkaSendOptions {
  *   - shutdown never waits for a connect in flight: kafkajs-compat waits for
  *     its metadata request (up to 30 s) before it can disconnect, and Nest
  *     ends the process once the close hooks return.
+ *
+ * Every send() counts its messages in kafka_producer_records_total{topic,
+ * result} (result: ok, or the KafkaSendError kind) and its time to the
+ * broker's ack — back-pressure waits included — in
+ * kafka_producer_send_duration_seconds{topic}. The consumer's dead-letter
+ * sends go through here too (topic = the dead-letter topic).
  */
 @Injectable()
 @Global()
 export class KafkaProducerService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly clientMetrics: KafkaClientMetrics;
+  private readonly records = metrics
+    .getMeter("kafka")
+    .createCounter("kafka_producer_records_total", {
+      description: "Records sent, by topic and result (ok, or the KafkaSendError kind).",
+    });
+  private readonly sendDuration = metrics
+    .getMeter("kafka")
+    .createHistogram("kafka_producer_send_duration_seconds", {
+      description: "Time from send() to the broker's acknowledgement (or failure), by topic.",
+      unit: "s",
+      advice: { explicitBucketBoundaries: KAFKA_LATENCY_BUCKETS_SECONDS },
+    });
   private producer: KafkaJS.Producer | undefined;
   private connected = false;
   private readonly reconnect = new Reconnect(
@@ -69,7 +92,7 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(KafkaProducerService.name);
-    // librdkafka statistics → kafka.client.* metrics (kafka-metrics.ts); one
+    // librdkafka statistics → kafka_client_* metrics (kafka-metrics.ts); one
     // handle for the logical producer, whichever client instance reports.
     this.clientMetrics = kafkaClientMetrics("producer");
   }
@@ -94,6 +117,26 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
   async send(
     record: KafkaJS.ProducerRecord,
     options: KafkaSendOptions = {},
+  ): Promise<KafkaJS.RecordMetadata[]> {
+    const started = performance.now();
+    const count = (result: string): void => {
+      this.sendDuration.record((performance.now() - started) / 1000, { topic: record.topic });
+      this.records.add(record.messages.length, { topic: record.topic, result });
+    };
+    try {
+      const metadata = await this.sendWaiting(record, options);
+      count("ok");
+      return metadata;
+    } catch (err) {
+      count((err as KafkaSendError).kind);
+      throw err;
+    }
+  }
+
+  /** send() without the metrics: retries local back-pressure within the budget. */
+  private async sendWaiting(
+    record: KafkaJS.ProducerRecord,
+    options: KafkaSendOptions,
   ): Promise<KafkaJS.RecordMetadata[]> {
     const budget = Math.max(
       0,

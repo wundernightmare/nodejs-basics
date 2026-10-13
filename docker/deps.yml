@@ -76,6 +76,17 @@ services:
       # demo/dev broker (the app's tasks.events topic is not pre-provisioned).
       - --set
       - redpanda.auto_create_topics_enabled=true
+      # Consumer-group lag on the broker's /public_metrics (port 9644):
+      # redpanda_kafka_consumer_group_lag_sum / _lag_max{redpanda_group} —
+      # what the KafkaConsumerLagHigh alert reads. The apps do not export lag:
+      # the broker has every group's number in one place. "partition" is
+      # needed for the lag to be computed (without it the gauges stay 0);
+      # it is recomputed every consumer_group_lag_collection_interval_sec (60 s).
+      # Cluster properties given here apply when the cluster is created; on an
+      # existing redpanda_data volume: rpk cluster config set
+      # enable_consumer_group_metrics '["group","partition","consumer_lag"]'.
+      - --set
+      - redpanda.enable_consumer_group_metrics=["group","partition","consumer_lag"]
       # Two Kafka listeners: INTERNAL (advertised as redpanda:29092 for app
       # containers) and HOST (advertised as localhost:9092 for host processes).
       # A client reconnects to the advertised address, so each must be reachable

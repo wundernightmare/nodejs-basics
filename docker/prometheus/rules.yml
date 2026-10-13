@@ -1,0 +1,125 @@
+# Starter alert rules (Prometheus rule format), loaded by docker/prometheus.yml
+# (rule_files). The same set as golang-basics' docker/observability/rules.yml,
+# on the same metric names — the metrics contract the two repos share.
+#
+# A starting point, not an SLO policy: thresholds are deliberately round and
+# `for:` windows short enough to see them fire locally. Copy into the
+# platform's rule repo and tune there. Every expression keys on the `service`
+# label the scrape config adds (prometheus.yml). Every app metric named here
+# and in the dashboard is checked against a live /metrics by the e2e suite
+# (e2e/tests/observability.spec.ts).
+#
+#   UI: http://localhost:9090/alerts
+
+groups:
+  - name: nodejs-basics-http
+    rules:
+      # RED: share of API responses that are 5xx, per service.
+      - alert: HighErrorRatio
+        expr: |
+          sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value | humanizePercentage }} of requests are 5xx"
+
+      # RED: p99 latency per route.
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum by (service, route, le) (rate(http_request_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }} {{ $labels.route }}: p99 {{ $value | humanizeDuration }}"
+
+      # A 500 nobody planned: a bug or an unmapped driver error. The
+      # "Unhandled error" log line carries the stack and the error.id.
+      - alert: HttpUnhandledErrors
+        expr: sum by (service) (increase(http_unhandled_errors_total[5m])) > 0
+        for: 1m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value }} unhandled errors in 5 min"
+
+  - name: nodejs-basics-health
+    rules:
+      # Scrape target down: the process (or its admin listener) is gone.
+      - alert: ServiceDown
+        expr: up{job=~"api|worker"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.service }} ({{ $labels.instance }}) is not scrapeable"
+
+      # Readiness: a critical check failing turns /readyz to 503.
+      - alert: ReadinessCheckFailing
+        expr: health_check_up{critical="true"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "{{ $labels.service }}: critical readiness check {{ $labels.check }} failing"
+
+      - alert: OptionalDependencyDegraded
+        expr: health_check_up{critical="false"} == 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }}: optional dependency {{ $labels.check }} down (serving degraded)"
+
+  - name: nodejs-basics-data
+    rules:
+      # Consumer-group lag, from the broker (Redpanda /public_metrics with
+      # enable_consumer_group_metrics, docker/deps.yml) — not from the pods:
+      # one number per group, there even when every consumer is down.
+      - alert: KafkaConsumerLagHigh
+        expr: max by (redpanda_group) (redpanda_kafka_consumer_group_lag_sum) > 1000
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "group {{ $labels.redpanda_group }}: {{ $value }} records behind"
+
+      # A consumer gave up on records and parked them on <topic>.dlq.
+      - alert: KafkaDeadLettering
+        expr: sum by (service, topic) (increase(kafka_consumer_records_total{result="dead_lettered"}[10m])) > 0
+        for: 1m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }}: records from {{ $labels.topic }} dead-lettered"
+
+      # The oldest unpublished outbox row: a backlog that moves is fine, an
+      # event older than a minute means Kafka (or the relay) is stuck.
+      - alert: OutboxStuck
+        expr: max by (service) (outbox_oldest_age_seconds) > 60
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }}: oldest outbox event is {{ $value | humanizeDuration }} old"
+
+      # A dead outbox row: the broker rejected the event OUTBOX_MAX_ATTEMPTS
+      # times and the relay gave up on it (docs/RUNBOOK.md, "Signals").
+      - alert: OutboxDeadEvents
+        expr: max by (service) (outbox_dead) > 0
+        for: 1m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }}: {{ $value }} outbox events dead (rejected by the broker)"
+
+      # Postgres pool saturation: connections in use vs the configured max.
+      - alert: DbPoolSaturated
+        expr: |
+          sum by (service, pool) (db_pool_connections{state="in_use"})
+            / max by (service, pool) (db_pool_max_connections) > 0.9
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }} ({{ $labels.pool }}): pool {{ $value | humanizePercentage }} in use"
+
+      # …and callers actually waiting for a connection.
+      - alert: DbPoolStarved
+        expr: max by (service, pool) (db_pool_pending_acquires) > 0
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $labels.service }} ({{ $labels.pool }}): {{ $value }} callers waiting for a connection"

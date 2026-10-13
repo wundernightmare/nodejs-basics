@@ -3,7 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppLogger, pinoLogger } from "@base/logger";
-import { meta, testCase } from "@base/testing";
+import { captureMetrics, meta, metricValue, testCase } from "@base/testing";
 
 import {
   KafkaBackpressureError,
@@ -184,5 +184,48 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     expect(() => {
       runner().runner.assertRunning();
     }).toThrow("not running");
+  });
+
+  it("counts each record once by its final outcome, the topic bounded by the subscription", async () => {
+    await testCase("NB-1041", "kafka_consumer_records_total / handler duration / commit errors");
+    const capture = captureMetrics();
+    try {
+      const count = async (labels: Record<string, string>): Promise<number> =>
+        metricValue(await capture.scrape(), "kafka_consumer_records_total", labels);
+
+      const ok = runner();
+      await ok.runner.handleMessage(payload());
+      await ok.runner.handleMessage({ ...payload(), topic: "matched-by-a-regex" });
+      ok.commitOffsets.mockRejectedValueOnce(new Error("rebalance in progress"));
+      await ok.runner.handleMessage(payload());
+
+      let calls = 0;
+      const flaky = runner(() =>
+        calls++ === 0 ? Promise.reject(new Error("once")) : Promise.resolve(),
+      );
+      await expect(flaky.runner.handleMessage(payload())).rejects.toThrow("once");
+      await flaky.runner.handleMessage(payload());
+
+      const parked = runner(failing(new KafkaPermanentError("bad")), {});
+      await parked.runner.handleMessage(payload());
+
+      const stuck = runner(failing(new KafkaPermanentError("bad")));
+      await expect(stuck.runner.handleMessage(payload())).rejects.toThrow("bad");
+      await expect(stuck.runner.handleMessage(payload())).rejects.toThrow("bad");
+
+      expect(await count({ topic: "t", result: "ok" })).toBe(2);
+      expect(await count({ topic: "other", result: "ok" })).toBe(1);
+      expect(await count({ topic: "t", result: "retried" })).toBe(1);
+      expect(await count({ topic: "t", result: "dead_lettered" })).toBe(1);
+      expect(await count({ topic: "t", result: "failed" })).toBe(1); // given up on once, retried since
+      const text = await capture.scrape();
+      expect(metricValue(text, "kafka_consumer_commit_errors_total")).toBe(1);
+      // Every attempt on "t" is timed: 2 ok + 2 flaky + 1 parked + 2 stuck.
+      expect(
+        metricValue(text, "kafka_consumer_handler_duration_seconds_count", { topic: "t" }),
+      ).toBe(7);
+    } finally {
+      await capture.stop();
+    }
   });
 });

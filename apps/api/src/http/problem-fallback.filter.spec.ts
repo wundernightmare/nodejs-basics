@@ -2,9 +2,25 @@ import type { ArgumentsHost } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
 
 import { PROBLEM_CONTENT_TYPE } from "@base/common";
-import { meta, testCase } from "@base/testing";
+import { captureMetrics, meta, metricValue, testCase } from "@base/testing";
 
 import { ProblemFallbackFilter } from "./problem-fallback.filter.js";
+
+function fakeHost(): ArgumentsHost {
+  const reply = {
+    status() {
+      return this;
+    },
+    header() {
+      return this;
+    },
+    send: () => Promise.resolve(),
+  };
+  const request = { url: "/tasks/1", routeOptions: { url: "/tasks/:id" } };
+  return {
+    switchToHttp: () => ({ getResponse: () => reply, getRequest: () => request }),
+  } as unknown as ArgumentsHost;
+}
 
 describe("ProblemFallbackFilter", () => {
   meta({ epic: "nodejs-basics", feature: "errors", owner: "@team-platform", tags: ["api"] });
@@ -40,5 +56,18 @@ describe("ProblemFallbackFilter", () => {
     expect(sent.body).toMatchObject({ status: 500, instance: "/tasks/1" });
     expect((sent.body as { errorId?: unknown }).errorId).toEqual(expect.any(String));
     expect(JSON.stringify(sent.body)).not.toContain("hunter2");
+  });
+
+  it("counts every unplanned error in http_unhandled_errors_total", async () => {
+    await testCase("NB-1036", "the 500s nobody planned are visible on /metrics");
+    const capture = captureMetrics();
+    try {
+      const filter = new ProblemFallbackFilter();
+      filter.catch(new Error("boom"), fakeHost());
+      filter.catch("not even an Error", fakeHost());
+      expect(metricValue(await capture.scrape(), "http_unhandled_errors_total")).toBe(2);
+    } finally {
+      await capture.stop();
+    }
   });
 });

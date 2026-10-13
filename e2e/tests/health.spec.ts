@@ -45,10 +45,12 @@ test.describe("health & observability", () => {
   test("every exported metric is in the metrics registry", async ({ request }) => {
     await meta(FEATURE);
     await testCase("NB-994", "/metrics never shows a metric --metrics-reference does not explain");
-    // The exporter renames (dots → _, unit and _total suffixes); HELP keeps the description.
-    const documented = new Set(METRIC_REGISTRY.map((m) => m.description));
+    // The exposition names are the registry's names (setup-telemetry.ts: no
+    // unit suffixes, no otel_scope_* labels, no target_info), and HELP is the
+    // registry's description.
+    const registry = new Map(METRIC_REGISTRY.map((m) => [m.name, m.description]));
     await request.get("/health"); // some HTTP traffic first
-    const undocumented: string[] = [];
+    const wrong: string[] = [];
     let families = 0;
     const scrapes = await Promise.all(
       [`${API_ADMIN_URL}/metrics`, `${WORKER_ADMIN_URL}/metrics`].map(async (url) =>
@@ -56,14 +58,14 @@ test.describe("health & observability", () => {
       ),
     );
     for (const text of scrapes) {
+      expect(text).not.toContain("otel_scope_");
       for (const m of text.matchAll(/^# HELP (\S+) (.*)$/gmu)) {
         const [, family = "", help = ""] = m;
         families++;
-        if (family !== "target_info" && !documented.has(help))
-          undocumented.push(`${family}: ${help}`);
+        if (registry.get(family) !== help) wrong.push(`${family}: ${help}`);
       }
     }
     expect(families).toBeGreaterThan(20); // the scrape itself still works
-    expect(undocumented).toEqual([]);
+    expect(wrong).toEqual([]);
   });
 });

@@ -60,9 +60,10 @@ It reverts by itself (`LOG_LEVEL_MAX_TTL`). One request only: send it with
 
 ## Signals
 
-What each means is in `--metrics-reference` (`watch:`); what to do:
+What each means is in `--metrics-reference` (`watch:`), the starter alerts
+are `docker/prometheus/rules.yml`; what to do:
 
-- **`outbox.dead` > 0** — events that will never be sent. `SELECT topic, key,
+- **`outbox_dead` > 0** — events that will never be sent. `SELECT topic, key,
   attempts, last_error FROM outbox WHERE attempts >= <OUTBOX_MAX_ATTEMPTS>`;
   fix the cause, then `UPDATE outbox SET attempts = 0 …` to resend or delete
   the rows.
@@ -71,28 +72,39 @@ What each means is in `--metrics-reference` (`watch:`); what to do:
   `x-request-timeout-ms` — never below `HTTP_REQUEST_TIMEOUT_MIN_MS`, so a
   client cannot produce them on purpose): the trace shows which Postgres /
   Valkey / HTTP call took the time.
-- **`outbox.pending` growing** — Kafka is down or slow: `kafka.client.brokers.up`,
-  the relay's warn logs. Nothing is lost; it drains when Kafka is back.
-- **`kafka.client.consumer.lag.max` growing** — the worker falls behind, the
-  job queue is down (warn "Downstream unavailable"), or a message keeps failing
-  while the dead-letter topic is missing (warn "Could not dead-letter"). Scale
-  the worker, fix the dependency, or provision `<topic>.dlq`; never move
-  offsets by hand.
-- **`kafka.consumer.dead_lettered` > 0** — the worker gave up on messages and
-  parked them on `<topic>.dlq` (log `kafka.dead_lettered`: the reason and the
-  error; the record's `dlq_*` headers say where it came from). Fix the
-  handler, then produce the parked records back to their source topic.
-- **`kafka.client.producer.queue.size` near `.limit`, or send() failing
-  `queue_full`** — the broker takes records slower than the app makes them
-  (or is down). The queue is bounded on purpose (README "Kafka" → "Memory"):
-  fix the broker side before raising `KAFKA_PRODUCER_QUEUE_MAX_KBYTES`
-  together with the pod's memory limit.
-- **`db.client.connection.pending_requests` > 0 for minutes** — the Postgres
-  pool is exhausted: slow queries (`pg_stat_activity` by `application_name`)
-  or `DATABASE_POOL_MAX` too small for the load.
-- **`http.client.circuit_breaker_state` = 1** — a dependency failed enough to
-  be cut off; calls fail fast until a probe succeeds. Look at the dependency.
-- **`nodejs.eventloop.delay.p99` high, or memory near the limit** — take a heap
+- **`http_unhandled_errors_total` rising** — a 500 nobody planned: the
+  "Unhandled error" log line has the stack and the `error.id` the client got.
+- **`outbox_oldest_age_seconds` over a minute** — Kafka is down or slow:
+  `kafka_client_brokers_up`, `kafka_producer_records_total{result!="ok"}`, the
+  relay's warn logs. Nothing is lost; it drains when Kafka is back.
+- **Consumer lag growing** (the broker's
+  `redpanda_kafka_consumer_group_lag_sum{redpanda_group="tasks-worker"}`) —
+  the worker falls behind, the job queue is down (warn "Downstream
+  unavailable"), or a message keeps failing while the dead-letter topic is
+  missing (`kafka_consumer_records_total{result="failed"}`, warn "Could not
+  dead-letter"). Scale the worker, fix the dependency, or provision
+  `<topic>.dlq`; never move offsets by hand.
+- **`kafka_consumer_records_total{result="dead_lettered"}` rising** — the
+  worker gave up on messages and parked them on `<topic>.dlq` (log
+  `kafka.dead_lettered`: the reason and the error; the record's `dlq_*`
+  headers say where it came from). Fix the handler, then produce the parked
+  records back to their source topic.
+- **`kafka_producer_queue_bytes` near `kafka_producer_queue_max_bytes`, or
+  send() failing `queue_full`** — the broker takes records slower than the app
+  makes them (or is down). The queue is bounded on purpose (README "Kafka" →
+  "Memory"): fix the broker side before raising
+  `KAFKA_PRODUCER_QUEUE_MAX_KBYTES` together with the pod's memory limit.
+- **`db_pool_pending_acquires` > 0 for minutes** — the Postgres pool is
+  exhausted: slow queries (`db_query_duration_seconds` by `operation`,
+  `pg_stat_activity` by `application_name`) or `DATABASE_POOL_MAX` too small
+  for the load.
+- **`job_runs_total{result="failed"}` rising** — jobs exhaust their attempts;
+  the worker's error logs name the job.
+- **`http_client_circuit_breaker_state` = 1** — a dependency failed enough to
+  be cut off; calls fail fast until a probe succeeds (2 = probing). Look at
+  the dependency.
+- **`nodejs_eventloop_delay_seconds{quantile="0.99"}` high, or
+  `nodejs_heap_used_bytes` near `nodejs_heap_limit_bytes`** — take a heap
   snapshot before the pod is killed: `curl -X POST :9090/debug/heapdump -H
   "Authorization: Bearer $ADMIN_TOKEN"` (written to the pod, or to S3 when
   `HEAP_SNAPSHOT_S3_BUCKET` is set); open it in Chrome DevTools → Memory.

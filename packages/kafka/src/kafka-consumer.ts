@@ -43,7 +43,7 @@
  */
 import { KafkaJS } from "@confluentinc/kafka-javascript";
 import type { ConfigService } from "@nestjs/config";
-import { metrics } from "@opentelemetry/api";
+import { metrics, type ObservableResult } from "@opentelemetry/api";
 
 import { readInt, readString } from "@base/config";
 import {
@@ -57,7 +57,7 @@ import {
 
 import { buildConsumerConfig, buildKafkaClientConfig } from "./kafka-config.builder.js";
 import { kafkaLogger } from "./kafka-log-creator.js";
-import { kafkaClientMetrics } from "./kafka-metrics.js";
+import { KAFKA_LATENCY_BUCKETS_SECONDS, kafkaClientMetrics } from "./kafka-metrics.js";
 import { traceKafkaMessage } from "./kafka-tracing.js";
 import type { KafkaProducerService } from "./kafka.provider.js";
 import { Reconnect } from "./reconnect.js";
@@ -124,17 +124,44 @@ export class KafkaConsumerRunner {
   private joined = false;
   private readonly failures = new Map<string, number>();
   /** Per partition: the message being retried and how often its handler failed. */
-  private readonly attempts = new Map<string, { offset: string; failed: number }>();
+  private readonly attempts = new Map<string, { offset: string; failed: number; stuck: boolean }>();
   private readonly clientMetrics = kafkaClientMetrics("consumer");
-  private readonly deadLettered = metrics
-    .getMeter("kafka")
-    .createCounter("kafka.consumer.dead_lettered", {
-      unit: "{message}",
-      description: "Messages a consumer gave up on and parked on the dead-letter topic.",
-    });
+  private readonly meter = metrics.getMeter("kafka");
+  private readonly records = this.meter.createCounter("kafka_consumer_records_total", {
+    description:
+      "Records consumed, by topic and final outcome (ok, retried: ok after a failed attempt, dead_lettered, failed: given up on but not parked).",
+  });
+  private readonly handlerDuration = this.meter.createHistogram(
+    "kafka_consumer_handler_duration_seconds",
+    {
+      description: "Duration of one handler attempt, by topic.",
+      unit: "s",
+      advice: { explicitBucketBoundaries: KAFKA_LATENCY_BUCKETS_SECONDS },
+    },
+  );
+  private readonly commitErrors = this.meter.createCounter("kafka_consumer_commit_errors_total", {
+    description: "Offset commits that failed (the message is handled; it may be redelivered).",
+  });
+  private readonly rebalances = this.meter.createCounter("kafka_consumer_rebalances_total", {
+    description: "Group rebalance events for this member, by event (assigned, revoked, lost).",
+  });
+  private readonly assigned = this.meter.createObservableGauge(
+    "kafka_consumer_assigned_partitions",
+    { description: "Partitions currently assigned to this group member." },
+  );
+  private readonly observeAssigned = (result: ObservableResult): void => {
+    if (!this.running || this.consumer === undefined) return;
+    try {
+      result.observe(this.consumer.assignment().length);
+    } catch {
+      // disconnected meanwhile
+    }
+  };
   private readonly concurrently: number;
   private readonly maxRetries: number;
   private readonly deadLetterTopic: string;
+  /** The topics named in the subscription: the `topic` label's values (else `other`). */
+  private readonly topics: ReadonlySet<string>;
   private readonly reconnect: Reconnect;
 
   constructor(
@@ -145,6 +172,9 @@ export class KafkaConsumerRunner {
     this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY");
     this.maxRetries = readInt(config, "KAFKA_CONSUMER_MAX_RETRIES");
     this.deadLetterTopic = readString(config, "KAFKA_DEAD_LETTER_TOPIC");
+    this.topics = new Set(options.topics);
+    this.assigned.addCallback(this.observeAssigned);
+    this.commitErrors.add(0); // exported as 0 from the start, like a Prometheus counter
     this.reconnect = new Reconnect(
       () => this.connect(),
       (err, delay) => {
@@ -180,7 +210,13 @@ export class KafkaConsumerRunner {
       this.running = false;
       this.joined = false;
       this.clientMetrics.dispose();
+      this.assigned.removeCallback(this.observeAssigned);
     }
+  }
+
+  /** The topic as a label: one the subscription names, else `other` (a regex subscription). */
+  private topicLabel(topic: string): string {
+    return this.topics.has(topic) ? topic : "other";
   }
 
   /** One record through the loop above. Public for tests. */
@@ -191,15 +227,28 @@ export class KafkaConsumerRunner {
       withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
         this.options.handle(message, { topic, partition }),
       );
+    const label = { topic: this.topicLabel(topic) };
+    const started = performance.now();
     try {
       await traceKafkaMessage({ topic, partition, message, group: this.options.groupId }, () =>
         message.headers?.["x-debug-logging"] === undefined ? run() : withDebugLogging(run),
       );
     } catch (err) {
-      if (await this.giveUp(payload, err)) return; // parked and committed: move on
+      this.handlerDuration.record((performance.now() - started) / 1000, label);
+      const outcome = await this.giveUp(payload, err);
+      if (outcome === "parked") {
+        this.records.add(1, { ...label, result: "dead_lettered" });
+        return; // parked and committed: move on
+      }
+      // Counted once, the first time the record is given up on; it is still
+      // retried, holding its partition, until it can be parked or succeeds.
+      if (outcome === "stuck") this.records.add(1, { ...label, result: "failed" });
       this.retryLater(payload, err);
       throw err;
     }
+    this.handlerDuration.record((performance.now() - started) / 1000, label);
+    const retried = this.failures.has(`${topic}:${partition}`);
+    this.records.add(1, { ...label, result: retried ? "retried" : "ok" });
     await this.commit(topic, partition, message.offset);
   }
 
@@ -237,20 +286,26 @@ export class KafkaConsumerRunner {
 
   /**
    * Parks the message on the dead-letter topic and commits it when its handler
-   * failed for good (permanent, or past KAFKA_CONSUMER_MAX_RETRIES). False:
-   * keep retrying it.
+   * failed for good (permanent, or past KAFKA_CONSUMER_MAX_RETRIES): "parked".
+   * "retry": not given up on yet. "stuck": given up on, but it cannot be
+   * parked (no dead-letter topic, or the send failed) — retried, holding its
+   * partition; "still_stuck" on the attempts after that.
    */
-  private async giveUp(payload: KafkaJS.EachMessagePayload, err: unknown): Promise<boolean> {
-    if (err instanceof KafkaBackpressureError) return false;
+  private async giveUp(
+    payload: KafkaJS.EachMessagePayload,
+    err: unknown,
+  ): Promise<"parked" | "retry" | "stuck" | "still_stuck"> {
+    if (err instanceof KafkaBackpressureError) return "retry";
     const { topic, partition, message } = payload;
     const key = `${topic}:${partition}`;
     const previous = this.attempts.get(key);
-    const failed = (previous?.offset === message.offset ? previous.failed : 0) + 1;
-    this.attempts.set(key, { offset: message.offset, failed });
+    const same = previous?.offset === message.offset ? previous : undefined;
+    const failed = (same?.failed ?? 0) + 1;
+    this.attempts.set(key, { offset: message.offset, failed, stuck: same?.stuck ?? false });
     const reason = err instanceof KafkaPermanentError ? "permanent" : "retries_exhausted";
     const producer = this.options.producer;
-    if (reason === "retries_exhausted" && failed <= this.maxRetries) return false;
-    if (producer === undefined || this.deadLetterTopic === "none") return false;
+    if (reason === "retries_exhausted" && failed <= this.maxRetries) return "retry";
+    if (producer === undefined || this.deadLetterTopic === "none") return this.markStuck(key);
 
     const deadLetterTopic = this.deadLetterTopic.replaceAll("{topic}", topic);
     const error = (err instanceof Error ? err.message : String(err)).slice(0, MAX_DLQ_ERROR_CHARS);
@@ -277,9 +332,8 @@ export class KafkaConsumerRunner {
         { ...ecsError(sendErr), "kafka.topic": topic, "kafka.dead_letter_topic": deadLetterTopic },
         "Could not dead-letter a message — it keeps its partition and is retried",
       );
-      return false;
+      return this.markStuck(key);
     }
-    this.deadLettered.add(1, { reason });
     this.logger.warn(
       {
         "event.action": "kafka.dead_lettered",
@@ -294,7 +348,15 @@ export class KafkaConsumerRunner {
       "Message dead-lettered",
     );
     await this.commit(topic, partition, message.offset);
-    return true;
+    return "parked";
+  }
+
+  /** "stuck" the first time the partition's current message is given up on, then "still_stuck". */
+  private markStuck(key: string): "stuck" | "still_stuck" {
+    const entry = this.attempts.get(key);
+    if (entry === undefined || entry.stuck) return "still_stuck";
+    entry.stuck = true;
+    return "stuck";
   }
 
   private async commit(topic: string, partition: number, offset: string): Promise<void> {
@@ -307,6 +369,7 @@ export class KafkaConsumerRunner {
       ]);
     } catch (err) {
       // Not thrown: the message is handled; a redelivery is the cheaper failure.
+      this.commitErrors.add(1);
       this.logger.warn({ ...ecsError(err), "kafka.topic": topic }, "Failed to commit an offset");
     }
   }
@@ -329,8 +392,17 @@ export class KafkaConsumerRunner {
       // Observes only (returns nothing): the compat layer still applies the
       // assignment. Called with an empty one too when the group has no
       // partition left for this member.
-      rebalance_cb: (err: { code: number }) => {
-        if (err.code === KafkaJS.ErrorCodes.ERR__ASSIGN_PARTITIONS) this.joined = true;
+      rebalance_cb: (
+        err: { code: number },
+        _assignment: unknown,
+        fns?: { assignmentLost?: () => boolean },
+      ) => {
+        if (err.code === KafkaJS.ErrorCodes.ERR__ASSIGN_PARTITIONS) {
+          this.joined = true;
+          this.rebalances.add(1, { event: "assigned" });
+        } else if (err.code === KafkaJS.ErrorCodes.ERR__REVOKE_PARTITIONS) {
+          this.rebalances.add(1, { event: fns?.assignmentLost?.() === true ? "lost" : "revoked" });
+        }
       },
     });
     this.consumer = consumer;
