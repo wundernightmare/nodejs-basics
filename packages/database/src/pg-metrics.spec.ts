@@ -59,4 +59,41 @@ describe("Postgres client metrics", () => {
     expect(metricValue(text, "db_pool_max_connections", { pool: "primary" })).toBe(7);
     expect(metricValue(text, "db_pool_pending_acquires", { pool: "primary" })).toBe(2);
   });
+
+  it("measures the callback form too, and leaves cursors and non-text queries alone", async () => {
+    await testCase("NB-1055", "every statement form is measured once");
+    const { pool } = fakePool(() => false);
+    const calls: unknown[][] = [];
+    const client = {
+      query: (...args: unknown[]) => {
+        calls.push(args);
+        const cb = args.find((a) => typeof a === "function") as
+          | ((err: unknown, res: unknown) => void)
+          | undefined;
+        if (cb !== undefined) {
+          cb(new Error("boom"), undefined);
+          return undefined;
+        }
+        return Promise.resolve({ rows: [] });
+      },
+    } as unknown as PoolClient;
+    measurePgPool(pool, "readonly");
+    pool.emit("connect", client);
+    pool.emit("connect", client); // a client is wrapped once
+    let seen: unknown;
+    (client.query as unknown as (...a: unknown[]) => unknown)("SELECT 1", [], (err: unknown) => {
+      seen = err;
+    });
+    await (client.query as unknown as (q: unknown) => Promise<unknown>)({ submit: () => {} });
+    await (client.query as unknown as (q: unknown) => Promise<unknown>)({ text: "UPDATE t" });
+    expect(seen).toBeInstanceOf(Error);
+    const text = await capture.scrape();
+    const count = (operation: string): number =>
+      metricValue(text, "db_query_duration_seconds_count", { pool: "readonly", operation });
+    expect([count("select"), count("update")]).toEqual([1, 1]);
+    expect(
+      metricValue(text, "db_query_errors_total", { pool: "readonly", operation: "select" }),
+    ).toBe(1);
+    expect(calls).toHaveLength(3);
+  });
 });

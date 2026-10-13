@@ -100,4 +100,19 @@ describe.each(backends)("JobQueue on $name (integration)", (backend) => {
       )
       .toBe(2);
   });
+
+  it.skipIf(backend.skip)("counts a failed attempt that will be retried as retried", async () => {
+    await testCase("NB-1056", "job_runs_total sees failures on either backend");
+    capture ??= captureMetrics();
+    const name = unique("jobs-fail");
+    const { queue, close } = await backend.open(name);
+    closers.push(close);
+    await queue.send({ n: 1 }, "k");
+    void queue.work(() => Promise.reject(new Error("not yet")));
+    await expect
+      .poll(async () =>
+        metricValue(await capture!.scrape(), "job_runs_total", { queue: name, result: "retried" }),
+      )
+      .toBeGreaterThanOrEqual(1);
+  });
 });

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { KafkaProducerService } from "@base/kafka";
 import { AppLogger, pinoLogger } from "@base/logger";
-import { meta, testCase } from "@base/testing";
+import { captureMetrics, meta, metricValue, testCase } from "@base/testing";
 
 import { OutboxRelay } from "./outbox.relay.js";
 
@@ -82,5 +82,34 @@ describe("OutboxRelay (unit)", () => {
     await r.tick();
     expect(r.failures).toBe(2);
     await h.relay.beforeApplicationShutdown();
+  });
+
+  it("keeps the last gauge values when a stats query fails", async () => {
+    await testCase("NB-1054", "a database blip does not blank or zero the outbox gauges");
+    const capture = captureMetrics();
+    try {
+      let fail = false;
+      const pool = {
+        query: () =>
+          fail
+            ? Promise.reject(new Error("db down"))
+            : Promise.resolve({ rows: [{ pending: 3, dead: 1, oldest: 42 }] }),
+      } as unknown as Pool;
+      const kafka = { send: vi.fn() } as unknown as KafkaProducerService;
+      const r = new OutboxRelay(pool, kafka, new ConfigService({}), logger);
+      fail = true;
+      await r.refreshStats(); // nothing known yet: no sample
+      expect(metricValue(await capture.scrape(), "outbox_pending")).toBe(-1);
+      fail = false;
+      await r.refreshStats();
+      fail = true;
+      await r.refreshStats();
+      const text = await capture.scrape();
+      expect(metricValue(text, "outbox_pending")).toBe(3);
+      expect(metricValue(text, "outbox_dead")).toBe(1);
+      expect(metricValue(text, "outbox_oldest_age_seconds")).toBe(42);
+    } finally {
+      await capture.stop();
+    }
   });
 });
