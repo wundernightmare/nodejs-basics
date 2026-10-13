@@ -115,6 +115,25 @@ describe("KafkaProducerService", () => {
     await expect(svc.send(record, { waitMs: 0 })).rejects.toBeInstanceOf(KafkaSendError);
   });
 
+  it("a send waiting for its ack is rejected when its signal aborts or the producer shuts down", async () => {
+    await testCase("NB-1069", "a send to a broker that is gone never hangs its caller");
+    const p = fake();
+    // The client drops the delivery report of a record still queued when it disconnects.
+    p.send.mockReturnValue(new Promise(() => {}));
+    const svc = new TestService([() => p]);
+    svc.onApplicationBootstrap();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const caller = new AbortController();
+    const aborted = svc.send(record, { signal: caller.signal });
+    caller.abort();
+    await expect(aborted).rejects.toMatchObject({ kind: "not_connected", retryable: true });
+
+    const inFlight = svc.send(record, { waitMs: 0 });
+    await svc.onApplicationShutdown("SIGTERM");
+    await expect(inFlight).rejects.toMatchObject({ kind: "not_connected", retryable: true });
+  });
+
   it("a failing disconnect on shutdown is logged, never thrown into Nest's shutdown", async () => {
     await testCase("NB-978", "producer shutdown tolerates a broker that is already gone");
     const p = fake();

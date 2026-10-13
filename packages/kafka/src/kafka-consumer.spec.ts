@@ -17,7 +17,10 @@ const logger = new AppLogger(pinoLogger.child({}, { level: "silent" })).child("t
 /** A runner around `handle`, with a stand-in for the connected consumer (and a producer). */
 function runner(
   handle: () => Promise<void> = () => Promise.resolve(),
-  dlq?: { send?: () => Promise<unknown>; config?: Record<string, string> },
+  dlq?: {
+    send?: (record: unknown, options: { signal?: AbortSignal }) => Promise<unknown>;
+    config?: Record<string, string>;
+  },
 ): {
   runner: KafkaConsumerRunner;
   commitOffsets: ReturnType<typeof vi.fn>;
@@ -141,7 +144,8 @@ describe("KafkaConsumerRunner.handleMessage", () => {
           },
         ],
       },
-      { client: "consumer" }, // counted as the consumer's send, as in golang-basics
+      // Counted as the consumer's send, as in golang-basics; stop() aborts the wait.
+      { client: "consumer", signal: expect.any(AbortSignal) },
     );
     expect(h.commitOffsets).toHaveBeenCalledWith([{ topic: "t", partition: 0, offset: "8" }]);
   });
@@ -181,6 +185,27 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     const plain = runner(failing(new KafkaPermanentError("bad")));
     await expect(plain.runner.handleMessage(payload())).rejects.toThrow("bad");
     expect(plain.commitOffsets).not.toHaveBeenCalled();
+  });
+
+  it("stop() gives up on a dead-letter send in flight — the message keeps its partition", async () => {
+    await testCase("NB-1068", "a broker that is gone cannot hold the worker's shutdown");
+    // Like a send to a broker that is gone: no ack until message.timeout.ms.
+    const h = runner(failing(new KafkaPermanentError("bad")), {
+      send: (_record, { signal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    });
+    const p = payload();
+    const handled = h.runner.handleMessage(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.send).toHaveBeenCalledOnce();
+    await h.runner.stop();
+    await expect(handled).rejects.toThrow("bad");
+    expect(p.pause).toHaveBeenCalledOnce();
+    expect(h.commitOffsets).not.toHaveBeenCalled();
   });
 
   it("is not ready until it runs", async () => {
