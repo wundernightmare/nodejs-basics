@@ -66,7 +66,8 @@ interface OutboxRow {
 
 const MAX_BACKOFF_MS = 30_000;
 // Upper bound on how long shutdown waits for a batch in flight; after it the
-// pool closes anyway and the batch rolls back (sent again by the next relay).
+// producer's shutdown rejects the sends still waiting, the batch rolls back
+// (sent again by the next relay) and the pool closes.
 const DRAIN_TIMEOUT_MS = 5_000;
 
 interface OutboxStats {

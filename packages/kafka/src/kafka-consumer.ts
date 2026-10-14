@@ -163,6 +163,12 @@ export class KafkaConsumerRunner {
   /** The topics named in the subscription: the `topic` label's values (else `other`). */
   private readonly topics: ReadonlySet<string>;
   private readonly reconnect: Reconnect;
+  /**
+   * Aborted by stop(): disconnect() waits for the handlers in flight, and a
+   * dead-letter send to a broker that is gone would hold it for
+   * message.timeout.ms. The message is not committed and comes again.
+   */
+  private readonly stopping = new AbortController();
 
   constructor(
     private readonly config: ConfigService,
@@ -200,6 +206,7 @@ export class KafkaConsumerRunner {
 
   async stop(): Promise<void> {
     this.reconnect.stop();
+    this.stopping.abort();
     try {
       // A consumer still connecting is left to its metadata timeout (see
       // Reconnect) — Nest ends the process once the close hooks return.
@@ -328,7 +335,7 @@ export class KafkaConsumerRunner {
           topic: deadLetterTopic,
           messages: [{ key: message.key, value: message.value, headers }],
         },
-        { client: "consumer" },
+        { client: "consumer", signal: this.stopping.signal },
       );
     } catch (sendErr) {
       this.logger.warn(

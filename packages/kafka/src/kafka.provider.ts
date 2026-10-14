@@ -19,6 +19,19 @@ import { Reconnect } from "./reconnect.js";
 
 const DEFAULT_WAIT_MS = 5_000;
 
+/** `send`, or a `not_connected` KafkaSendError once `signal` aborts (the record may still go out). */
+function unlessAborted<T>(send: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = (): void => {
+      reject(new KafkaSendError("not_connected"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    void send.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -39,6 +52,13 @@ export interface KafkaSendOptions {
    * the consumer's dead-letter sends — the same label golang-basics carries.
    */
   client?: "producer" | "consumer";
+  /**
+   * Stop waiting when it aborts: send() rejects with a retryable
+   * `not_connected` (the record may still go out). The consumer runner's
+   * stop() uses it so a dead-letter send to a broker that is gone does not
+   * hold the shutdown for message.timeout.ms.
+   */
+  signal?: AbortSignal | undefined;
 }
 
 /**
@@ -57,6 +77,10 @@ export interface KafkaSendOptions {
  *   - shutdown never waits for a connect in flight: kafkajs-compat waits for
  *     its metadata request (up to 30 s) before it can disconnect, and Nest
  *     ends the process once the close hooks return.
+ *   - a send still waiting for its ack when the producer disconnects would
+ *     never settle (the client drops its delivery report): shutdown rejects
+ *     it with a retryable `not_connected`, so its caller (the outbox relay's
+ *     open transaction) can let go.
  *
  * Every send() counts its messages in kafka_producer_records_total{client,
  * topic, result} (result: ok, or the KafkaSendError kind) and its time to the
@@ -85,6 +109,8 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     });
   private producer: KafkaJS.Producer | undefined;
   private connected = false;
+  /** Aborted at shutdown, once the producer is gone: rejects the sends still waiting. */
+  private readonly closed = new AbortController();
   private readonly reconnect = new Reconnect(
     () => this.connect(),
     (err, delay) => {
@@ -155,28 +181,36 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
       Math.min(options.waitMs ?? DEFAULT_WAIT_MS, remainingMs() ?? Infinity),
     );
     const until = Date.now() + budget;
+    const signal =
+      options.signal === undefined
+        ? this.closed.signal
+        : AbortSignal.any([this.closed.signal, options.signal]);
     let delay = 50;
     for (;;) {
       try {
-        return await this.sendOnce(record);
+        return await this.sendOnce(record, signal);
       } catch (err) {
         const error = toKafkaSendError(err);
         const waitable =
           error.kind === "not_connected" ||
           (error.kind === "queue_full" && record.messages.length === 1);
         const left = until - Date.now();
-        if (!waitable || left <= 0) throw error;
+        if (!waitable || left <= 0 || signal.aborted) throw error;
         await sleep(Math.min(delay, left));
         delay = Math.min(delay * 2, 1_000);
       }
     }
   }
 
-  private async sendOnce(record: KafkaJS.ProducerRecord): Promise<KafkaJS.RecordMetadata[]> {
+  private async sendOnce(
+    record: KafkaJS.ProducerRecord,
+    signal: AbortSignal,
+  ): Promise<KafkaJS.RecordMetadata[]> {
     const producer = this.producer;
-    if (!this.connected || producer === undefined) throw new KafkaSendError("not_connected");
+    if (!this.connected || producer === undefined || signal.aborted)
+      throw new KafkaSendError("not_connected");
     try {
-      return await sendTraced(producer, record);
+      return await unlessAborted(sendTraced(producer, record), signal);
     } catch (err) {
       if ((err as { fatal?: unknown }).fatal === true) this.replace(producer, err);
       throw err;
@@ -199,6 +233,8 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
     } catch (err) {
       this.logger.warn({ ...ecsError(err) }, "Kafka producer disconnect error");
     } finally {
+      // After the disconnect's flush: what was acknowledged has resolved.
+      this.closed.abort();
       this.clientMetrics.dispose();
     }
   }

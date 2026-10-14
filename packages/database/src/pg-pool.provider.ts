@@ -64,35 +64,41 @@ function resolvePoolCtor(useNative: boolean): typeof Pool {
  * identical.
  */
 function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"): Pool {
-  const pool = new (resolvePoolCtor(built.useNative))(built.poolOptions);
+  // Each fresh connection — including a libpq-native reconnect after
+  // a primary failover — receives the full session-init batch, as one
+  // query, before the pool hands it out: pg-pool's `verify` holds the
+  // caller back until it is done. (Run from a `connect` listener instead,
+  // the statements would queue behind each other and the caller's first
+  // query behind them — pg deprecates a query issued while another runs.)
+  // Errors here would tear down the connection; we log and hand it out
+  // instead so a transient SET failure doesn't turn into a pod-wide
+  // outage. A persistently-failing SET shows up as a steady stream of
+  // warnings, which is the right signal: operator fixes the server-side
+  // setting or drops the client-side knob.
+  const verify = (client: PoolClient, done: () => void): void => {
+    client.query(built.sessionInit.join("; ")).then(
+      () => {
+        done();
+      },
+      (err: unknown) => {
+        logger.warn(
+          { err, "pg.pool": label, statements: built.sessionInit },
+          "Postgres session init failed — connection remains usable",
+        );
+        done();
+      },
+    );
+  };
+  const pool = new (resolvePoolCtor(built.useNative))({
+    ...built.poolOptions,
+    ...(built.sessionInit.length > 0 && { verify }),
+  });
   // CLIENT spans for every query (pg-tracing.ts), tagged with this pool's target.
   tracePgPool(pool, { ...pgTarget(built.poolOptions), "db.client.connection.pool.name": label });
   // The request budget (pg-deadline.ts); registered after tracing so it runs first.
   guardPgPool(pool);
   // db_pool_* and db_query_* (pg-metrics.ts), labelled with this pool.
   measurePgPool(pool, label);
-
-  // Each fresh connection — including a libpq-native reconnect after
-  // a primary failover — receives the full session-init batch. Errors
-  // here would tear down the connection; we catch and log instead so
-  // a transient SET failure doesn't turn into a pod-wide outage. A
-  // persistently-failing SET shows up as a steady stream of warnings,
-  // which is the right signal: operator fixes the server-side setting
-  // or drops the client-side knob.
-  if (built.sessionInit.length > 0) {
-    pool.on("connect", (client: PoolClient) => {
-      Promise.all(built.sessionInit.map((stmt) => client.query(stmt))).catch((err) => {
-        logger.warn(
-          {
-            err,
-            "pg.pool": label,
-            statements: built.sessionInit,
-          },
-          "Postgres session init failed — connection remains usable",
-        );
-      });
-    });
-  }
 
   pool.on("error", (err) => {
     // pg emits these on idle-client errors. Leaving the listener
@@ -113,7 +119,7 @@ function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"):
  *     and the companion builder spec for the full surface).
  *   - Pick between pg and pg-native depending on DATABASE_USE_NATIVE —
  *     the only way to get multi-host primary selection in this process.
- *   - Register an `on('connect')` hook so statement_timeout,
+ *   - Run the session init (pg-pool `verify`) so statement_timeout,
  *     idle_in_transaction_session_timeout, and any other session-level
  *     SET statements produced by the builder run once per new backend
  *     connection (surviving libpq failover to a different host).
