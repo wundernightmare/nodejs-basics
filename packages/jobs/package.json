@@ -31,12 +31,12 @@
     "@base/config": "workspace:*",
     "@base/database": "workspace:*",
     "@base/logger": "workspace:*",
-    "@bull-board/api": "9.10.2",
-    "@bull-board/fastify": "9.10.2",
+    "@bull-board/api": "9.10.4",
+    "@bull-board/fastify": "9.10.4",
     "@opentelemetry/api": "1.9.1",
     "bullmq": "6.3.11",
     "pg": "8.23.1",
-    "pg-boss": "12.36.0"
+    "pg-boss": "12.37.1"
   },
   "peerDependencies": {
     "@nestjs/common": "12.x",
