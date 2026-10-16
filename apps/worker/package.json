@@ -37,6 +37,7 @@
     "@nestjs/core": "12.1.2",
     "@opentelemetry/instrumentation-undici": "0.33.0",
     "bullmq": "6.3.11",
+    "ioredis": "5.11.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
   },

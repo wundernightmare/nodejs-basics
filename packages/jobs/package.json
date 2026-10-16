@@ -35,6 +35,7 @@
     "@bull-board/fastify": "9.10.4",
     "@opentelemetry/api": "1.9.1",
     "bullmq": "6.3.11",
+    "ioredis": "5.11.1",
     "pg": "8.23.1",
     "pg-boss": "12.37.1"
   },
