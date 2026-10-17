@@ -56,11 +56,10 @@ import {
 } from "@base/logger";
 
 import { buildConsumerConfig, buildKafkaClientConfig } from "./kafka-config.builder.js";
-import { kafkaLogger } from "./kafka-log-creator.js";
 import { KAFKA_LATENCY_BUCKETS_SECONDS, kafkaClientMetrics } from "./kafka-metrics.js";
 import { traceKafkaMessage } from "./kafka-tracing.js";
 import type { KafkaProducerService } from "./kafka.provider.js";
-import { Reconnect } from "./reconnect.js";
+import { kafkaJsConfig, Reconnect } from "./reconnect.js";
 
 const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 60_000;
@@ -393,7 +392,7 @@ export class KafkaConsumerRunner {
     // properties there make librdkafka warn on every connect.
     const kafka = new KafkaJS.Kafka({
       ...buildKafkaClientConfig(this.config, this.options.groupId),
-      kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
+      kafkaJS: kafkaJsConfig(),
     });
     this.joined = false;
     const consumer = kafka.consumer({
