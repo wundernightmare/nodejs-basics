@@ -26,7 +26,8 @@ const capture = (m) => {
   if (hit) seen[hit[1]] = hit[2];
 };
 const logger = { info: capture, debug: capture, warn() {}, error() {}, namespace() { return this; }, setLogLevel() {} };
-const kafka = new KafkaJS.Kafka({ "bootstrap.servers": "127.0.0.1:1", kafkaJS: { logger } });
+// The kafkaJS block the clients get (reconnect.ts kafkaJsConfig), with the probe's logger.
+const kafka = new KafkaJS.Kafka({ "bootstrap.servers": "127.0.0.1:1", kafkaJS: { logger, retry: { retries: 0 } } });
 const client = role === "consumer" ? kafka.consumer({ ...config, debug: "conf" }) : kafka.producer({ ...config, debug: "conf" });
 client.connect().catch(() => {});
 const deadline = Date.now() + 5000;
@@ -92,6 +93,9 @@ describe("effective librdkafka config", () => {
       "partition.assignment.strategy": "cooperative-sticky",
       "auto.offset.reset": "smallest",
       "enable.auto.commit": "false",
+      // librdkafka's defaults, not the compat layer's 300 / 30000 (1.11+).
+      "reconnect.backoff.ms": "100",
+      "reconnect.backoff.max.ms": "10000",
     };
     const got = effective("consumer", buildConsumerConfig(env, "g"), Object.keys(want));
     expect(got).toMatchObject(want);
@@ -106,6 +110,10 @@ describe("effective librdkafka config", () => {
       "compression.codec": "zstd",
       "queue.buffering.max.ms": "7",
       "enable.idempotence": "true",
+      // retry.retries: 0 (one connect attempt) must not take the re-sends with it.
+      "message.send.max.retries": "5",
+      "reconnect.backoff.ms": "100",
+      "reconnect.backoff.max.ms": "10000",
     };
     const got = effective("producer", buildProducerConfig(env), Object.keys(want));
     expect(got).toMatchObject(want);

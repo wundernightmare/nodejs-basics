@@ -244,8 +244,15 @@ high-signal, easy-to-miss bits.
     now, the message is fine" (5 s cap, never parked — wrap a downstream
     outage in it, with `cause`); return = drop. Never commit with a bare
     `commitOffsets()` and never rethrow without a pause (a hot loop).
-  - Never race a client's connect() against a timer: it waits up to 30 s for
-    metadata, and a disconnect under it crashes the process (`Reconnect`).
+  - `Reconnect` owns connect retries: every client gets `kafkaJsConfig()`
+    (`retry.retries: 0`) — since kafka-javascript 1.11 connect() otherwise
+    retries by itself for ~80 s against a dead broker, and that loop outlives
+    shutdown. The same knob drives the producer's message `retries` (the
+    builder sets 5 back) and, unless set, `reconnect.backoff.*` (registry
+    defaults 100 / 10000 keep librdkafka's). Never race a client's connect()
+    against a timer: one attempt waits ~12 s for metadata and a disconnect
+    under it waits for that; shutdown leaves a connecting client alone
+    (`kafka-connect.integration.spec.ts`).
   - Config (README "Kafka" has the whole table): lz4, cooperative-sticky,
     `auto.offset.reset=earliest`; every buffer/message size is a named key the
     builder always sets (producer queue 64 MiB, consumer prefetch and fetch

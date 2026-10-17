@@ -371,7 +371,7 @@ Every key is also a YAML path (`--config-reference` prints both).
 | `KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM` | `ssl.endpoint.identification.algorithm` | librdkafka: `https` | the broker's hostname is verified against its certificate |
 | `KAFKA_REQUEST_TIMEOUT_MS` | `socket.timeout.ms` | librdkafka: 60000 | — |
 | `KAFKA_METADATA_MAX_AGE_MS` | `topic.metadata.refresh.interval.ms` | librdkafka: 300000 | — |
-| `KAFKA_RECONNECT_BACKOFF_MS` / `_MAX_MS` | `reconnect.backoff.ms` / `.max.ms` | librdkafka: 100 / 10000 | exponential, jittered |
+| `KAFKA_RECONNECT_BACKOFF_MS` / `_MAX_MS` | `reconnect.backoff.ms` / `.max.ms` | 100 / 10000 | librdkafka's own, exponential, jittered; set explicitly — the kafkajs-compat layer would put its 300 / 30000 here |
 | — | `socket.keepalive.enable` | `true` | NATs and load balancers drop idle connections silently |
 | `KAFKA_STATISTICS_INTERVAL_MS` | `statistics.interval.ms` | 15000 | feeds the client metrics; 0 turns them off |
 | `KAFKA_MESSAGE_MAX_BYTES` | `message.max.bytes` | 1000000 | under the broker's 1 MiB `max.message.bytes`: too big fails locally as `rejected` |
@@ -379,6 +379,7 @@ Every key is also a YAML path (`--config-reference` prints both).
 | `KAFKA_PRODUCER_ENABLE_IDEMPOTENCE` | `enable.idempotence` | `true` | retries never duplicate or reorder within a partition |
 | `KAFKA_PRODUCER_COMPRESSION_TYPE` | `compression.type` | `lz4` | cheapest codec in CPU and latency; see "Compression" |
 | `KAFKA_PRODUCER_LINGER_MS` | `linger.ms` | 5 | small batches (better compression) for at most 5 ms of latency |
+| — | `retries` | 5 | re-sends of a failed produce request (the compat layer's default, kept when its `retry.retries` goes to 0 — see "Connecting") |
 | `KAFKA_PRODUCER_MESSAGE_TIMEOUT_MS` | `message.timeout.ms` | 30000 | librdkafka retries within it, then send() fails `unavailable` |
 | `KAFKA_PRODUCER_QUEUE_MAX_KBYTES` | `queue.buffering.max.kbytes` | 65536 | 64 MiB instead of librdkafka's 1 GiB; see "Memory" |
 | `KAFKA_PRODUCER_QUEUE_MAX_MESSAGES` | `queue.buffering.max.messages` | 100000 | the count bound next to the byte bound |
@@ -400,6 +401,19 @@ Every key is also a YAML path (`--config-reference` prints both).
 The loader checks the sizes against each other at start (exit 78):
 `fetch_max_bytes` ≥ `message_max_bytes`, `partition_fetch_max_bytes` ≤
 `fetch_max_bytes`.
+
+#### Connecting
+
+Neither the producer nor the consumer waits for the broker at start: each
+connects in the background and retries with its own backoff (1 s → 30 s,
+`reconnect.ts`), with a fresh client per attempt. Every client is created
+with `retry.retries: 0` in its `kafkaJS` block, so one `connect()` is one
+attempt, bounded by the connection-setup timeout (~12 s). Since
+kafka-javascript 1.11 the compat `connect()` would otherwise retry by itself
+(5 times, 300 ms → 30 s — ~80 s against a dead broker before the first
+"failed to connect" warning, and a retry loop that outlives the shutdown).
+The same setting drives the producer's message `retries`, which the builder
+sets back to 5. Shutdown never waits for a connect in flight.
 
 #### Memory: what librdkafka buffers
 

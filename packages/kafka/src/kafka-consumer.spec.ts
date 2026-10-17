@@ -45,7 +45,18 @@ function payload(
   return {
     topic: "t",
     partition,
-    message: { key: null, value: null, offset: "7", timestamp: "0", attributes: 0, headers: {} },
+    // deserializedKey/Value as the client fills them without a
+    // js.*.deserializer.builder (1.11+): nothing deserialized, no error.
+    message: {
+      key: null,
+      value: null,
+      offset: "7",
+      timestamp: "0",
+      attributes: 0,
+      headers: {},
+      deserializedKey: { key: null, error: null },
+      deserializedValue: { value: null, error: null },
+    },
     heartbeat: () => Promise.resolve(),
     pause: vi.fn(() => resume),
   };

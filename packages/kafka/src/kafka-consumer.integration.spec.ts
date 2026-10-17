@@ -1,3 +1,4 @@
+import { type KafkaJS } from "@confluentinc/kafka-javascript";
 import { ConfigService } from "@nestjs/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -147,6 +148,36 @@ describe.skipIf(infra.skip)("kafka consumer (integration)", () => {
       dlq_attempts: "1",
     });
   }, 90_000);
+
+  it("hands handle() the raw key and value, and no deserialized ones", async () => {
+    await testCase("NB-1074", "the consumed message shape of kafka-javascript 1.11");
+    // 1.11 adds deserializedKey / deserializedValue to every message (filled
+    // only by a js.*.deserializer.builder, which this package does not set):
+    // the runner and the dead-letter copy keep working on the raw bytes.
+    const source = unique("it-shape");
+    const got: KafkaJS.KafkaMessage[] = [];
+    const runner = new KafkaConsumerRunner(config, appLogger.child("it-shape"), {
+      groupId: unique("it-shape-group"),
+      topics: [source],
+      handle: (message) => {
+        got.push(message);
+        return Promise.resolve();
+      },
+    });
+    await producer.send(
+      { topic: source, messages: [{ key: "k1", value: "v1" }] },
+      { waitMs: 15_000 },
+    );
+    runner.start();
+    await until(() => got.length === 1);
+    await runner.stop();
+
+    expect(got[0]?.key?.toString()).toBe("k1");
+    expect(got[0]?.value?.toString()).toBe("v1");
+    expect(got[0]?.deserializedKey).toEqual({ key: null, error: null });
+    expect(got[0]?.deserializedValue).toEqual({ value: null, error: null });
+  }, 90_000);
+
   it("is ready only once the group lets it in", async () => {
     await testCase("NB-1034", "a member kept out of its group is not ready");
     const shared = unique("it-protocol-group");
