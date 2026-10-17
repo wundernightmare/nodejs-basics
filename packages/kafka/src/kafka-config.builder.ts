@@ -109,19 +109,21 @@ export function buildKafkaClientConfig(
   if (endpointAlg) out["ssl.endpoint.identification.algorithm"] = endpointAlg;
 
   // Socket / connection tunables — applied only when explicitly set so that
-  // librdkafka's own defaults (30s request timeout, 5min metadata refresh,
-  // 100ms reconnect backoff) remain the implicit fallback.
+  // librdkafka's own defaults (30s request timeout, 5min metadata refresh)
+  // remain the implicit fallback. The reconnect backoff is the exception, see
+  // below.
   const reqTimeout = readInt(config, "KAFKA_REQUEST_TIMEOUT_MS");
   if (reqTimeout !== undefined) out["socket.timeout.ms"] = reqTimeout;
 
   const metadataAge = readInt(config, "KAFKA_METADATA_MAX_AGE_MS");
   if (metadataAge !== undefined) out["topic.metadata.refresh.interval.ms"] = metadataAge;
 
-  const reconnect = readInt(config, "KAFKA_RECONNECT_BACKOFF_MS");
-  if (reconnect !== undefined) out["reconnect.backoff.ms"] = reconnect;
-
-  const reconnectMax = readInt(config, "KAFKA_RECONNECT_BACKOFF_MAX_MS");
-  if (reconnectMax !== undefined) out["reconnect.backoff.max.ms"] = reconnectMax;
+  // Always set (registry default: librdkafka's own 100 ms → 10 s): since
+  // kafka-javascript 1.11 the kafkajs-compat layer maps its `retry` block onto
+  // reconnect.backoff.* too, and without a value of ours a dropped broker
+  // connection would be retried at its 300 ms → 30 s instead.
+  out["reconnect.backoff.ms"] = readInt(config, "KAFKA_RECONNECT_BACKOFF_MS");
+  out["reconnect.backoff.max.ms"] = readInt(config, "KAFKA_RECONNECT_BACKOFF_MAX_MS");
 
   // TCP keepalive on: cloud load balancers and NAT gateways drop idle
   // connections silently, and a producer that only finds out on its next
@@ -163,6 +165,11 @@ export function buildProducerConfig(config: ConfigService): KafkaRdKafkaConfig {
     // QUEUE_FULL — the outbox relay rolls the batch back and retries later.
     "queue.buffering.max.kbytes": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_KBYTES"),
     "queue.buffering.max.messages": readInt(config, "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES"),
+    // Re-sends of a failed produce request: the 5 the kafkajs-compat layer
+    // always gave us. Its `retry.retries` sets both this and the connect()
+    // attempts, and kafkaJsConfig (reconnect.ts) turns those off — the same
+    // key, so ours replaces it (an alias would race it in librdkafka).
+    retries: 5,
   };
   // Re-apply the escape hatches so they win over role flags too: the shared
   // one, then the producer-only one.

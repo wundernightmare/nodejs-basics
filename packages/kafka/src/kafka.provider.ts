@@ -8,14 +8,13 @@ import { AppLogger, ecsError } from "@base/logger";
 
 import { buildKafkaClientConfig, buildProducerConfig } from "./kafka-config.builder.js";
 import { KafkaSendError, toKafkaSendError } from "./kafka-errors.js";
-import { kafkaLogger } from "./kafka-log-creator.js";
 import {
   KAFKA_LATENCY_BUCKETS_SECONDS,
   type KafkaClientMetrics,
   kafkaClientMetrics,
 } from "./kafka-metrics.js";
 import { sendTraced } from "./kafka-tracing.js";
-import { Reconnect } from "./reconnect.js";
+import { kafkaJsConfig, Reconnect } from "./reconnect.js";
 
 const DEFAULT_WAIT_MS = 5_000;
 
@@ -75,8 +74,10 @@ export interface KafkaSendOptions {
  *   - send() fails only with a KafkaSendError (kafka-errors.ts: the registry of
  *     kinds, which are retryable, and what to do about each).
  *   - shutdown never waits for a connect in flight: kafkajs-compat waits for
- *     its metadata request (up to 30 s) before it can disconnect, and Nest
- *     ends the process once the close hooks return.
+ *     its metadata request (one connection-setup cycle, ~12 s) before it can
+ *     disconnect, and Nest ends the process once the close hooks return.
+ *     One connect() is one attempt (kafkaJsConfig, reconnect.ts) — no
+ *     retry loop inside the client to outlive the shutdown.
  *   - a send still waiting for its ack when the producer disconnects would
  *     never settle (the client drops its delivery report): shutdown rejects
  *     it with a retryable `not_connected`, so its caller (the outbox relay's
@@ -241,11 +242,9 @@ export class KafkaProducerService implements OnApplicationBootstrap, OnApplicati
 
   /** A new, unconnected producer. Protected so a test can substitute a fake. */
   protected createProducer(): KafkaJS.Producer {
-    // `kafkaJS.brokers` is typed as required, but the flat librdkafka config
-    // already carries `metadata.broker.list`; the cast covers the kafkaJS block.
     const kafka = new KafkaJS.Kafka({
       ...buildKafkaClientConfig(this.config, "producer"),
-      kafkaJS: { logger: kafkaLogger } as KafkaJS.KafkaConfig,
+      kafkaJS: kafkaJsConfig(),
     });
     return kafka.producer({
       ...buildProducerConfig(this.config),

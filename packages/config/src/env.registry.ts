@@ -1041,7 +1041,10 @@ const REGISTRY = [
     type: "int",
     min: 0,
     required: false,
-    description: "reconnect.backoff.ms. Unset: librdkafka default.",
+    default: "100",
+    description:
+      "reconnect.backoff.ms — librdkafka's default, set explicitly: the kafkajs-compat layer " +
+      "(kafka-javascript 1.11+) would otherwise put its retry backoff (300 / 30000) here.",
     usedIn: ["kafka"],
   },
 
@@ -1051,7 +1054,10 @@ const REGISTRY = [
     type: "int",
     min: 0,
     required: false,
-    description: "reconnect.backoff.max.ms. Unset: librdkafka default.",
+    default: "10000",
+    description:
+      "reconnect.backoff.max.ms — librdkafka's default, set explicitly: the kafkajs-compat layer " +
+      "(kafka-javascript 1.11+) would otherwise put its retry backoff (300 / 30000) here.",
     usedIn: ["kafka"],
   },
 

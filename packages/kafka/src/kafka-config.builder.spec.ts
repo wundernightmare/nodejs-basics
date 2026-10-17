@@ -37,6 +37,9 @@ describe("kafka config builders", () => {
     expect(buildKafkaClientConfig(env)).toEqual({
       "metadata.broker.list": "localhost:9092",
       "client.id": "svc",
+      // librdkafka's own reconnect backoff, written out (the compat layer would set 300 / 30000).
+      "reconnect.backoff.ms": 100,
+      "reconnect.backoff.max.ms": 10_000,
       "socket.keepalive.enable": true,
       "statistics.interval.ms": 15_000,
       "message.max.bytes": 1_000_000,
@@ -50,6 +53,7 @@ describe("kafka config builders", () => {
       "message.timeout.ms": 30_000,
       "queue.buffering.max.kbytes": 65_536,
       "queue.buffering.max.messages": 100_000,
+      retries: 5,
     });
     expect(buildConsumerConfig(env, "g")).toMatchObject({
       "client.id": "svc-consumer-g",
