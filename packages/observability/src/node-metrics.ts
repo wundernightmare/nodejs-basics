@@ -18,6 +18,7 @@ import {
   monitorEventLoopDelay,
   type EventLoopUtilization,
   performance,
+  type PerformanceEntry,
   PerformanceObserver,
 } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";

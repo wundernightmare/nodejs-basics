@@ -22,11 +22,11 @@
     "@base/logger": "workspace:*",
     "@base/observability": "workspace:*",
     "@base/testing": "workspace:*",
-    "@playwright/test": "1.63.0",
-    "@types/node": "26.6.4",
+    "@playwright/test": "1.64.0",
+    "@types/node": "24.19.1",
     "allure-js-commons": "3.13.0",
     "allure-playwright": "3.13.0",
-    "oxlint": "1.86.0",
+    "oxlint": "1.87.0",
     "typescript": "7.0.2"
   }
 }
