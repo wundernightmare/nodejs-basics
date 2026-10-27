@@ -77,7 +77,3 @@ trustPolicy: no-downgrade
 # minimumReleaseAgeExclude:
 #   # CVE floor, released 2026-08-31. Remove after <release date + 7 days>.
 #   - '@opentelemetry/core@2.11.0'
-minimumReleaseAgeExclude:
-  # CVE floor (GHSA-w74x/wjr9/333x/xhq7 via ajv → fastify), released
-  # 2026-10-19. Remove after 2026-10-26.
-  - 'fast-uri@4.2.3'
