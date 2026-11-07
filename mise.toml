@@ -14,11 +14,11 @@
 # changes.
 
 [tools]
-node = "24.21"
+node = "24.22.2"
 k6   = "2.3.0"
 
 # JRE for allure-commandline (`just allure-report`)
-java = "temurin-25.0.4+101.0.LTS"
+java = "temurin-25.0.5+8.0.LTS"
 
 # AppSec — pinned for reproducibility. Bump here, then re-run `just setup-sec`.
 # Each `just sec-*` recipe invokes its tool via `mise exec --`.
