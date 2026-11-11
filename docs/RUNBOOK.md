@@ -100,9 +100,10 @@ are `docker/prometheus/rules.yml`; what to do:
   for the load.
 - **`job_runs_total{result="failed"}` rising** — jobs exhaust their attempts;
   the worker's error logs name the job.
-- **`http_client_circuit_breaker_state` = 1** — a dependency failed enough to
+- **`http_client_circuit_breaker_state` or
+  `grpc_client_circuit_breaker_state` = 1** — a dependency failed enough to
   be cut off; calls fail fast until a probe succeeds (2 = probing). Look at
-  the dependency.
+  the dependency (`*_client_requests_total` by `outcome` says how it failed).
 - **`nodejs_eventloop_delay_seconds{quantile="0.99"}` high, or
   `nodejs_heap_used_bytes` near `nodejs_heap_limit_bytes`** — take a heap
   snapshot before the pod is killed: `curl -X POST :9090/debug/heapdump -H
