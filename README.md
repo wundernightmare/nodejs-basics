@@ -22,6 +22,9 @@ benchmarks/              k6 load test for the tasks API.
 
 packages/
   resilient-client       undici + opossum + bottleneck HTTP client.
+  grpc-client            Outbound gRPC per target: @grpc/grpc-js service config
+                         (deadline, retries, throttling, balancing) + opossum
+                         breaker, metrics, a client span.
   config                 YAML config loader + env registry + secret-file watcher.
   logger                 Pino with ECS schema, OTel trace correlation, ALS context.
   common                 Request-context (ALS), nanoid, problem-details, UoW port,
@@ -306,6 +309,7 @@ is left of it:
 | Postgres                                    | nothing is sent once it is spent (a `ROLLBACK` always is); a unit of work sets `SET LOCAL statement_timeout` to the rest, so the **server** cancels a statement that would outlive the request |
 | Valkey                                      | rejected unsent once spent; the request stops waiting when it runs out                                                                                                                         |
 | HTTP (`resilient-client`, `getRemainingMs`) | each attempt is aborted at the deadline and sends `x-request-timeout-ms` downstream; spent → `deadline_exceeded`, never retried                                                                |
+| gRPC (`grpc-client`, `getRemainingMs`)      | the call's deadline is brought in to what is left (gRPC sends it on as `grpc-timeout`); spent → `DEADLINE_EXCEEDED` before the call is sent                                                    |
 
 A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
 caller can ask for less with `x-request-timeout-ms` (never more), which is
@@ -319,6 +323,65 @@ On SIGTERM `/readyz` turns 503 first, the api keeps serving for
 `HTTP_SHUTDOWN_DELAY_MS` (2 s — the time a load balancer needs to stop
 routing; 0 in tests and `just dev`), then stops accepting and drains, and the
 admin listener closes last.
+
+### Outbound gRPC
+
+`@base/grpc-client` is the gRPC counterpart of `resilient-client` (and of
+golang-basics' `grpcx`) — a template package: nothing here imports it yet. It
+is **wiring, not a client of its own**: `@grpc/grpc-js` already implements
+most of the policy, so the package configures it from one target shape and
+adds what it has no answer for.
+
+| Concern             | Implementation                                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Default deadline    | service config `timeout`; a caller's shorter deadline, or the request budget (`getRemainingMs`), wins                                                           |
+| Retries             | service config `retryPolicy`: listed status codes, exponential backoff ±20 % jitter, server pushback                                                            |
+| Retry amplification | service config `retryThrottling` (token bucket per channel)                                                                                                     |
+| Load balancing      | `round_robin` (default) or `pick_first`                                                                                                                         |
+| Dead connections    | keepalive pings — off by default: a server closes a connection that pings more often than it allows (5 min by default), so agree `keepalive.timeMs` with it     |
+| Transport           | TLS with the system roots unless `insecure: true`; other credentials through `credentials`                                                                      |
+| Circuit breaker     | **added**: opossum, as an interceptor above the retries                                                                                                         |
+| Metrics, tracing    | **added**: `grpc_client_*` (the contract shared with golang-basics) and a CLIENT span per call, `traceparent` in the metadata                                   |
+
+```ts
+const grpc = new GrpcClients([{ name: "billing", address: "dns:///billing.internal:443" }], {
+  logger,
+  getRemainingMs: remainingMs,
+});
+const invoices = grpc.client("billing", InvoicesClient); // shared channel; never close it yourself
+
+invoices.get(request, (err, reply) => {
+  if (isCircuitOpen(err)) return shed(); // reads as UNAVAILABLE to code that only looks at the status
+  // …
+});
+grpc.close(); // on shutdown, after whatever makes the calls has stopped
+```
+
+- **A call is seen once**, after its retries: the breaker and
+  `grpc_client_requests_total` count calls, `grpc_client_retries_total` the
+  attempts before the one that answered (gRPC's `grpc-previous-rpc-attempts`).
+  A stream is one call, settled when it ends — a caller that stops reading
+  must cancel it (gRPC's own rule).
+- **Breaker**: `UNAVAILABLE`, `DEADLINE_EXCEEDED` (the caller's own deadline
+  included — a short one must not hide an outage), `INTERNAL`, `UNKNOWN` and
+  `DATA_LOSS` are failures; every other status means the dependency answered.
+  It opens when **more** than `failureRatio` of at least `minRequests` calls
+  in the window failed, and lets one probe through after `openTimeoutMs`.
+  opossum has no neutral outcome, so a cancelled call counts as answered —
+  except a cancelled probe, which proved nothing: the breaker opens again.
+- **Retries**: only `retry.codes` (default `UNAVAILABLE`), at most 5 attempts
+  (gRPC's cap; more is rejected, not clamped). gRPC does not know which
+  methods are idempotent — when a retried code can mean "partly done", list
+  the safe ones in `retry.methods`. There is no per-attempt timeout:
+  `timeoutMs` bounds the whole call.
+- **Config**: `GrpcTargetConfig` (JSDoc has every key and default) — an
+  omitted key keeps its default, **zero means disabled**; an invalid list
+  fails the constructor with every problem named. The service config comes
+  from here only (a DNS TXT one is ignored). The keys are golang-basics'
+  `grpcx` YAML in camelCase and milliseconds; the breaker differs where
+  opossum does (`>` instead of `≥`, one probe, no transitions counter).
+- **Not here**: rate limiter, bulkhead, hedging, outlier detection, xDS, a
+  server side. The breaker is per target, not per backend address.
 
 ### Outbox
 
@@ -782,6 +845,7 @@ read is on a live `/metrics`).
 | --- | --- |
 | HTTP in | `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route}`, `http_requests_in_flight`, `http_unhandled_errors_total` |
 | HTTP out (ResilientPool) | `http_client_requests_total{target,method,outcome}`, `http_client_request_duration_seconds{target,method}`, `http_client_retries_total{target}`, `http_client_circuit_breaker_state{target}` |
+| gRPC out (GrpcClients) | `grpc_client_requests_total{target,method,outcome}`, `grpc_client_request_duration_seconds{target,method}`, `grpc_client_retries_total{target}`, `grpc_client_circuit_breaker_state{target}` |
 | Postgres | `db_pool_connections{pool,state}`, `db_pool_max_connections{pool}`, `db_pool_pending_acquires{pool}`, `db_query_duration_seconds{pool,operation}`, `db_query_errors_total{pool,operation}` |
 | Kafka | `kafka_producer_records_total{client,topic,result}`, `kafka_producer_send_duration_seconds{client,topic}`, `kafka_consumer_records_total{topic,result}`, `kafka_consumer_handler_duration_seconds{topic}`, `kafka_consumer_commit_errors_total`, `kafka_consumer_rebalances_total{event}`, `kafka_consumer_assigned_partitions`, `kafka_client_brokers_up{client}`, `kafka_client_request_errors_total{client}`, `kafka_producer_queue_bytes`, `kafka_producer_queue_max_bytes` |
 | Outbox | `outbox_pending`, `outbox_dead`, `outbox_oldest_age_seconds` |
@@ -851,6 +915,7 @@ module when it is first loaded (`instrumentation-pg`, `-nestjs-core`,
 | ------------- | ----------------------------------------------------------------------------------------------------- |
 | inbound HTTP  | `@fastify/otel` plugin (`apps/api/src/instrumentation.ts`), span `{method} {route}`                   |
 | outbound HTTP | `UndiciInstrumentation` (diagnostics_channel, no patching)                                            |
+| outbound gRPC | `@base/grpc-client` interceptor — CLIENT span `pkg.Service/Method`, `traceparent` in the metadata     |
 | Postgres      | `@base/database` `tracePgPool` — wraps the pool it builds                                             |
 | Valkey        | `@base/cache` `traceValkeyClient` — wraps the shared client                                           |
 | Kafka         | `@base/kafka` `KafkaProducerService.send` / `traceKafkaMessage` — `traceparent` in the record headers |

@@ -101,6 +101,37 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/resilient-client",
   },
   {
+    name: "grpc_client_requests_total",
+    kind: "Counter",
+    labels: ["target", "method", "outcome"],
+    description: "Outbound gRPC calls by target, method and outcome (status code or circuit_open).",
+    source: "packages/grpc-client",
+  },
+  {
+    name: "grpc_client_request_duration_seconds",
+    kind: "Histogram",
+    unit: "s",
+    labels: ["target", "method"],
+    description:
+      "Outbound gRPC call latency in seconds (retries included, a stream until it ends), by target and method.",
+    source: "packages/grpc-client",
+  },
+  {
+    name: "grpc_client_retries_total",
+    kind: "Counter",
+    labels: ["target"],
+    description: "Retries sent (attempts before the one that answered), by target.",
+    source: "packages/grpc-client",
+  },
+  {
+    name: "grpc_client_circuit_breaker_state",
+    kind: "ObservableGauge",
+    labels: ["target"],
+    description: "Circuit breaker state per target: 0 closed, 1 open, 2 half-open.",
+    watch: "1 (open): calls to that dependency fail fast; it was failing. 2 = probing.",
+    source: "packages/grpc-client",
+  },
+  {
     name: "db_pool_connections",
     kind: "ObservableGauge",
     labels: ["pool", "state"],

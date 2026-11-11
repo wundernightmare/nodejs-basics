@@ -39,6 +39,7 @@ export default {
   /** Per-package overrides for the parts that are pure logic and must stay high. */
   override: [
     { path: /^packages\/resilient-client$/u, threshold: 80 },
+    { path: /^packages\/grpc-client$/u, threshold: 80 },
     { path: /^packages\/common$/u, threshold: 70 },
   ],
 };
