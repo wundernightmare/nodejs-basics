@@ -606,6 +606,25 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
 
+  packages/grpc-client:
+    dependencies:
+      '@grpc/grpc-js':
+        specifier: ^1.14.5
+        version: 1.14.6
+      '@opentelemetry/api':
+        specifier: 1.9.1
+        version: 1.9.1
+      opossum:
+        specifier: 10.0.0
+        version: 10.0.0
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
+      '@types/opossum':
+        specifier: 8.1.9
+        version: 8.1.9
+
   packages/idempotency:
     dependencies:
       '@base/cache':

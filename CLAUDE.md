@@ -214,7 +214,8 @@ high-signal, easy-to-miss bits.
   `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound
   calls honour it: Postgres (guardPgPool — ROLLBACK always passes; UoW sets
   `SET LOCAL statement_timeout`), Valkey (guardValkeyClient), HTTP
-  (ResilientClient `getRemainingMs` → AbortSignal + header). Spent →
+  (ResilientClient `getRemainingMs` → AbortSignal + header), gRPC
+  (`GrpcClients` `getRemainingMs` → the call's deadline). Spent →
   `DeadlineExceededError` → 504. New dependency client → apply the budget the
   same way (`callBudgetMs` / `remainingMs` from @base/common).
 - **Transactions**: repositories read the ambient client with
