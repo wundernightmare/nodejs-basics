@@ -13,7 +13,8 @@ node dist/main.js --check-config        # validate this deployment's env + confi
 Each pod has an admin listener (port `ADMIN_PORT`, 9090 in a container; keep
 it off the ingress): `/livez`, `/readyz`, `/metrics`, `/version`,
 `/admin/config`, `/admin/log-level`, `/debug/heapdump`, `/debug/cpu-profile`.
-Mutations need `Authorization: Bearer $ADMIN_TOKEN`; a pod without a token
+Everything under `/admin/` and `/debug/` — reads too — needs
+`Authorization: Bearer $ADMIN_TOKEN`; a pod without a token
 does not start (unless `ADMIN_INSECURE=true` — never in production).
 
 ## A pod does not start
@@ -104,6 +105,11 @@ are `docker/prometheus/rules.yml`; what to do:
   `grpc_client_circuit_breaker_state` = 1** — a dependency failed enough to
   be cut off; calls fail fast until a probe succeeds (2 = probing). Look at
   the dependency (`*_client_requests_total` by `outcome` says how it failed).
+- **`http_client_retry_budget_exhausted_total` growing** — a dependency fails
+  often enough that the client stopped retrying it (the budget is `10 + 0.2 ×
+  requests` per 10 s). Same place to look; do not raise the budget to make the
+  number go away. `http_client_circuit_breaker_transitions_total` at a steady
+  rate means the breaker flaps: the dependency recovers and fails again.
 - **`nodejs_eventloop_delay_seconds{quantile="0.99"}` high, or
   `nodejs_heap_used_bytes` near `nodejs_heap_limit_bytes`** — take a heap
   snapshot before the pod is killed: `curl -X POST :9090/debug/heapdump -H

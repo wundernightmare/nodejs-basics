@@ -1,6 +1,12 @@
 export { DatabaseLifecycleService } from "./database.lifecycle.service.js";
 export { DatabaseModule } from "./database.module.js";
-export { commit, PgUnitOfWork, TransactionAbortedError } from "./pg-unit-of-work.service.js";
+export {
+  AfterCommitError,
+  commit,
+  PgUnitOfWork,
+  TransactionAbortedError,
+  TxOptionsError,
+} from "./pg-unit-of-work.service.js";
 export {
   PG_BREAKER,
   PG_CONFIG,
@@ -17,6 +23,8 @@ export { pgTarget, tracePgClient, tracePgPool } from "./pg-tracing.js";
 export { decorateConnectionString } from "./connection-string.js";
 export { buildPostgresConfig, type PostgresBuilderResult } from "./postgres-config.builder.js";
 export {
+  afterCommit,
+  type AfterCommitHook,
   type AmbientTransaction,
   currentTransaction,
   TransactionEndedError,

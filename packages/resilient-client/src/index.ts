@@ -1,6 +1,8 @@
 // Shared retry primitives — reused by non-HTTP clients (DB drivers) so the
 // full-jitter curve is sourced from one place.
-export { computeJitteredDelay, sleep } from "./backoff.js";
+export { computeJitteredDelay, parseRetryAfter, sleep } from "./backoff.js";
+export { RetryBudget } from "./retry-budget.js";
+export type { RetryBudgetConfig } from "./retry-budget.js";
 export type { BackoffSpec } from "./backoff.js";
 
 // Errors
@@ -26,6 +28,7 @@ export type {
   CircuitBreakerConfig,
   FallbackFn,
   AdaptiveConcurrencyConfig,
+  BreakerState,
   ResilientClientConfig,
 } from "./resilient-client.js";
 

@@ -11,8 +11,18 @@ import {
   ResilientPool,
   StaticConfigAdapter,
   extractBaseUrl,
+  logUrl,
   matchesSelector,
 } from "./resilient-client.pool.js";
+
+describe("logUrl", () => {
+  it("drops credentials and the query", async () => {
+    await testCase("NB-1124", "outbound URLs are logged without credentials and query");
+    expect(logUrl(new URL("https://user:pw@api.example.com:8443/v1/x?access_token=s3cret#f"))).toBe(
+      "https://api.example.com:8443/v1/x",
+    );
+  });
+});
 
 // ─── matchesSelector ──────────────────────────────────────────────────────────
 
@@ -242,10 +252,94 @@ describe("ResilientPool", () => {
       expect(metricValue(text, "http_client_circuit_breaker_state", { target: "local_api" })).toBe(
         0,
       );
+      expect(
+        metricValue(text, "http_client_retry_budget_exhausted_total", { target: "local_api" }),
+      ).toBe(0);
       await pool.shutdown(1_000);
     } finally {
       await capture.stop();
     }
+  });
+
+  it("counts refused retries and breaker transitions, and logs no query string", async () => {
+    await testCase("NB-1125", "http_client_retry_budget_exhausted_total and …_transitions_total");
+    const capture = captureMetrics();
+    const logged: Array<Record<string, unknown>> = [];
+    const record = (obj: Record<string, unknown> | string): void => {
+      if (typeof obj !== "string") logged.push(obj);
+    };
+    try {
+      const pool = ResilientPool.fromAdapter(
+        new StaticConfigAdapter([
+          {
+            name: "flaky",
+            selector: `http://127.0.0.1:${port}`,
+            connections: 1,
+            retry: {
+              maxRetries: 1,
+              minTimeout: 0,
+              maxTimeout: 0,
+              budget: { ratio: 0, minRetries: 0, windowMs: 60_000 },
+            },
+            circuitBreaker: { volumeThreshold: 1, errorThresholdPercentage: 1 },
+          },
+        ]),
+        undefined,
+        { info: record, warn: record, debug: record, error: record },
+      );
+      responses.push({ status: 503, body: "" });
+      await expect(
+        pool.send(`http://127.0.0.1:${port}/x?token=s3cret`, { method: "GET", path: "/x" }),
+      ).rejects.toMatchObject({ statusCode: 503 });
+      const text = await capture.scrape();
+      expect(
+        metricValue(text, "http_client_retry_budget_exhausted_total", { target: "flaky" }),
+      ).toBe(1);
+      expect(
+        metricValue(text, "http_client_circuit_breaker_transitions_total", {
+          target: "flaky",
+          from: "closed",
+          to: "open",
+        }),
+      ).toBe(1);
+      expect(metricValue(text, "http_client_circuit_breaker_state", { target: "flaky" })).toBe(1);
+      expect(logged.map((l) => l["url.full"])).toEqual([
+        `http://127.0.0.1:${port}/x`,
+        `http://127.0.0.1:${port}/x`,
+      ]);
+      await pool.shutdown(1_000);
+    } finally {
+      await capture.stop();
+    }
+  });
+
+  it("passes the target's timeout on as the attempt timeout", async () => {
+    await testCase("NB-1126", "OutboundTargetConfig.timeout bounds each attempt");
+    const slow = createServer(() => {
+      /* never answers */
+    });
+    await new Promise<void>((resolve) => {
+      slow.listen(0, "127.0.0.1", resolve);
+    });
+    const slowPort = (slow.address() as AddressInfo).port;
+    const pool = ResilientPool.fromAdapter(
+      new StaticConfigAdapter([
+        {
+          name: "slow",
+          selector: `http://127.0.0.1:${slowPort}`,
+          timeout: 50,
+          retry: { maxRetries: 0 },
+        },
+      ]),
+    );
+    const started = Date.now();
+    await expect(
+      pool.send(`http://127.0.0.1:${slowPort}/x`, { method: "GET", path: "/x" }),
+    ).rejects.toMatchObject({ errorType: "timeout", kind: "transient" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await pool.shutdown(1_000);
+    slow.closeAllConnections();
+    await new Promise((resolve) => slow.close(resolve));
   });
 
   it("returns response from the correct target path", async () => {

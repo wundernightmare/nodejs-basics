@@ -55,7 +55,7 @@ describe("requireBearer", () => {
     });
     expect(guarded.warn).toHaveBeenCalledWith(
       expect.objectContaining({ "http.request.method": "PUT", "url.path": "/admin/log-level" }),
-      "Admin: rejected unauthenticated mutation",
+      "Admin: rejected unauthenticated request",
     );
   });
 

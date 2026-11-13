@@ -3,16 +3,39 @@ import CircuitBreaker from "opossum";
 import { Client, Pool } from "undici";
 import type { Dispatcher } from "undici";
 
-import { computeJitteredDelay, sleep } from "./backoff.js";
+import { computeJitteredDelay, parseRetryAfter, sleep } from "./backoff.js";
 import { CachedBodyReadable } from "./resilient-client.cache.js";
 import type { CacheConfig, CachedEntry } from "./resilient-client.cache.js";
 import { OutboundError } from "./resilient-client.errors.js";
+import { RetryBudget } from "./retry-budget.js";
+import type { RetryBudgetConfig } from "./retry-budget.js";
 
 /** The abort AbortSignal.timeout() causes (undici rejects with its reason, a TimeoutError). */
 function isTimeoutAbort(err: unknown): boolean {
   const e = err as { name?: unknown; cause?: { name?: unknown } } | null;
   return e?.name === "TimeoutError" || e?.cause?.name === "TimeoutError";
 }
+
+/** Methods that may be sent more than once (RFC 9110 §9.2.2). */
+const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "PUT",
+  "DELETE",
+]);
+
+/** A body the client can send again: nothing, text or bytes — not a stream or an iterator. */
+function isReplayable(body: Dispatcher.RequestOptions["body"]): boolean {
+  return (
+    body === null || body === undefined || typeof body === "string" || ArrayBuffer.isView(body)
+  );
+}
+
+/** "Try again" statuses — the rule golang-basics' client uses: 408, 425, 429, 5xx but 501 and 505. */
+const RETRY_STATUS_CODES = [408, 425, 429, 500, 502, 503, 504];
+
+export type BreakerState = "closed" | "open" | "halfOpen";
 
 // ─── Logger interface ─────────────────────────────────────────────────────────
 
@@ -36,10 +59,20 @@ export interface RetryConfig {
   maxTimeout?: number;
   /** Multiplier per retry. Default: 2 */
   timeoutFactor?: number;
-  /** HTTP status codes that trigger a retry. Default: [429, 502, 503, 504] */
+  /**
+   * HTTP status codes that mean "try again". Default: 408, 425, 429, 500, 502,
+   * 503, 504. Such a response is never returned: it is retried, or it ends the
+   * call with OutboundError.retriesExhausted.
+   */
   statusCodes?: number[];
-  /** Node.js error codes that trigger a retry. */
+  /** Node.js / undici error codes that trigger a retry (connection errors). */
   errorCodes?: string[];
+  /**
+   * Caps retries at `minRetries + ratio × requests` per window, so an outage
+   * cannot multiply the traffic by the attempt count. Default: 0.2 × requests
+   * + 10 per 10 s; `false` disables it.
+   */
+  budget?: RetryBudgetConfig | false;
 }
 
 export interface RateLimitConfig {
@@ -62,7 +95,12 @@ export interface RateLimitConfig {
 }
 
 export interface CircuitBreakerConfig {
-  /** Action timeout ms; false to disable. Default: 10_000 */
+  /**
+   * A timeout over the whole call (queueing and retries included). It does not
+   * cancel anything — the call goes on in the background and counts as a
+   * failure — so it is off by default: `attemptTimeoutMs` bounds each attempt
+   * and `getRemainingMs` the call. Default: false.
+   */
   timeout?: number | false;
   /** % of failures required to trip the breaker. Default: 50 */
   errorThresholdPercentage?: number;
@@ -125,8 +163,28 @@ export interface ResilientClientConfig {
   keepAliveTimeout?: number;
   /** Forces `Connection: close` on every request. */
   shortLived?: boolean;
+  /**
+   * How long one attempt may take, from sending the request to the end of the
+   * response body; the attempt is cancelled (an AbortSignal) and, when the
+   * request may be repeated, retried. `false` disables it. Default: 5_000.
+   */
+  attemptTimeoutMs?: number | false;
+  /**
+   * Retries. Only a request that may be sent twice is retried: GET, HEAD,
+   * OPTIONS, PUT, DELETE, or any method with an `Idempotency-Key` header — and
+   * only when its body can be replayed (text or bytes, not a stream). The wait
+   * is the jittered backoff or the response's Retry-After, whichever is longer;
+   * a Retry-After beyond `maxTimeout`, a delay beyond the caller's budget or a
+   * spent retry budget ends the call instead.
+   */
   retry?: RetryConfig;
   rateLimit?: RateLimitConfig;
+  /**
+   * The breaker counts what the dependency did: connection errors, timeouts
+   * and "try again" statuses that survived the retries. A 4xx, a rate-limit
+   * rejection, a budget spent before sending and the caller's own abort are
+   * not its failures.
+   */
   circuitBreaker?: CircuitBreakerConfig;
   /** Override the User-Agent header for every request. */
   userAgent?: string;
@@ -289,6 +347,16 @@ export class ResilientClient {
   readonly #shortLived: boolean;
   readonly #retryStatusCodes: ReadonlySet<number>;
   #retries = 0;
+  #retryBudgetExhausted = 0;
+  readonly #budget: RetryBudget | undefined;
+  readonly #attemptTimeoutMs: number | undefined;
+  /** Errors that say nothing about the dependency: the breaker does not count them. */
+  readonly #benign = new WeakSet<object>();
+  #lastState: BreakerState = "closed";
+  readonly #transitions = new Map<
+    string,
+    { from: BreakerState; to: BreakerState; count: number }
+  >();
   readonly #retryErrorCodes: ReadonlySet<string>;
   readonly #rejectOnRateLimit: boolean;
   readonly #maxRetries: number;
@@ -315,7 +383,12 @@ export class ResilientClient {
     this.#maxTimeout = config.retry?.maxTimeout ?? 200;
     this.#timeoutFactor = config.retry?.timeoutFactor ?? 2;
 
-    this.#retryStatusCodes = new Set(config.retry?.statusCodes ?? [429, 502, 503, 504]);
+    const budget = config.retry?.budget;
+    this.#budget = budget === false || budget?.windowMs === 0 ? undefined : new RetryBudget(budget);
+    const attemptTimeout = config.attemptTimeoutMs ?? 5_000;
+    this.#attemptTimeoutMs = attemptTimeout === false ? undefined : attemptTimeout;
+
+    this.#retryStatusCodes = new Set(config.retry?.statusCodes ?? RETRY_STATUS_CODES);
     this.#retryErrorCodes = new Set(
       config.retry?.errorCodes ?? [
         "ECONNRESET",
@@ -326,6 +399,9 @@ export class ResilientClient {
         "EHOSTDOWN",
         "EHOSTUNREACH",
         "EPIPE",
+        "ETIMEDOUT",
+        "UND_ERR_SOCKET",
+        "UND_ERR_CONNECT_TIMEOUT",
       ],
     );
 
@@ -344,13 +420,23 @@ export class ResilientClient {
     this.#breaker = this.#buildCircuitBreaker();
   }
 
-  /** Current circuit breaker state. */
   /** Retries sent so far (attempts after the first) — http_client_retries_total. */
   get retries(): number {
     return this.#retries;
   }
 
-  get breakerState(): "closed" | "open" | "halfOpen" {
+  /** Retries the budget refused — http_client_retry_budget_exhausted_total. */
+  get retryBudgetExhausted(): number {
+    return this.#retryBudgetExhausted;
+  }
+
+  /** Breaker state changes so far — http_client_circuit_breaker_transitions_total. */
+  get breakerTransitions(): Array<{ from: BreakerState; to: BreakerState; count: number }> {
+    return [...this.#transitions.values()].map(({ from, to, count }) => ({ from, to, count }));
+  }
+
+  /** Current circuit breaker state. */
+  get breakerState(): BreakerState {
     if (this.#breaker.opened) return "open";
     if (this.#breaker.halfOpen) return "halfOpen";
     return "closed";
@@ -456,19 +542,36 @@ export class ResilientClient {
     };
 
     const breaker = new CircuitBreaker(action, {
-      timeout: cb.timeout ?? 10_000,
+      timeout: cb.timeout ?? false,
       errorThresholdPercentage: cb.errorThresholdPercentage ?? 50,
       resetTimeout: cb.resetTimeout ?? 30_000,
       volumeThreshold: cb.volumeThreshold ?? 5,
+      // opossum has no neutral outcome: what is not the dependency's fault counts as a success.
+      errorFilter: (err: unknown) =>
+        (typeof err === "object" && err !== null && this.#benign.has(err)) ||
+        (err as { name?: unknown } | null)?.name === "BottleneckError",
     });
 
-    breaker.on("failure", (err) => {
-      if (err?.name === "BottleneckError") {
-        OutboundError.rateLimited(this.baseUrl);
-      }
-    });
+    const moved = (to: BreakerState) => (): void => {
+      const from = this.#lastState;
+      if (from === to) return;
+      this.#lastState = to;
+      const key = `${from}>${to}`;
+      const seen = this.#transitions.get(key);
+      if (seen === undefined) this.#transitions.set(key, { from, to, count: 1 });
+      else seen.count++;
+    };
+    breaker.on("open", moved("open"));
+    breaker.on("halfOpen", moved("halfOpen"));
+    breaker.on("close", moved("closed"));
 
     return breaker;
+  }
+
+  /** Marks an error as one the breaker must not count against the dependency. */
+  #notTheDependency(err: OutboundError): OutboundError {
+    this.#benign.add(err);
+    return err;
   }
 
   // ─── Core execution ──────────────────────────────────────────────────────
@@ -499,6 +602,12 @@ export class ResilientClient {
       if (err instanceof OutboundError) throw err;
       const original = (err as { cause?: unknown }).cause ?? err;
       if (original instanceof OutboundError) throw original;
+      const { code, name } = err as { code?: unknown; name?: unknown };
+      // A call refused while the half-open probe is out.
+      if (code === "EOPENBREAKER") throw OutboundError.circuitOpen(this.baseUrl);
+      if (name === "BottleneckError") throw OutboundError.rateLimited(this.baseUrl);
+      // circuitBreaker.timeout, when someone turns it on.
+      if (code === "ETIMEDOUT") throw OutboundError.timeout(this.baseUrl);
       throw OutboundError.network(err);
     }
   }
@@ -506,10 +615,16 @@ export class ResilientClient {
   // ─── Retry ───────────────────────────────────────────────────────────────
 
   async #executeWithRetry(opts: Dispatcher.RequestOptions): Promise<Dispatcher.ResponseData> {
-    for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
+    const attempts = this.#mayRepeat(opts) ? this.#maxRetries + 1 : 1;
+    const own = opts.signal as AbortSignal | undefined;
+    this.#budget?.request();
+
+    for (let attempt = 0; ; attempt++) {
       // The caller's budget (getRemainingMs): spent → fail fast, not retried.
       const budget = this.config.getRemainingMs?.();
-      if (budget !== undefined && budget <= 0) throw OutboundError.deadlineExceeded(this.baseUrl);
+      if (budget !== undefined && budget <= 0) {
+        throw this.#notTheDependency(OutboundError.deadlineExceeded(this.baseUrl));
+      }
       const deadlineAt = budget === undefined ? undefined : Date.now() + budget;
 
       await this.#adaptiveLimiter?.acquire();
@@ -518,63 +633,84 @@ export class ResilientClient {
       const left = deadlineAt === undefined ? undefined : deadlineAt - rttStart;
       if (left !== undefined && left <= 0) {
         this.#adaptiveLimiter?.cancel();
-        throw OutboundError.deadlineExceeded(this.baseUrl);
+        throw this.#notTheDependency(OutboundError.deadlineExceeded(this.baseUrl));
       }
+      // The caller's budget ends the attempt before the target's own timeout would.
+      const budgetEndsIt =
+        left !== undefined &&
+        (this.#attemptTimeoutMs === undefined || left <= this.#attemptTimeoutMs);
 
       let response: Dispatcher.ResponseData | undefined;
       let dispatchErr: unknown;
 
       try {
-        response = await this.#dispatcher.request(
-          left === undefined ? opts : this.#withBudget(opts, left),
-        );
+        response = await this.#dispatcher.request(this.#withLimits(opts, left));
       } catch (e) {
         dispatchErr = e;
       }
-      if (left !== undefined && dispatchErr !== undefined && isTimeoutAbort(dispatchErr)) {
-        this.#adaptiveLimiter?.release(Date.now() - rttStart, true);
-        throw OutboundError.deadlineExceeded(this.baseUrl);
-      }
 
       const rtt = Date.now() - rttStart;
+      let failure: OutboundError;
 
       if (response !== undefined) {
         const isRetryStatus = this.#retryStatusCodes.has(response.statusCode);
         this.#adaptiveLimiter?.release(rtt, isRetryStatus);
 
-        if (isRetryStatus) {
-          await this.#drainBody(response);
-          if (attempt < this.#maxRetries) {
-            await this.#backoff(attempt);
-            continue;
-          }
-          throw OutboundError.retriesExhausted(this.baseUrl, response.statusCode);
-        }
+        if (!isRetryStatus) return this.#answer(response);
 
-        if (response.statusCode >= 400 && response.statusCode < 500) {
-          if (this.#passthrough4xx) return response;
-          await this.#drainBody(response);
-          throw OutboundError.clientError(response.statusCode, this.baseUrl);
-        }
+        const retryAfterMs = parseRetryAfter(response.headers["retry-after"]);
+        await this.#drainBody(response);
+        failure = OutboundError.retriesExhausted(this.baseUrl, response.statusCode, retryAfterMs);
+      } else {
+        this.#adaptiveLimiter?.release(rtt, true);
 
-        return response;
+        if (dispatchErr instanceof OutboundError) throw dispatchErr;
+        if (own?.aborted === true) {
+          throw this.#notTheDependency(OutboundError.canceled(this.baseUrl, dispatchErr));
+        }
+        if (isTimeoutAbort(dispatchErr)) {
+          // The dependency did not answer in the time it was given: a failure
+          // either way, but the caller's budget leaves no room for a retry.
+          if (budgetEndsIt) throw OutboundError.deadlineExceeded(this.baseUrl);
+          failure = OutboundError.timeout(this.baseUrl);
+        } else {
+          failure = OutboundError.network(dispatchErr, this.baseUrl);
+          const code = (dispatchErr as NodeJS.ErrnoException | null)?.code ?? "";
+          if (!this.#retryErrorCodes.has(code)) throw failure;
+        }
       }
 
-      // Dispatch threw an error
-      this.#adaptiveLimiter?.release(rtt, true);
+      if (attempt + 1 >= attempts) throw failure;
 
-      if (dispatchErr instanceof OutboundError) throw dispatchErr;
-
-      const code = (dispatchErr as NodeJS.ErrnoException).code ?? "";
-      if (this.#retryErrorCodes.has(code) && attempt < this.#maxRetries) {
-        await this.#backoff(attempt);
-        continue;
+      const retryAfterMs = failure.retryAfterMs ?? 0;
+      if (retryAfterMs > this.#maxTimeout) throw failure;
+      const delay = Math.max(this.#backoffDelay(attempt), retryAfterMs);
+      const remaining = this.config.getRemainingMs?.();
+      if (remaining !== undefined && remaining <= delay) throw failure;
+      if (this.#budget?.tryRetry() === false) {
+        this.#retryBudgetExhausted++;
+        throw failure;
       }
 
-      throw OutboundError.network(dispatchErr);
+      this.#retries++;
+      await sleep(delay);
     }
+  }
 
-    throw new Error("Unreachable");
+  /** A response that is final: returned, or — a 4xx without passthrough4xx — thrown. */
+  async #answer(response: Dispatcher.ResponseData): Promise<Dispatcher.ResponseData> {
+    const isClientError = response.statusCode >= 400 && response.statusCode < 500;
+    if (!isClientError || this.#passthrough4xx) return response;
+    await this.#drainBody(response);
+    throw this.#notTheDependency(OutboundError.clientError(response.statusCode, this.baseUrl));
+  }
+
+  /** May the request be sent more than once: retries on, idempotent, body replayable. */
+  #mayRepeat(opts: Dispatcher.RequestOptions): boolean {
+    if (this.#maxRetries <= 0 || !isReplayable(opts.body)) return false;
+    if (IDEMPOTENT_METHODS.has(opts.method.toUpperCase())) return true;
+    const key = this.#normalizeHeaders(opts.headers)["idempotency-key"];
+    return key !== undefined && key !== "";
   }
 
   /**
@@ -582,9 +718,8 @@ export class ResilientClient {
    * `./backoff.ts`. Kept as a method so the class reads the per-instance
    * spec fields without re-allocating a config object every attempt.
    */
-  #backoff(attempt: number): Promise<void> {
-    this.#retries++;
-    const delay = computeJitteredDelay(
+  #backoffDelay(attempt: number): number {
+    return computeJitteredDelay(
       {
         minTimeout: this.#minTimeout,
         maxTimeout: this.#maxTimeout,
@@ -592,7 +727,6 @@ export class ResilientClient {
       },
       attempt,
     );
-    return sleep(delay);
   }
 
   #drainBody(response: Dispatcher.ResponseData): Promise<void> {
@@ -728,17 +862,26 @@ export class ResilientClient {
 
   // ─── Header helpers ──────────────────────────────────────────────────────
 
-  /** One attempt within the caller's budget: cancelled when it runs out, and told downstream. */
-  #withBudget(options: Dispatcher.RequestOptions, leftMs: number): Dispatcher.RequestOptions {
-    const headers = this.#normalizeHeaders(options.headers);
-    headers["x-request-timeout-ms"] = String(Math.max(1, Math.floor(leftMs)));
-    const timeout = AbortSignal.timeout(Math.ceil(leftMs));
+  /**
+   * One attempt, bounded: cancelled at the target's attempt timeout or when the
+   * caller's budget runs out, whichever is first; the budget is told downstream.
+   */
+  #withLimits(
+    options: Dispatcher.RequestOptions,
+    leftMs: number | undefined,
+  ): Dispatcher.RequestOptions {
+    const limitMs = Math.min(leftMs ?? Infinity, this.#attemptTimeoutMs ?? Infinity);
+    if (limitMs === Infinity) return options;
+    const timeout = AbortSignal.timeout(Math.ceil(limitMs));
     const own = options.signal as AbortSignal | undefined;
-    return {
+    const bounded = {
       ...options,
-      headers,
       signal: own === undefined ? timeout : AbortSignal.any([own, timeout]),
     };
+    if (leftMs === undefined) return bounded;
+    const headers = this.#normalizeHeaders(options.headers);
+    headers["x-request-timeout-ms"] = String(Math.max(1, Math.floor(leftMs)));
+    return { ...bounded, headers };
   }
 
   #forwardRequestId(options: Dispatcher.RequestOptions): Dispatcher.RequestOptions {
@@ -773,6 +916,10 @@ export class ResilientClient {
       }
       return out;
     }
-    return { ...(existing as Record<string, string>) };
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries(existing as Record<string, string>)) {
+      out[name.toLowerCase()] = value;
+    }
+    return out;
   }
 }

@@ -272,6 +272,15 @@ describe("GrpcClients", () => {
     };
     expect((await unary(client)).err).toBeNull();
     expect(grpc?.circuitBreakerStates()).toEqual({ [target]: "closed" });
+
+    const after = await metrics.scrape();
+    const moved = (from: string, to: string): number =>
+      metricValue(after, "grpc_client_circuit_breaker_transitions_total", { target, from, to });
+    expect([
+      moved("closed", "open"),
+      moved("open", "half_open"),
+      moved("half_open", "closed"),
+    ]).toEqual([1, 1, 1]);
   });
 
   it("lets one probe through while half-open, and opens again when it fails", async () => {

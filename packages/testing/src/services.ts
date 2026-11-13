@@ -2,16 +2,20 @@ import { randomBytes } from "node:crypto";
 
 /**
  * Backing services an integration suite can ask for. Each one is reached
- * through the same env variable the application reads, so a suite runs
- * against whatever `just deps` (docker/deps.yml) or the CI job provides —
- * no container orchestration inside the test process, no extra dependency.
+ * through the same env variable the application reads. The integration
+ * project's global setup (containers.global-setup.ts) starts a container for
+ * every requested service whose variable is unset, so a suite runs the same
+ * against `just deps`, a CI service or a throwaway container — and the test
+ * process itself orchestrates nothing. "toxiproxy" is the chaos proxy: ask
+ * for it next to the service you want to break (see chaos.ts).
  */
-export type Service = "postgres" | "valkey" | "kafka";
+export type Service = "postgres" | "valkey" | "kafka" | "toxiproxy";
 
 const ENV: Record<Service, string> = {
   postgres: "DATABASE_URL",
   valkey: "VALKEY_URL",
   kafka: "KAFKA_BROKERS",
+  toxiproxy: "TOXIPROXY_URL",
 };
 
 export interface Integration {
@@ -26,8 +30,8 @@ export interface Integration {
 /**
  * The layer switch of the integration suites, with the policy of the Go
  * sibling's `testx.Postgres(t)`: locally, a missing service *skips* the
- * suite (a laptop without `just deps` up still runs `pnpm test:integration`
- * green); on CI (`CI` set) a missing service *fails* it, so a pipeline can
+ * suite (a laptop without a container runtime still runs
+ * `pnpm test:integration` green); on CI (`CI` set) a missing service *fails* it, so a pipeline can
  * never go green by silently skipping the layer.
  *
  *   const infra = integration("postgres");
@@ -47,7 +51,7 @@ export function integration(...services: Service[]): Integration {
     skip: missing.length > 0,
     reason:
       missing.length > 0
-        ? `${missing.map((s) => ENV[s]).join(", ")} unset — run \`just deps\``
+        ? `${missing.map((s) => ENV[s]).join(", ")} unset — no container runtime? (or run \`just deps\`)`
         : "",
     url(service) {
       const v = process.env[ENV[service]];

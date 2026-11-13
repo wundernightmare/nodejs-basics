@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { integration, meta, testCase, unique } from "@base/testing";
 
 import { PgUnitOfWork, TransactionAbortedError } from "./pg-unit-of-work.service.js";
+import { afterCommit } from "./transaction.storage.js";
 import { currentTransaction, TransactionEndedError } from "./transaction.storage.js";
 
 /**
@@ -131,5 +132,56 @@ describe.skipIf(infra.skip)("PgUnitOfWork (integration)", () => {
     });
     release();
     expect(await late).toBeInstanceOf(TransactionEndedError);
+  });
+
+  it("a savepoint undoes the nested unit's writes and keeps the outer ones", async () => {
+    await testCase(
+      "NB-1135",
+      "savepoint against Postgres: the outer unit survives a nested failure",
+    );
+    const before = await count();
+    await uow.runInTransaction(async () => {
+      await insert("outer");
+      await uow
+        .runInTransaction(() => insert(null as unknown as string), { savepoint: true })
+        .catch(() => {});
+      await insert("after");
+    });
+    expect(await count()).toBe(before + 2);
+  });
+
+  it("retries a serialization failure and commits once", async () => {
+    await testCase("NB-1136", "SERIALIZABLE with retries: two conflicting units both commit");
+    // Two units read the same aggregate and each insert a row derived from it —
+    // a write skew SERIALIZABLE refuses (40001) for whichever commits second.
+    const group = unique("skew");
+    let attempts = 0;
+    const hooks: string[] = [];
+    let bothRead!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      bothRead = resolve;
+    });
+    let readers = 0;
+    const unit = (name: string): Promise<void> =>
+      uow.runInTransaction(
+        async () => {
+          attempts++;
+          const client = currentTransaction<Pool>()!;
+          await client.query(`SELECT count(*) FROM ${table} WHERE v LIKE $1`, [`${group}%`]);
+          // First attempt of both: wait until the other has read too.
+          if (++readers === 2) bothRead();
+          if (readers <= 2) await gate;
+          await client.query(`INSERT INTO ${table} (v) VALUES ($1)`, [`${group}-${name}`]);
+          await afterCommit(() => {
+            hooks.push(name);
+          });
+        },
+        { isolation: "serializable", retries: 5 },
+      );
+    await Promise.all([unit("a"), unit("b")]);
+    const res = await pool.query(`SELECT v FROM ${table} WHERE v LIKE $1`, [`${group}%`]);
+    expect(res.rowCount).toBe(2);
+    expect(attempts).toBe(3);
+    expect(hooks.toSorted()).toEqual(["a", "b"]);
   });
 });
