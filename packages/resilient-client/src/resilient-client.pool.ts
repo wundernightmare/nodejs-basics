@@ -119,10 +119,22 @@ const STANDARD_METHODS = new Set([
   "TRACE",
 ]);
 
+/**
+ * Error types whose `outcome` label is spelt differently in the metrics
+ * contract shared with golang-basics (its docs/METRICS.md). The error type
+ * itself is API and keeps its name.
+ */
+const CONTRACT_OUTCOME: Readonly<Record<string, string>> = {
+  network: "connection",
+  shutting_down: "shutdown",
+  no_matching_target: "invalid",
+};
+
 /** The outcome label of a call: the status class of the last response, else the error kind. */
 export function outcomeOf(status: number | undefined, err?: OutboundError): string {
   if (status !== undefined && status >= 100 && status < 600) return `${Math.floor(status / 100)}xx`;
-  return err?.errorType ?? "unknown";
+  if (err === undefined) return "unknown";
+  return CONTRACT_OUTCOME[err.errorType] ?? err.errorType;
 }
 
 /** Breaker state as a gauge value — the scale golang-basics uses. */

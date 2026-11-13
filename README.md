@@ -28,7 +28,7 @@ packages/
   config                 YAML config loader + env registry + secret-file watcher.
   logger                 Pino with ECS schema, OTel trace correlation, ALS context.
   common                 Request-context (ALS), nanoid, problem-details, UoW port,
-                         RFC 9457 exception filters.
+                         RFC 9457 exception filters, Secret (a secret in a type).
   resilience             Circuit breaker, retry policy with jittered backoff,
                          per-tenant DB rate limiter.
   database               pg.Pool with TLS, multi-host failover, password from a
@@ -36,7 +36,11 @@ packages/
                          transaction context, pool + query metrics. (No ORM —
                          bring your own.)
   cache                  Valkey/Redis client with config builder shared with
-                         BullMQ, client connection metrics.
+                         BullMQ, client connection metrics; CacheAside and
+                         TierCache (in-process L1 in front of Valkey).
+  s3                     Object storage: the AWS SDK with env config, a deadline
+                         per call, metrics, tracing, bounded reads, streaming
+                         multipart uploads.
   kafka                  Confluent Kafka producer (reconnecting, one error
                          type: KafkaSendError) + KafkaConsumerRunner (commit,
                          pause/backoff, tracing — you write handle()) +
@@ -44,7 +48,8 @@ packages/
   outbox                 Transactional outbox: OutboxWriter (inside the UoW
                          transaction) + OutboxRelay (→ Kafka, at least once).
   jobs                   JobQueue port + BullMQ (Valkey) / pg-boss (Postgres)
-                         adapters, traced and measured alike; BullBoard wiring.
+                         adapters, traced and measured alike; BullBoard wiring
+                         behind the admin token.
   idempotency            Idempotency-Key interceptor + decorator with pluggable
                          KV store (default: Valkey).
   observability          OpenTelemetry SDK setup, process/HTTP/readiness metrics,
@@ -772,6 +777,13 @@ otherwise. Both pass the same contract test (`job-queue.integration.spec.ts`).
 Pick pg-boss when jobs are modest and one less moving part matters. Pick
 BullMQ for volume, low latency, or its rate limiting and flows.
 
+`setupBullBoard(app, queues, { token })` mounts the BullBoard UI on
+`/admin/queues` of the API listener. The board retries and deletes jobs, so
+give it the admin token: every request must then carry it, as
+`Authorization: Bearer <token>` or — what a browser can do — as the password
+of HTTP Basic auth (any user name). Without a token there is no guard; that is
+for a local stack only.
+
 ### Cache-aside
 
 `CacheAside` (`@base/cache`) is the read-through helper over the Valkey
@@ -792,6 +804,98 @@ await afterCommit(() => cache.tombstone(`task:${id}`, 5_000));
   until the tombstone expires (make that a few times the slowest load).
 - A cache that is down, slow or corrupt is a miss and a warning — never an
   error for the caller. `cache_lookups_total{result}` gives the hit ratio.
+
+### Two-level cache
+
+`TierCache` (`@base/cache`) puts a bounded in-process L1 in front of Valkey
+(L2) in front of a loader, for values read far more often than they change
+(credentials, tenants, feature flags). The read rules of golang-basics'
+`libs/tiercache`:
+
+```ts
+const creds = new TierCache<Credential>(
+  { name: "credentials:v1", softTtlMs: 30_000, hardTtlMs: 300_000 },
+  (key, signal) => repo.findByKeyHash(key, signal), // undefined: not found
+  new ValkeyRemote(valkey),
+  { logger },
+);
+const credential = await creds.get(keyOf(apiKey));
+// after the write has committed:
+await afterCommit(() => creds.invalidate(keyOf(apiKey)));
+```
+
+| Age of the value | What a read does |
+|---|---|
+| younger than `softTtlMs` | served from L1, no I/O |
+| between soft and hard | served from L1, refreshed in the background (at most one refresh per key, `refreshConcurrency` in all) |
+| past `hardTtlMs` | ignored: L2, then the loader — one lookup per key however many callers |
+| … and the loader fails | served for `staleIfErrorMs` more (off by default) |
+
+- **Valkey is optional at run time.** Every L2 call has its own deadline
+  (`remoteTimeoutMs`), consecutive failures make reads skip L2 for a cooldown,
+  and the loader answers instead. A read never fails because of the cache.
+- **`invalidate(key)`** drops the key from this process's L1, tombstones it
+  in L2 and publishes it, so every other process drops it too. Pub/Sub is at
+  most once: each time the subscription is re-established, L1 is emptied.
+- **A load that raced an invalidation is cached nowhere**: L2 refuses the
+  fill (tombstone, or `SET … IFEQ` for a refresh — Valkey ≥ 8.1), and then L1
+  does not keep it either.
+- L1 is bounded by `maxBytes` of encoded entries (default 32 MiB) and evicts
+  the oldest first. Values are handed out as the same object: read-only.
+- Metrics, every series labelled `cache="<name>"`:
+  `tiercache_reads_total{result}`, `tiercache_refreshes_total{result}`,
+  `tiercache_invalidations_total{scope}`, `tiercache_l2_bypassed_total`,
+  `tiercache_l1_oversize_total`, `tiercache_l1_bytes`.
+
+### Object storage
+
+`S3Store` (`@base/s3`) is the AWS SDK with what a service would otherwise
+wrap around it each time — the counterpart of golang-basics' `libs/s3`:
+
+```ts
+const config = s3ConfigFromEnv(process.env, "INGEST_"); // INGEST_S3_BUCKET, …
+if (s3Configured(config)) {
+  const store = new S3Store(config);
+  readiness.register("s3", () => store.ready(), { critical: false });
+  await store.put(key, body, "application/zstd");
+}
+```
+
+- The constructor does no network I/O; `ensure()` verifies the bucket (and
+  creates it with `S3_AUTO_CREATE_BUCKET`, for local stacks).
+- **Every call has its own deadline**, the SDK's retries inside it:
+  `S3_OP_TIMEOUT_MS` (10 s) for put / head / a list page / a delete batch,
+  `S3_TRANSFER_TIMEOUT_MS` (60 s) for a get or a multipart part.
+- `get(key, limitBytes)` refuses a larger object (`S3TooLargeError`) and
+  returns `undefined` for a missing key; `head` likewise.
+- `upload(key)` streams an object of unknown size in parts of
+  `S3_UPLOAD_PART_BYTES`; it appears at its key on `close()` only, `abort()`
+  discards it.
+- The secret key is a `Secret`: a dumped config shows `[redacted:…]`.
+- A timed-out put may still have been applied: name objects deterministically
+  and repeat it.
+- `s3_request_duration_seconds{operation}`, `s3_request_errors_total{operation}`;
+  a missing key on get / head is an answer, not an error.
+
+### Secrets in a type
+
+`Secret` (`@base/common`) marks a password, token or key as one — the
+counterpart of golang-basics' `secret.String`:
+
+```ts
+const token = Secret.of(config.get("ADMIN_TOKEN"));
+logger.info({ token }, "configured");   // "[redacted:1a2b3c4d]"
+if (token.equals(presented)) { … }       // constant time
+headers.authorization = `Bearer ${token.expose()}`;
+```
+
+String conversion, `JSON.stringify` (so pino), `util.inspect` and
+`console.log` all show `[redacted:<fingerprint>]`; an unset secret shows `""`.
+`expose()` is the one way to the value, so every use of a secret is a line
+that can be grepped for. The fingerprint is the first 8 hex digits of the
+SHA-256: it tells whether a secret changed across a rotation without showing
+it. It complements the key-name redaction of the logger — that one guards
+fields named like a secret, this one guards the value wherever it travels.
 
 ### Logging
 
@@ -910,9 +1014,10 @@ read is on a live `/metrics`).
 | Kafka | `kafka_producer_records_total{client,topic,result}`, `kafka_producer_send_duration_seconds{client,topic}`, `kafka_consumer_records_total{topic,result}`, `kafka_consumer_handler_duration_seconds{topic}`, `kafka_consumer_commit_errors_total`, `kafka_consumer_rebalances_total{event}`, `kafka_consumer_assigned_partitions`, `kafka_client_brokers_up{client}`, `kafka_client_request_errors_total{client}`, `kafka_producer_queue_bytes`, `kafka_producer_queue_max_bytes` |
 | Outbox | `outbox_pending`, `outbox_dead`, `outbox_oldest_age_seconds` |
 | Jobs | `job_runs_total{queue,result}`, `job_duration_seconds{queue}` |
-| Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total`, `cache_lookups_total{result}` (CacheAside) |
+| Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total`, `cache_lookups_total{result}` (CacheAside), `tiercache_*{cache}` (TierCache) |
+| S3 | `s3_request_duration_seconds{operation}`, `s3_request_errors_total{operation}` |
 | Readiness, build, logs | `health_check_up{check,critical}`, `app_integration_enabled{integration}`, `build_info{version,revision}`, `log_dropped_total{level}` |
-| Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds` (Linux), `nodejs_heap_{used,total,limit}_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_eventloop_utilization`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
+| Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds` (Linux), `nodejs_heap_{used,total,limit}_bytes`, `nodejs_container_memory_limit_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_eventloop_utilization`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
 
 The rules behind it:
 
@@ -1027,8 +1132,8 @@ it (the e2e harness waits for `/readyz`), it does not assert it again.
 - **Containers come with the run.** The integration project's global setup
   (`@base/testing` `containers.global-setup.ts`, testcontainers) reads which
   services the selected spec files ask for and starts a throwaway container
-  for each one whose variable is unset — Postgres, Valkey, Redpanda,
-  Toxiproxy, the images of `docker/deps.yml` — and stops them afterwards. A
+  for each one whose variable is unset — Postgres, Valkey, Redpanda, an
+  S3-compatible store (RustFS), Toxiproxy — and stops them afterwards. A
   variable that is set (`just deps`, the CI services, a shared stand) is used
   as it is. One file's services start in a few seconds: `just
   test-integration packages/cache`. The test process itself never talks to
@@ -1047,8 +1152,25 @@ it (the e2e harness waits for `/readyz`), it does not assert it again.
   closed, a truncated body), `pg-chaos.integration.spec.ts` (a connection
   lost inside a unit of work, recovery of the pool, bounded waits,
   `lock_timeout`) and `cache-aside.integration.spec.ts` (Valkey down or
-  silent never fails a read). Each states what the caller sees, how long it
-  takes and what the dependency received.
+  silent never fails a read), `tier-cache.integration.spec.ts` (Valkey
+  down, silent, resetting or cutting replies: reads stay correct and bounded,
+  L2 is picked up again, a cut subscription empties L1) and
+  `s3-store.integration.spec.ts` (a store that is down, silent or cuts a body
+  short). Each states what the caller sees, how long it takes and what the
+  dependency received.
+- **A frozen dependency**: Kafka cannot sit behind a proxy (its clients dial
+  the address the broker advertises), so `await pause("kafka")` freezes the
+  container instead — it accepts and never answers, which is what a wedged
+  broker looks like — and the function it returns resumes it
+  (`kafka-chaos.integration.spec.ts`). Only a container this run started can
+  be frozen: gate the suite with `describe.skipIf(infra.skip ||
+  !pausable("kafka"))`; against `just deps` or a CI service it is skipped.
+- **Leak check**: after every spec file, in both layers, the file fails when
+  its tests left something that keeps the event loop alive — a server never
+  closed, a socket, an interval (`leaks.setup.ts`; the Go sibling's goleak).
+  Unref'ed timers and unsettled promises keep nothing alive and are not
+  reported. `LEAK_CHECK=trace` adds where each leaked handle was created,
+  `LEAK_CHECK=off` switches the check off.
 - `captureLogs()` (a real pino logger writing JSON into memory) and
   `metricValue(text, name, labels)` (a sample out of Prometheus text; `-1`
   when absent) let a test assert on telemetry instead of mocking it.

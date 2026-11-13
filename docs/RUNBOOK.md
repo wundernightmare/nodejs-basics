@@ -115,6 +115,18 @@ are `docker/prometheus/rules.yml`; what to do:
   snapshot before the pod is killed: `curl -X POST :9090/debug/heapdump -H
   "Authorization: Bearer $ADMIN_TOKEN"` (written to the pod, or to S3 when
   `HEAP_SNAPSHOT_S3_BUCKET` is set); open it in Chrome DevTools → Memory.
+- **The pod is OOM-killed (exit code 137) with no "near OOM" warning and no
+  heap snapshot** — the V8 heap limit is above what the container can hold, so
+  the kernel kills it first. The service says so at boot ("V8 heap limit
+  leaves no room in the container", with a suggested value) and
+  `nodejs_heap_limit_bytes` sits above ~75 % of
+  `nodejs_container_memory_limit_bytes`. Set `--max-old-space-size` (in
+  `NODE_OPTIONS`) to the suggested value, next to the container's memory
+  limit, and change the two together: the heap limit is fixed at start.
+- **`tiercache_l2_bypassed_total` growing** — Valkey is failing and the
+  two-level cache skips it: every miss goes to the source of truth. Reads keep
+  working; look at Valkey. `tiercache_reads_total{result="stale_error"}` means
+  the source itself fails and expired values are being served.
 - **CPU high, latency up** — `curl -X POST -o cpu.cpuprofile
   ':9090/debug/cpu-profile?seconds=30' -H "Authorization: Bearer $ADMIN_TOKEN"`
   (1–60 s; open it in Chrome DevTools → Performance, or speedscope).

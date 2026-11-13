@@ -16,15 +16,21 @@ async function flushThenShutdown(provider: {
   }
 }
 
-function withShutdownTimeout<T>(p: Promise<T>): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error("telemetry shutdown timeout"));
-      }, 5_000);
-    }),
-  ]);
+async function withShutdownTimeout<T>(p: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("telemetry shutdown timeout"));
+        }, 5_000);
+      }),
+    ]);
+  } finally {
+    // Left armed, it keeps the process alive for 5 s after the flush is done.
+    clearTimeout(timer);
+  }
 }
 
 /**

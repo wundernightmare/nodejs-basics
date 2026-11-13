@@ -1,4 +1,4 @@
-export { setupBullBoard } from "./bull-board.setup.js";
+export { boardAccess, setupBullBoard, type BullBoardOptions } from "./bull-board.setup.js";
 export { createBullMQConnection } from "./bullmq-connection.factory.js";
 export { BullMQJobQueue, DEFAULT_JOB_OPTIONS } from "./bullmq-job-queue.js";
 export { JobMetrics } from "./job-metrics.js";

@@ -13,6 +13,7 @@ import {
   extractBaseUrl,
   logUrl,
   matchesSelector,
+  outcomeOf,
 } from "./resilient-client.pool.js";
 
 describe("logUrl", () => {
@@ -385,5 +386,27 @@ describe("ResilientPool", () => {
     const states = pool.circuitBreakerStates();
     expect(states["specific"]).toBe("closed");
     expect(states["general"]).toBe("closed");
+  });
+});
+
+describe("outcomeOf", () => {
+  it("spells the outcome label as the metrics contract does", async () => {
+    await testCase("NB-1231", "http_client outcome label uses the contract's names");
+    expect(outcomeOf(204)).toBe("2xx");
+    expect(outcomeOf(503, OutboundError.retriesExhausted("t", 503))).toBe("5xx");
+    // The names golang-basics uses, whatever the error type is called in code.
+    expect(outcomeOf(undefined, OutboundError.network(new Error("x"), "t"))).toBe("connection");
+    expect(outcomeOf(undefined, OutboundError.shuttingDown())).toBe("shutdown");
+    expect(outcomeOf(undefined, OutboundError.noMatchingTarget("http://x"))).toBe("invalid");
+    for (const same of [
+      OutboundError.timeout("t"),
+      OutboundError.circuitOpen("t"),
+      OutboundError.rateLimited("t"),
+      OutboundError.canceled("t"),
+      OutboundError.deadlineExceeded("t"),
+    ]) {
+      expect(outcomeOf(undefined, same)).toBe(same.errorType);
+    }
+    expect(outcomeOf(undefined)).toBe("unknown");
   });
 });

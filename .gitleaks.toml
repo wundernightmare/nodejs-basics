@@ -16,4 +16,5 @@ paths = [
 ]
 regexes = [
   '''app:app@''',     # the local dev Postgres DSN in docs/compose (app/app)
+  '''testsecret-0123456789''',  # the key of the throwaway S3 container the integration tests start (@base/testing)
 ]
