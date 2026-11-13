@@ -670,6 +670,9 @@ importers:
       '@base/cache':
         specifier: workspace:*
         version: link:../cache
+      '@base/common':
+        specifier: workspace:*
+        version: link:../common
       '@base/config':
         specifier: workspace:*
         version: link:../config
@@ -914,6 +917,22 @@ importers:
       '@types/opossum':
         specifier: 8.1.9
         version: 8.1.9
+
+  packages/s3:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: 3.1148.0
+        version: 3.1148.0
+      '@base/common':
+        specifier: workspace:*
+        version: link:../common
+      '@opentelemetry/api':
+        specifier: 1.9.1
+        version: 1.9.1
+    devDependencies:
+      '@base/testing':
+        specifier: workspace:*
+        version: link:../testing
 
   packages/testing:
     dependencies:

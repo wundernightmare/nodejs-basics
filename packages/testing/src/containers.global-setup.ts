@@ -27,6 +27,7 @@ import type { StartedTestContainer } from "testcontainers";
 import type { TestProject } from "vitest/node";
 
 import { PROXY_PORTS } from "./chaos.js";
+import { S3_TEST_CREDENTIALS } from "./services.js";
 import type { Service } from "./services.js";
 
 const DOCKER_HUB = process.env["DOCKER_HUB"] ?? "docker.io";
@@ -36,6 +37,7 @@ export const IMAGES = {
   postgres: `${DOCKER_HUB}/library/postgres:18`,
   valkey: `${DOCKER_HUB}/valkey/valkey:9.0`,
   kafka: `${DOCKER_HUB}/redpandadata/redpanda:v26.2.3`,
+  s3: `${DOCKER_HUB}/rustfs/rustfs:1.0.5`,
   toxiproxy: `${GHCR}/shopify/toxiproxy:2.12.0`,
 } as const;
 
@@ -43,6 +45,7 @@ const ENV: Record<Service, string> = {
   postgres: "DATABASE_URL",
   valkey: "VALKEY_URL",
   kafka: "KAFKA_BROKERS",
+  s3: "S3_ENDPOINT",
   toxiproxy: "TOXIPROXY_URL",
 };
 
@@ -143,8 +146,25 @@ const START: Record<Service, Starter> = {
     return { container, env: { KAFKA_BROKERS: address } };
   },
 
+  async s3() {
+    const container = await new GenericContainer(IMAGES.s3)
+      .withEnvironment({
+        RUSTFS_ACCESS_KEY: S3_TEST_CREDENTIALS.accessKeyId,
+        RUSTFS_SECRET_KEY: S3_TEST_CREDENTIALS.secretAccessKey,
+      })
+      .withExposedPorts(9000)
+      .withLabels(LABELS)
+      // /health answers once the store serves the S3 API; the port opens a moment earlier.
+      .withWaitStrategy(Wait.forHttp("/health", 9000))
+      .start();
+    return {
+      container,
+      env: { S3_ENDPOINT: `http://${container.getHost()}:${container.getMappedPort(9000)}` },
+    };
+  },
+
   async toxiproxy() {
-    const ports = [PROXY_PORTS.postgres, PROXY_PORTS.valkey, ...PROXY_PORTS.pool];
+    const ports = [PROXY_PORTS.postgres, PROXY_PORTS.valkey, PROXY_PORTS.s3, ...PROXY_PORTS.pool];
     const container = await new GenericContainer(IMAGES.toxiproxy)
       .withExposedPorts(TOXIPROXY_API, ...ports)
       // The proxies reach the dependencies (and the servers tests listen on)
@@ -181,6 +201,7 @@ export default async function setup(project: TestProject): Promise<(() => Promis
   }
 
   const started: StartedTestContainer[] = [];
+  const ids: Partial<Record<Service, string>> = {};
   const stop = async (): Promise<void> => {
     await Promise.allSettled(started.map((c) => c.stop({ timeout: 0 })));
   };
@@ -188,9 +209,12 @@ export default async function setup(project: TestProject): Promise<(() => Promis
     missing.map(async (service) => {
       const { container, env } = await START[service]();
       started.push(container);
+      ids[service] = container.getId();
       Object.assign(process.env, env);
     }),
   );
+  // What pause() (chaos.ts) signals: only containers this run started can be frozen.
+  process.env["INTEGRATION_CONTAINERS"] = JSON.stringify(ids);
   const failed = results.find((r) => r.status === "rejected");
   if (failed !== undefined) {
     await stop();

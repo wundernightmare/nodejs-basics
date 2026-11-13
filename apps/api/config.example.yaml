@@ -51,4 +51,5 @@ kafka:
 #   heap_snapshot_prefix: heap-snapshots
 #   crash_report_prefix: crash-reports
 #   heap_oom_threshold: "0.85"
+#   heap_limit_ratio: "0.75"   # V8 heap limit above this share of the container limit → warning at boot
 #   heap_oom_poll_ms: "10000"

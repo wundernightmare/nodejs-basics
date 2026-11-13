@@ -25,3 +25,17 @@ export {
   type AsideLogger,
   type CacheAsideOptions,
 } from "./cache-aside.js";
+export {
+  encodeEnvelope,
+  keyOf,
+  parseEnvelope,
+  RemoteBreaker,
+  TierCache,
+  type TierCacheConfig,
+  type TierCacheLogger,
+  type TierCacheOptions,
+  type TierCodec,
+  type TierLoader,
+  type TierRemote,
+} from "./tier-cache.js";
+export { ValkeyRemote } from "./tier-cache.valkey.js";

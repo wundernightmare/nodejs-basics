@@ -27,6 +27,12 @@ export { metricValue } from "./metrics.js";
 export { captureMetrics, type MetricsCapture } from "./metrics-capture.js";
 export { propertyRuns } from "./property.js";
 export { captureSpans, type SpanCapture } from "./spans.js";
-export { integration, unique, type Integration, type Service } from "./services.js";
-export { PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
-export type { ProxiedService, Proxy, ServiceProxy } from "./chaos.js";
+export {
+  integration,
+  S3_TEST_CREDENTIALS,
+  unique,
+  type Integration,
+  type Service,
+} from "./services.js";
+export { pausable, pause, PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
+export type { PausableService, ProxiedService, Proxy, ServiceProxy } from "./chaos.js";

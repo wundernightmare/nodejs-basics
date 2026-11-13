@@ -6,7 +6,7 @@ import type { Counter, Meter } from "@opentelemetry/api";
  * cache fill (SET NX) cannot overwrite it. Not valid JSON, so no cached value
  * can collide with it. The same marker as golang-basics' libs/valkey.
  */
-const TOMBSTONE = "\u0000valkey:tombstone";
+export const TOMBSTONE = "\u0000valkey:tombstone";
 
 /** The two commands the helper needs — an iovalkey client, or a stand-in in a test. */
 export interface AsideClient {

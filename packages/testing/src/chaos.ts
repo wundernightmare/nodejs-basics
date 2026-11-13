@@ -12,6 +12,12 @@
  *
  *   const api = await proxiedPort("billing", port); // a server this test listens on
  *
+ * Kafka cannot be proxied — its clients dial the addresses the broker
+ * advertises — so it is frozen instead:
+ *
+ *   const resume = await pause("kafka");           // accepts, never answers
+ *   await resume();                                // in afterEach
+ *
  * The Toxiproxy container and its address come from the integration project's
  * global setup (containers.global-setup.ts) as TOXIPROXY_URL / TOXIPROXY_PORTS;
  * this file only speaks its HTTP API, so the harness itself pulls no Docker
@@ -21,17 +27,21 @@
 import type { Service } from "./services.js";
 
 /** A service a proxy can stand in front of (Kafka is not: its clients dial advertised addresses). */
-export type ProxiedService = Extract<Service, "postgres" | "valkey">;
+export type ProxiedService = Extract<Service, "postgres" | "valkey" | "s3">;
 
 const SERVICE_ENV: Record<ProxiedService, string> = {
   postgres: "DATABASE_URL",
   valkey: "VALKEY_URL",
+  s3: "S3_ENDPOINT",
 };
+
+const DEFAULT_PORT: Record<ProxiedService, number> = { postgres: 5432, valkey: 6379, s3: 9000 };
 
 /** Ports the proxies listen on inside the Toxiproxy container (all published by the global setup). */
 export const PROXY_PORTS = {
   postgres: 8666,
   valkey: 8667,
+  s3: 8668,
   /** For proxiedPort(): servers the tests themselves listen on. */
   pool: [8670, 8671, 8672, 8673, 8674, 8675, 8676, 8677],
 } as const;
@@ -148,7 +158,7 @@ export async function proxied(service: ProxiedService): Promise<ServiceProxy> {
   if (raw === undefined || raw === "") throw new Error(`${SERVICE_ENV[service]} is unset`);
   const target = new URL(raw);
   const containerPort = PROXY_PORTS[service];
-  const defaultPort = service === "postgres" ? 5432 : 6379;
+  const defaultPort = DEFAULT_PORT[service];
 
   if ((await call<ProxyRecord>("GET", `/proxies/${service}`)) === undefined) {
     await call("POST", "/proxies", {
@@ -164,7 +174,8 @@ export async function proxied(service: ProxiedService): Promise<ServiceProxy> {
   url.hostname = "127.0.0.1";
   url.port = String(hostPort(containerPort));
   await proxy.reset();
-  return { ...proxy, url: url.toString() };
+  // A URL with nothing after the authority gains a "/": an endpoint has none.
+  return { ...proxy, url: service === "s3" ? url.origin : url.toString() };
 }
 
 /**
@@ -186,4 +197,57 @@ export async function proxiedPort(name: string, port: number): Promise<Proxy> {
     enabled: true,
   });
   return handle(name, containerPort);
+}
+
+/** A service pause() can freeze: one whose container this run started. */
+export type PausableService = Extract<Service, "postgres" | "valkey" | "kafka">;
+
+function containerId(service: PausableService): string | undefined {
+  const ids = JSON.parse(process.env["INTEGRATION_CONTAINERS"] ?? "{}") as Record<string, string>;
+  return ids[service];
+}
+
+/**
+ * Whether pause() can freeze the service: only a container the global setup
+ * started. A service that came from the environment (`just deps`, a CI
+ * service) is somebody else's — gate the suite with
+ * `describe.skipIf(infra.skip || !pausable("kafka"))`.
+ */
+export function pausable(service: PausableService): boolean {
+  return containerId(service) !== undefined;
+}
+
+/**
+ * Freezes the service's container until the returned function is called. A
+ * frozen dependency does not refuse connections, it stops answering: what
+ * timeouts, readiness deadlines and best-effort paths are there for.
+ *
+ * SIGSTOP / SIGCONT to every process in the container (`kill -STOP -1`), not
+ * the cgroup freezer: the effect on clients is the same, and `docker pause`
+ * proved able to wedge a desktop Docker daemon on unpause (see the Go sibling).
+ */
+export async function pause(service: PausableService): Promise<() => Promise<void>> {
+  const id = containerId(service);
+  if (id === undefined) throw new Error(`${service}: not a container of this run, cannot pause`);
+  // The only place a test process talks to the container runtime — loaded on demand.
+  const { getContainerRuntimeClient } = await import("testcontainers");
+  const runtime = await getContainerRuntimeClient();
+  const container = runtime.container.getById(id);
+  const signalAll = async (signal: "STOP" | "CONT"): Promise<void> => {
+    // -1: every process the sender may signal, except itself and init — the workload.
+    const { exitCode, output } = await runtime.container.exec(container, [
+      "sh",
+      "-c",
+      `kill -${signal} -1`,
+    ]);
+    if (exitCode !== 0)
+      throw new Error(`${service}: kill -${signal} -1 exited ${exitCode}: ${output}`);
+  };
+  await signalAll("STOP");
+  let resumed = false;
+  return async () => {
+    if (resumed) return;
+    resumed = true;
+    await signalAll("CONT");
+  };
 }

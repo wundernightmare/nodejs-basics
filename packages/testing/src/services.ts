@@ -6,15 +6,25 @@ import { randomBytes } from "node:crypto";
  * project's global setup (containers.global-setup.ts) starts a container for
  * every requested service whose variable is unset, so a suite runs the same
  * against `just deps`, a CI service or a throwaway container — and the test
- * process itself orchestrates nothing. "toxiproxy" is the chaos proxy: ask
- * for it next to the service you want to break (see chaos.ts).
+ * process itself orchestrates nothing. "s3" is an S3-compatible store
+ * (S3_ENDPOINT; the container's credentials are S3_TEST_CREDENTIALS).
+ * "toxiproxy" is the chaos proxy: ask for it next to the service you want to
+ * break (see chaos.ts).
  */
-export type Service = "postgres" | "valkey" | "kafka" | "toxiproxy";
+export type Service = "postgres" | "valkey" | "kafka" | "s3" | "toxiproxy";
+
+/** The keys of the object store the global setup starts (the Go sibling's, too). */
+export const S3_TEST_CREDENTIALS = {
+  accessKeyId: "testaccess",
+  secretAccessKey: "testsecret-0123456789",
+  region: "us-east-1",
+} as const;
 
 const ENV: Record<Service, string> = {
   postgres: "DATABASE_URL",
   valkey: "VALKEY_URL",
   kafka: "KAFKA_BROKERS",
+  s3: "S3_ENDPOINT",
   toxiproxy: "TOXIPROXY_URL",
 };
 

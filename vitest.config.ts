@@ -71,6 +71,10 @@ export default defineConfig({
         extends: true,
         test: {
           name: "unit",
+          // After each file: nothing the tests started may still hold the loop open.
+          setupFiles: underStryker
+            ? []
+            : ["allure-vitest/setup", "./packages/testing/src/leaks.setup.ts"],
           include: ["packages/*/src/**/*.spec.ts", "apps/*/src/**/*.spec.ts"],
           exclude: [...configDefaults.exclude, "**/*.integration.spec.ts"],
         },
@@ -93,6 +97,13 @@ export default defineConfig({
                   "packages/testing/src/containers.global-setup.ts",
                   "apps/migrate/src/migrate.global-setup.ts",
                 ],
+                // The leak check too, with room for a client's own disconnect timeout.
+                setupFiles: ["allure-vitest/setup", "./packages/testing/src/leaks.setup.ts"],
+                env: {
+                  ADMIN_HOST: "127.0.0.1",
+                  HTTP_SHUTDOWN_DELAY_MS: "0",
+                  LEAK_CHECK_GRACE_MS: "3000",
+                },
                 fileParallelism: false,
                 testTimeout: 30_000,
                 hookTimeout: 60_000,
