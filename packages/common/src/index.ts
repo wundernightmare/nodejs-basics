@@ -56,3 +56,4 @@ export {
   type FilterLogger,
 } from "./filters/domain-exception.filter.js";
 export { HttpExceptionFilter } from "./filters/http-exception.filter.js";
+export { Secret } from "./utils/secret.js";

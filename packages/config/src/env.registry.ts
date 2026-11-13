@@ -1552,6 +1552,21 @@ const REGISTRY = [
   },
 
   {
+    key: "RUNTIME_HEAP_LIMIT_RATIO",
+    yaml: "diagnostics.heap_limit_ratio",
+    type: "number",
+    min: 0,
+    max: 1,
+    required: false,
+    default: "0.75",
+    description:
+      "Share of the container memory limit the V8 heap limit may take. Above it the service warns " +
+      "at boot and suggests a --max-old-space-size: the heap limit is fixed at start, so it is set " +
+      "where the container's resources are. Default: 0.75.",
+    usedIn: ["observability"],
+  },
+
+  {
     key: "HEAP_OOM_POLL_INTERVAL_MS",
     yaml: "diagnostics.heap_oom_poll_ms",
     type: "int",

@@ -40,6 +40,7 @@ export default {
   override: [
     { path: /^packages\/resilient-client$/u, threshold: 80 },
     { path: /^packages\/grpc-client$/u, threshold: 80 },
+    { path: /^packages\/s3$/u, threshold: 80 },
     { path: /^packages\/common$/u, threshold: 70 },
   ],
 };

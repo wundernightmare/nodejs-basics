@@ -57,7 +57,11 @@ high-signal, easy-to-miss bits.
   container runtime, fails on CI). Code written for a failing dependency (a
   timeout, a retry, a breaker, a fall-through) gets a chaos test through
   `proxied()` / `proxiedPort()` (Toxiproxy) and resets the proxy in
-  `afterEach`; rootless Podman needs `TESTCONTAINERS_RYUK_DISABLED=true`. Import `describe`/`it`/`expect` from
+  `afterEach` — or, for Kafka, through `pause("kafka")` (the container is
+  frozen; gate with `pausable()`); rootless Podman needs
+  `TESTCONTAINERS_RYUK_DISABLED=true`. Every spec file ends with a leak check
+  (`leaks.setup.ts`): close what a test starts — servers, clients, intervals —
+  or the file fails; `LEAK_CHECK=trace` shows where a leaked handle was made. Import `describe`/`it`/`expect` from
   `vitest` (no globals); label suites with `meta()` and tests with
   `testCase("NB-<n>", story)` — every test is an Allure test. `@base/*`
   resolves to `src/` in tests through `resolve.conditions: ["source"]`.

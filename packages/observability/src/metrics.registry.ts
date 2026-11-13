@@ -331,6 +331,24 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/jobs",
   },
   {
+    name: "s3_request_duration_seconds",
+    kind: "Histogram",
+    unit: "s",
+    labels: ["operation"],
+    description: "S3 call latency in seconds by operation, the client's retries included.",
+    watch:
+      "The whole call, retries included — the number S3_OP_TIMEOUT_MS is set against. operation: put, get, head, list, delete, head_bucket, create_bucket, create_upload, upload_part, complete_upload, abort_upload.",
+    source: "packages/s3",
+  },
+  {
+    name: "s3_request_errors_total",
+    kind: "Counter",
+    labels: ["operation"],
+    description:
+      "S3 calls that failed (timeouts included; a missing key on get/head is not a failure) by operation.",
+    source: "packages/s3",
+  },
+  {
     name: "cache_lookups_total",
     kind: "Counter",
     labels: ["result"],
@@ -338,6 +356,55 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
       "Cache lookups by outcome: hit, miss (absent or tombstoned), or error (lookup itself failed).",
     watch:
       "The hit ratio is rate(hit) / rate(hit + miss); error rising means the cache is unreachable.",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_reads_total",
+    kind: "Counter",
+    labels: ["cache", "result"],
+    description:
+      "Reads by outcome: fresh or stale (served from L1), l2, load (source of truth), stale_error (expired value served because the source failed), not_found, error.",
+    watch:
+      "The L1 hit ratio is rate(fresh + stale) / rate(all); stale_error means the source is failing.",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_refreshes_total",
+    kind: "Counter",
+    labels: ["cache", "result"],
+    description:
+      "Background refreshes of stale entries by outcome: ok, error, dropped (the refresh limit was reached).",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_invalidations_total",
+    kind: "Counter",
+    labels: ["cache", "scope"],
+    description:
+      "L1 invalidations by scope: key (one entry), all (a reset after the subscription was re-established).",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_l2_bypassed_total",
+    kind: "Counter",
+    labels: ["cache"],
+    description: "Lookups that skipped L2 because its circuit breaker was open.",
+    watch: "Rising: Valkey is failing and every miss goes to the source of truth.",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_l1_oversize_total",
+    kind: "Counter",
+    labels: ["cache"],
+    description: "Entries not stored in L1 because they exceed its per-entry limit.",
+    source: "packages/cache",
+  },
+  {
+    name: "tiercache_l1_bytes",
+    kind: "ObservableGauge",
+    unit: "By",
+    labels: ["cache"],
+    description: "Bytes of encoded entries L1 currently holds (bounded by its capacity).",
     source: "packages/cache",
   },
   {
@@ -476,6 +543,17 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     unit: "By",
     labels: [],
     description: "V8 heap size limit; reaching it is an out-of-memory crash.",
+    source: "packages/observability",
+  },
+  {
+    name: "nodejs_container_memory_limit_bytes",
+    kind: "ObservableGauge",
+    unit: "By",
+    labels: [],
+    description:
+      "Memory limit of the container (cgroup), re-read on every collect; absent when there is none.",
+    watch:
+      "nodejs_heap_limit_bytes above ~75 % of it: the container is OOM-killed before V8 reaches its limit — set --max-old-space-size.",
     source: "packages/observability",
   },
   {

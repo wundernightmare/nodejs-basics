@@ -26,6 +26,8 @@ import { getHeapStatistics } from "node:v8";
 import type { Meter } from "@opentelemetry/api";
 import { logSampler } from "@base/logger";
 
+import { containerMemoryLimit } from "./runtime-memory.js";
+
 /** How long one event-loop delay window lasts. */
 export const EVENT_LOOP_WINDOW_MS = 10_000;
 
@@ -150,6 +152,15 @@ export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => v
   const external = meter.createObservableGauge("nodejs_external_memory_bytes", {
     description: "Memory of C++ objects bound to JavaScript objects (Buffers included).",
     unit: "By",
+  });
+  const containerLimit = meter.createObservableGauge("nodejs_container_memory_limit_bytes", {
+    description:
+      "Memory limit of the container (cgroup), re-read on every collect; absent when there is none.",
+    unit: "By",
+  });
+  containerLimit.addCallback((result) => {
+    const bytes = containerMemoryLimit();
+    if (bytes !== undefined) result.observe(bytes);
   });
   const limit = getHeapStatistics().heap_size_limit;
   meter.addBatchObservableCallback(

@@ -38,12 +38,15 @@ import { Injectable, OnApplicationBootstrap, OnApplicationShutdown } from "@nest
 import { processEnv, readInt, readNumber } from "@base/config";
 import { AppLogger, ecsError } from "@base/logger";
 
+import { memoryBudget, reportMemoryBudget } from "./runtime-memory.js";
+
 type Trigger = "signal" | "oom" | "manual";
 
 const S3_BUCKET = process.env["HEAP_SNAPSHOT_S3_BUCKET"];
 const S3_PREFIX = process.env["HEAP_SNAPSHOT_S3_PREFIX"] ?? "heap-snapshots";
 const OOM_THRESHOLD = readNumber(processEnv, "HEAP_OOM_THRESHOLD");
 const OOM_POLL_MS = readInt(processEnv, "HEAP_OOM_POLL_INTERVAL_MS");
+const HEAP_LIMIT_RATIO = readNumber(processEnv, "RUNTIME_HEAP_LIMIT_RATIO");
 
 const SERVICE_NAME = process.env["OTEL_SERVICE_NAME"] ?? "app";
 
@@ -86,6 +89,8 @@ export class HeapSnapshotService implements OnApplicationBootstrap, OnApplicatio
     }, OOM_POLL_MS);
 
     this.oomTimer.unref();
+
+    reportMemoryBudget(this.logger, memoryBudget(HEAP_LIMIT_RATIO));
 
     this.logger.info(
       {
