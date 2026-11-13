@@ -17,6 +17,8 @@ export class OutboundError extends Error {
     public readonly target?: string,
     /** Last HTTP status code seen, if any. */
     public readonly statusCode?: number,
+    /** The Retry-After of the last response, in ms — when to try again, for whoever requeues. */
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "OutboundError";
@@ -67,7 +69,21 @@ export class OutboundError extends Error {
     );
   }
 
-  static retriesExhausted(target: string, lastStatus: number): OutboundError {
+  /** The caller's own signal aborted the call — fatal: nobody is waiting for a retry. */
+  static canceled(target: string, cause?: unknown): OutboundError {
+    return new OutboundError("fatal", "canceled", `Request canceled: ${target}`, cause, target);
+  }
+
+  /**
+   * The dependency answered with a "try again" status and no attempt is left
+   * (or none was allowed: the request is not idempotent, the retry budget is
+   * spent, Retry-After is beyond the cap).
+   */
+  static retriesExhausted(
+    target: string,
+    lastStatus: number,
+    retryAfterMs?: number,
+  ): OutboundError {
     return new OutboundError(
       "transient",
       "retries_exhausted",
@@ -75,6 +91,7 @@ export class OutboundError extends Error {
       undefined,
       target,
       lastStatus,
+      retryAfterMs,
     );
   }
 

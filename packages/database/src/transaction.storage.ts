@@ -6,7 +6,16 @@ export interface AmbientTransaction {
   readonly client: unknown;
   /** Cleared when the transaction ends (commit or rollback, client released). */
   open: boolean;
+  /** The isolation level it runs at; undefined is the server default. */
+  isolation?: string | undefined;
+  /** What afterCommit registered; run once the outermost unit has committed. */
+  hooks?: AfterCommitHook[];
+  /** Savepoints taken so far, for unique names. */
+  savepoints?: number;
 }
+
+/** Work to do once the transaction has committed (see afterCommit). */
+export type AfterCommitHook = () => void | Promise<void>;
 
 /**
  * The active DB transaction when inside a UnitOfWork. Read it through
@@ -41,4 +50,28 @@ export function currentTransaction<T>(): T | undefined {
   if (tx === undefined) return undefined;
   if (!tx.open) throw new TransactionEndedError();
   return tx.client as T;
+}
+
+/**
+ * Runs `hook` once the unit of work the caller is in has committed — the place
+ * for what must not happen for a transaction that rolls back and cannot be
+ * rolled back itself: invalidating a cache, waking a relay, publishing a
+ * notification. Hooks run in registration order after the outermost commit,
+ * outside the transaction (currentTransaction() is undefined again). A hook
+ * registered inside a savepoint that rolled back is dropped with it.
+ *
+ * Outside a unit of work there is nothing to wait for and the hook runs at
+ * once, so a repository can call afterCommit without knowing how it is used.
+ *
+ * A hook is not durable: a process that dies between the commit and the hook
+ * never runs it. What must happen goes into the transaction (an outbox row).
+ */
+export async function afterCommit(hook: AfterCommitHook): Promise<void> {
+  const tx = transactionStorage.getStore();
+  if (tx === undefined) {
+    await hook();
+    return;
+  }
+  if (!tx.open) throw new TransactionEndedError();
+  (tx.hooks ??= []).push(hook);
 }

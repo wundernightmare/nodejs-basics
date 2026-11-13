@@ -56,6 +56,10 @@ allowBuilds:
   libpq: true
   msgpackr-extract: true
   pg-native: true
+  # testcontainers → ssh2 (port forwarding to the host; unused here): the native
+  # crypto bindings are optional accelerators, so their build scripts stay off.
+  ssh2: false
+  cpu-features: false
 
 # Supply-chain hardening (semgrep p/owasp-top-ten `package_managers.pnpm.*`
 # enforces all three; `.npmrc` `min-release-age=7` is the npm twin). A

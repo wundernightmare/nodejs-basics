@@ -18,3 +18,10 @@ export {
 export { registerValkeyMetrics, type ValkeyMetricsHandle } from "./valkey-metrics.js";
 export { guardValkeyClient } from "./valkey-deadline.js";
 export { traceValkeyClient } from "./valkey-tracing.js";
+export {
+  CacheAside,
+  jitter,
+  type AsideClient,
+  type AsideLogger,
+  type CacheAsideOptions,
+} from "./cache-aside.js";

@@ -28,3 +28,5 @@ export { captureMetrics, type MetricsCapture } from "./metrics-capture.js";
 export { propertyRuns } from "./property.js";
 export { captureSpans, type SpanCapture } from "./spans.js";
 export { integration, unique, type Integration, type Service } from "./services.js";
+export { PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
+export type { ProxiedService, Proxy, ServiceProxy } from "./chaos.js";

@@ -101,6 +101,22 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/resilient-client",
   },
   {
+    name: "http_client_retry_budget_exhausted_total",
+    kind: "ObservableCounter",
+    labels: ["target"],
+    description: "Retries not sent because the target's retry budget was spent, by target.",
+    watch: "Growing: the dependency fails often enough that retries are being shed.",
+    source: "packages/resilient-client",
+  },
+  {
+    name: "http_client_circuit_breaker_transitions_total",
+    kind: "ObservableCounter",
+    labels: ["target", "from", "to"],
+    description: "Circuit breaker state changes, by target, from and to.",
+    watch: "A steady closed→open rate: the breaker is flapping.",
+    source: "packages/resilient-client",
+  },
+  {
     name: "grpc_client_requests_total",
     kind: "Counter",
     labels: ["target", "method", "outcome"],
@@ -129,6 +145,14 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     labels: ["target"],
     description: "Circuit breaker state per target: 0 closed, 1 open, 2 half-open.",
     watch: "1 (open): calls to that dependency fail fast; it was failing. 2 = probing.",
+    source: "packages/grpc-client",
+  },
+  {
+    name: "grpc_client_circuit_breaker_transitions_total",
+    kind: "Counter",
+    labels: ["target", "from", "to"],
+    description: "Circuit breaker state changes, by target, from and to.",
+    watch: "A steady closed→open rate: the breaker is flapping.",
     source: "packages/grpc-client",
   },
   {
@@ -307,6 +331,16 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/jobs",
   },
   {
+    name: "cache_lookups_total",
+    kind: "Counter",
+    labels: ["result"],
+    description:
+      "Cache lookups by outcome: hit, miss (absent or tombstoned), or error (lookup itself failed).",
+    watch:
+      "The hit ratio is rate(hit) / rate(hit + miss); error rising means the cache is unreachable.",
+    source: "packages/cache",
+  },
+  {
     name: "valkey_client_connected",
     kind: "ObservableGauge",
     labels: [],
@@ -352,6 +386,15 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     kind: "ObservableGauge",
     labels: ["version", "revision"],
     description: "Build identity of the running service; always 1.",
+    source: "packages/observability",
+  },
+  {
+    name: "log_dropped_total",
+    kind: "ObservableCounter",
+    labels: ["level"],
+    description: "Log records dropped by sampling, by level.",
+    watch:
+      "High: something logs the same info/debug line more than LOG_SAMPLE_INITIAL times a second.",
     source: "packages/observability",
   },
   {

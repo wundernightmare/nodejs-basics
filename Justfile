@@ -234,13 +234,20 @@ contracts-check BASE="origin/master":
 test:
     pnpm test
 
-# Integration layer: vitest project `integration` against `just deps` (DATABASE_URL /
-# VALKEY_URL / KAFKA_BROKERS; a suite whose service is unset skips locally, fails on CI)
-test-integration:
+# Integration layer: vitest project `integration`. Each service a suite asks for
+# (Postgres, Valkey, Redpanda, Toxiproxy) is a throwaway container unless its
+# variable (DATABASE_URL / VALKEY_URL / KAFKA_BROKERS) is already set. Without a
+# container runtime the suites skip locally and fail on CI.
+# Rootless Podman: TESTCONTAINERS_RYUK_DISABLED=true (see .env.example).
+test-integration *args:
+    pnpm test:integration {{args}}
+
+# The same against the `just deps` stack instead of throwaway containers
+test-integration-deps *args:
     DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
     VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
     KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
-    pnpm test:integration
+    pnpm test:integration {{args}}
 
 # Every vitest layer (unit + integration)
 test-all: test test-integration
@@ -249,11 +256,8 @@ test-all: test test-integration
 test-watch:
     pnpm test:watch
 
-# Watch mode for the integration layer (needs `just deps`)
+# Watch mode for the integration layer (containers, or the variables that are set)
 test-watch-integration:
-    DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
-    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
-    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
     pnpm test:integration:watch
 
 # Property specs (`*.prop.spec.ts`, fast-check) with the deep budget — the fuzz
@@ -279,11 +283,8 @@ schemathesis:
 cov-unit:
     node scripts/cover.mjs unit
 
-# Integration-layer coverage → .cover/integration (needs `just deps`)
+# Integration-layer coverage → .cover/integration (containers, or the variables that are set)
 cov-integration:
-    DATABASE_URL="${DATABASE_URL:-postgresql://app:app@localhost:5432/app}" \
-    VALKEY_URL="${VALKEY_URL:-redis://localhost:6379}" \
-    KAFKA_BROKERS="${KAFKA_BROKERS:-localhost:9092}" \
     node scripts/cover.mjs integration
 
 # E2E-layer coverage → .cover/e2e: builds, spawns api + worker under NODE_V8_COVERAGE

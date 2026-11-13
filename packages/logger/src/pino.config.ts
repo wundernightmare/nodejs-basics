@@ -4,6 +4,7 @@
  *  - OpenTelemetry trace/span context injection via mixin
  *  - Request context (http.request.id) injection via mixin
  *  - ECS-compatible Fastify request/response serializers
+ *  - Sampling of repetitive trace/debug/info lines (`logSampler`, see log-sampler.ts)
  *  - A runtime-adjustable level (`logLevel`, see log-level.ts) and per-request
  *    debug logging (withDebugLogging() in @base/common)
  *
@@ -25,6 +26,7 @@ import pino from "pino";
 
 import { isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
 
+import { LogSampler, messageOf, sampleSetting } from "./log-sampler.js";
 import {
   DEFAULT_LOG_LEVEL_MAX_TTL_MS,
   LogLevel,
@@ -195,14 +197,17 @@ export const logLevel = new LogLevel(baseLevelFromEnv(), {
  * pino options that enforce `level` in a logMethod hook. Exported so tests can
  * build an isolated logger with the same semantics on a sink of their own.
  */
-export function buildPinoOptions(level: LogLevel): pino.LoggerOptions {
+export function buildPinoOptions(level: LogLevel, sampler?: LogSampler): pino.LoggerOptions {
   return {
     messageKey: "message",
     // Pinned: the effective level is `level`, enforced in hooks.logMethod (see file header).
     level: "trace",
     hooks: {
       logMethod(args, method, levelValue) {
-        if (level.enabled(levelValue) || isDebugLogging()) method.apply(this, args);
+        // A request being debugged on purpose is neither filtered nor sampled.
+        if (isDebugLogging()) method.apply(this, args);
+        else if (level.enabled(levelValue) && sampler?.allow(levelValue, messageOf(args)) !== false)
+          method.apply(this, args);
       },
     },
     timestamp: ecsTimestamp,
@@ -236,4 +241,14 @@ export function buildPinoOptions(level: LogLevel): pino.LoggerOptions {
 
 // ─── Logger instance ──────────────────────────────────────────────────────────
 
-export const pinoLogger = pino(buildPinoOptions(logLevel), prettyTransport);
+/**
+ * Sampling of repetitive trace/debug/info lines (log-sampler.ts): per second
+ * and per message the first LOG_SAMPLE_INITIAL pass, then every
+ * LOG_SAMPLE_THEREAFTER-th. What must always be seen is warn or error.
+ */
+export const logSampler = new LogSampler({
+  initial: sampleSetting(process.env["LOG_SAMPLE_INITIAL"], 100),
+  thereafter: sampleSetting(process.env["LOG_SAMPLE_THEREAFTER"], 100),
+});
+
+export const pinoLogger = pino(buildPinoOptions(logLevel, logSampler), prettyTransport);

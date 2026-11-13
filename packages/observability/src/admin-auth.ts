@@ -1,6 +1,6 @@
 /**
- * Bearer guard for the mutating admin endpoints (PUT/DELETE /admin/log-level,
- * POST /debug/*): `Authorization: Bearer <ADMIN_TOKEN>`, compared in
+ * Bearer guard for the admin endpoints (everything under /admin/ and /debug/,
+ * reads included): `Authorization: Bearer <ADMIN_TOKEN>`, compared in
  * constant time. An empty token disables the guard — the local / compose
  * default — and the admin server's listening line says `auth=off` so it is
  * never a surprise in a cluster. Rejections are logged at warn: on the admin
@@ -38,7 +38,7 @@ export function requireBearer(token: string, logger: GuardLogger): BearerGuard {
         "url.path": path,
         "client.address": req.socket?.remoteAddress ?? "unknown",
       },
-      "Admin: rejected unauthenticated mutation",
+      "Admin: rejected unauthenticated request",
     );
     writeProblem(res, {
       status: 401,

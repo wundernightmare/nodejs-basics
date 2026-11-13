@@ -86,9 +86,13 @@ export default defineConfig({
                   "packages/*/src/**/*.integration.spec.ts",
                   "apps/*/src/**/*.integration.spec.ts",
                 ],
-                // Real services on fixed ports: one file at a time.
-                // Migrate the test database first (apps/migrate, migrations/*.sql).
-                globalSetup: ["apps/migrate/src/migrate.global-setup.ts"],
+                // Shared services: one file at a time. First the containers the
+                // selected files ask for (unless their variables are already
+                // set), then the test database's schema (apps/migrate).
+                globalSetup: [
+                  "packages/testing/src/containers.global-setup.ts",
+                  "apps/migrate/src/migrate.global-setup.ts",
+                ],
                 fileParallelism: false,
                 testTimeout: 30_000,
                 hookTimeout: 60_000,

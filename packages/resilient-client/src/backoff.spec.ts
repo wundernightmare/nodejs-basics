@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { computeJitteredDelay, sleep } from "./backoff.js";
+import { computeJitteredDelay, parseRetryAfter, sleep } from "./backoff.js";
 
 // Deterministic pseudo-RNG helper — returns each supplied draw in order,
 // then 1.0 for any extra call. Lets tests assert against the exact cap
@@ -103,5 +103,26 @@ describe("sleep", () => {
     await sleep(30);
     // Lower-bound assertion only — timer scheduling is noisy on CI.
     expect(Date.now() - start).toBeGreaterThanOrEqual(25);
+  });
+});
+
+describe("parseRetryAfter", () => {
+  const now = Date.parse("2026-11-13T10:00:00Z");
+
+  it.each([
+    ["0", 0],
+    ["1", 1_000],
+    [" 120 ", 120_000],
+    [["3", "9"], 3_000],
+    ["99999999999999999999", 86_400_000],
+    ["Fri, 13 Nov 2026 10:00:30 GMT", 30_000],
+    ["Fri, 13 Nov 2026 09:00:00 GMT", 0],
+    ["Sat, 13 Nov 2027 10:00:00 GMT", 86_400_000],
+  ])("reads %j as %i ms", (value, expected) => {
+    expect(parseRetryAfter(value, now)).toBe(expected);
+  });
+
+  it.each([undefined, "", "  ", "soon", "-1", "1.5", "Fri, not a date"])("ignores %j", (value) => {
+    expect(parseRetryAfter(value, now)).toBeUndefined();
   });
 });

@@ -232,9 +232,18 @@ describe("AdminServerService (auth=bearer)", () => {
     logLevel.reset();
   });
 
-  it("guards the mutations but not the reads", async () => {
-    expect((await fetch(`${base}/admin/log-level`)).status).toBe(200);
-    expect((await fetch(`${base}/version`)).status).toBe(200);
+  it("guards everything under /admin/ and /debug/ — reads too — but not probes, scrapes and /version", async () => {
+    await testCase("NB-1127", "the admin token guards every /admin/* and /debug/* route");
+    for (const open of ["/version", "/livez", "/healthz", "/readyz", "/metrics"]) {
+      expect([open, (await fetch(`${base}${open}`)).status]).toEqual([open, 200]);
+    }
+    for (const closed of ["/admin/log-level", "/admin/info"]) {
+      expect([closed, (await fetch(`${base}${closed}`)).status]).toEqual([closed, 401]);
+    }
+    const read = await fetch(`${base}/admin/log-level`, {
+      headers: { authorization: "Bearer t0k3n" },
+    });
+    expect(read.status).toBe(200);
 
     const denied = await fetch(`${base}/admin/log-level?level=debug`, { method: "PUT" });
     expect(denied.status).toBe(401);

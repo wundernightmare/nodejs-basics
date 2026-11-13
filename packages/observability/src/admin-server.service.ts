@@ -10,9 +10,10 @@
  *   GET    /metrics          Prometheus text format
  *   GET    /livez, /healthz  Liveness probe (200 OK)
  *   GET    /readyz           Readiness probe (200 ok|degraded / 503 not_ready)
- *   GET    /version          Build identity + start time / uptime (/admin/info is an alias)
- *   GET    /admin/config     Effective configuration, secrets redacted   (if configSnapshot is given)
- *   GET    /admin/log-level  {level, base, expires_at, max_ttl}
+ *   GET    /version          Build identity + start time / uptime
+ *   GET    /admin/info       The same as /version                                — auth
+ *   GET    /admin/config     Effective configuration, secrets redacted   (if configSnapshot is given) — auth
+ *   GET    /admin/log-level  {level, base, expires_at, max_ttl}                  — auth
  *   PUT    /admin/log-level  ?level=debug&ttl=30m (or JSON {level, ttl}) — temporary; auth
  *   DELETE /admin/log-level  Revert to the base level now                        — auth
  *   POST   /debug/heapdump   Capture a V8 heap snapshot        (if HeapSnapshotService)  — auth
@@ -280,7 +281,14 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       });
       return;
     }
-    if (entry.auth === true && !this.guard(req, res)) return;
+    // Everything operational that is not a probe, a scrape or the build stamp
+    // needs the token — reads too: the config and the log level describe the
+    // deployment. The same rule as golang-basics' httpx admin listener.
+    const guarded =
+      entry.auth === true ||
+      url.pathname.startsWith("/admin/") ||
+      url.pathname.startsWith("/debug/");
+    if (guarded && !this.guard(req, res)) return;
 
     try {
       await entry.handler(ctx);

@@ -67,8 +67,8 @@ Then:
 - `curl http://localhost:3000` — main API
 - `curl http://localhost:9091/metrics` — Prometheus metrics
 - `curl http://localhost:9091/readyz` — readiness probe
-- `curl http://localhost:9091/version` — service, version, revision, start time / uptime (`/admin/info` is an alias)
-- `curl http://localhost:9091/admin/config` — the effective config, secrets redacted
+- `curl http://localhost:9091/version` — service, version, revision, start time / uptime
+- `curl -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:9091/admin/config` — the effective config, secrets redacted (every `/admin/*` and `/debug/*` route needs the token when one is set)
 - `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9091/admin/log-level?level=debug&ttl=30m'` — change
   log level live
 - `curl -X POST -o api.cpuprofile 'http://localhost:9091/debug/cpu-profile?seconds=10'` — a CPU profile
@@ -106,7 +106,7 @@ bundled), which the distroless base provides.
 
 ```sh
 just test                          # unit layer (vitest project `unit`)
-just deps && just test-integration # integration layer against real Postgres / Valkey / Redpanda
+just test-integration              # integration + chaos layer: real Postgres / Valkey / Redpanda / Toxiproxy in containers
 just stack-up && just e2e          # Playwright API e2e against the production images
 just cov-all                       # all three layers → one merged coverage number, gated
 just allure-report                 # one HTML report from every layer's allure-results/
@@ -148,7 +148,7 @@ just dev                           # api: vite build --watch + restart after eac
 just dev-worker                    # the same for the worker
 just build-watch api               # rebuild only, no process
 just test-watch                    # vitest, unit project — re-runs what a change touches
-just test-watch-integration        # vitest, integration project (needs `just deps`)
+just test-watch-integration        # vitest, integration project (containers start by themselves)
 ```
 
 `scripts/dev.mjs` restarts the app **after** Vite reports a successful build
@@ -282,12 +282,39 @@ Three rules the code enforces, each covered by an integration test:
   (and `commit()` for hand-rolled transactions) rejects with
   `TransactionAbortedError` instead of reporting writes that never happened —
   so catching a DB error inside a transaction and carrying on is a bug.
-- **A nested call joins the outer transaction** (no savepoint): its failure is
-  the outer one's failure.
+- **A nested call joins the outer transaction**: its failure is the outer
+  one's failure. `{ savepoint: true }` runs it in a savepoint instead — its
+  error undoes its own writes and the outer unit can carry on.
 - **Nothing outlives the transaction.** Work scheduled inside it (a timer, an
   un-awaited promise) that runs after COMMIT gets `TransactionEndedError`
   from `currentTransaction()` instead of a client already handed to another
   request. Await everything inside.
+
+`runInTransaction(fn, options)` takes the same options as golang-basics'
+`pgx.InTx`:
+
+```ts
+await uow.runInTransaction(work, { isolation: "serializable", retries: 3 });
+```
+
+- `isolation` — `read committed` (the server default), `repeatable read`,
+  `serializable`. A nested unit that asks for a stricter level than the outer
+  one runs at fails with `TxOptionsError`: better than a use case that
+  believes it is SERIALIZABLE and is not.
+- `retries` — run `fn` again after a serialization failure (`40001`) or a
+  deadlock (`40P01`), with a short random pause. Outermost unit only, and
+  `fn` must be safe to run twice.
+- `afterCommit(hook)` (`@base/database`) runs work once the outermost unit has
+  committed, in order, outside the transaction — a cache invalidation, a
+  wake-up. It runs at once outside a unit, never after a rollback (a
+  rolled-back savepoint drops its hooks), and once per commit under
+  `retries`. A hook cannot undo the commit: all of them run, and a failing
+  one surfaces as `AfterCommitError`. It is not durable — what must happen
+  goes into the transaction (the outbox).
+
+Every connection also carries `lock_timeout` (`DATABASE_LOCK_TIMEOUT_MS`, 5 s)
+next to `statement_timeout`: a statement stuck behind a lock fails fast with
+`55P03` instead of holding a pool slot for 30 s.
 
 `OutboxWriter.add()` refuses to run outside a transaction
 (`OutboxOutsideTransactionError`): the event must commit with its change.
@@ -308,7 +335,7 @@ is left of it:
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Postgres                                    | nothing is sent once it is spent (a `ROLLBACK` always is); a unit of work sets `SET LOCAL statement_timeout` to the rest, so the **server** cancels a statement that would outlive the request |
 | Valkey                                      | rejected unsent once spent; the request stops waiting when it runs out                                                                                                                         |
-| HTTP (`resilient-client`, `getRemainingMs`) | each attempt is aborted at the deadline and sends `x-request-timeout-ms` downstream; spent → `deadline_exceeded`, never retried                                                                |
+| HTTP (`resilient-client`, `getRemainingMs`) | each attempt ends at the deadline or `attemptTimeoutMs`, whichever is first, and sends `x-request-timeout-ms` on; spent → `deadline_exceeded`                                                  |
 | gRPC (`grpc-client`, `getRemainingMs`)      | the call's deadline is brought in to what is left (gRPC sends it on as `grpc-timeout`); spent → `DEADLINE_EXCEEDED` before the call is sent                                                    |
 
 A spent budget surfaces as `DeadlineExceededError` → **504** problem. A
@@ -745,6 +772,27 @@ otherwise. Both pass the same contract test (`job-queue.integration.spec.ts`).
 Pick pg-boss when jobs are modest and one less moving part matters. Pick
 BullMQ for volume, low latency, or its rate limiting and flows.
 
+### Cache-aside
+
+`CacheAside` (`@base/cache`) is the read-through helper over the Valkey
+client, with the rules of golang-basics' `valkey.Aside`:
+
+```ts
+const cache = new CacheAside(valkey, { logger });
+const { value, hit } = await cache.get(`task:${id}`, 60_000, () => repo.find(id));
+// in the use case that changed the row, inside its unit of work:
+await afterCommit(() => cache.tombstone(`task:${id}`, 5_000));
+```
+
+- Concurrent misses on one key share **one load** (singleflight).
+- The fill is `SET NX` with the TTL jittered ±10 %, so keys filled together
+  do not expire together.
+- Invalidation is a **tombstone**, not a `DEL`: a reader that loaded the old
+  row just before the commit cannot write it back, because its fill is refused
+  until the tombstone expires (make that a few times the slowest load).
+- A cache that is down, slow or corrupt is a miss and a warning — never an
+  error for the caller. `cache_lookups_total{result}` gives the hit ratio.
+
 ### Logging
 
 Always use the merge-object form — never interpolate values into the message:
@@ -776,6 +824,18 @@ A field of the envelope or an event is added freely; renaming or removing one
 takes a release with both. `service.version` is the build's (`SERVICE_VERSION`,
 baked into the image like `GIT_COMMIT`); traces carry the same identity plus
 `service.instance.id` and the semantic-conventions schema URL.
+
+Repetitive lines are **sampled**: per second and per message the first
+`LOG_SAMPLE_INITIAL` (100) trace/debug/info records pass, then every
+`LOG_SAMPLE_THEREAFTER`-th (100); `0` turns it off. Warn and error always
+pass, and so does everything logged for a request under debug logging
+(`X-Debug-Token`). `log_dropped_total{level}` counts what was dropped — so
+anything that must always be seen is a warn or an error, and exact counts
+come from metrics, not from counting log lines.
+
+Traces are sampled by `OTEL_TRACES_SAMPLER_RATIO` (0..1, default 1) for the
+traces a service starts; a request that arrives inside a trace keeps its
+caller's decision, so a trace is whole or absent.
 
 ## Patterns NOT included (build per project)
 
@@ -844,14 +904,14 @@ read is on a live `/metrics`).
 | Area | Metrics |
 | --- | --- |
 | HTTP in | `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route}`, `http_requests_in_flight`, `http_unhandled_errors_total` |
-| HTTP out (ResilientPool) | `http_client_requests_total{target,method,outcome}`, `http_client_request_duration_seconds{target,method}`, `http_client_retries_total{target}`, `http_client_circuit_breaker_state{target}` |
-| gRPC out (GrpcClients) | `grpc_client_requests_total{target,method,outcome}`, `grpc_client_request_duration_seconds{target,method}`, `grpc_client_retries_total{target}`, `grpc_client_circuit_breaker_state{target}` |
+| HTTP out (ResilientPool) | `http_client_requests_total{target,method,outcome}`, `http_client_request_duration_seconds{target,method}`, `http_client_retries_total{target}`, `http_client_retry_budget_exhausted_total{target}`, `http_client_circuit_breaker_state{target}`, `http_client_circuit_breaker_transitions_total{target,from,to}` |
+| gRPC out (GrpcClients) | `grpc_client_requests_total{target,method,outcome}`, `grpc_client_request_duration_seconds{target,method}`, `grpc_client_retries_total{target}`, `grpc_client_circuit_breaker_state{target}`, `grpc_client_circuit_breaker_transitions_total{target,from,to}` |
 | Postgres | `db_pool_connections{pool,state}`, `db_pool_max_connections{pool}`, `db_pool_pending_acquires{pool}`, `db_query_duration_seconds{pool,operation}`, `db_query_errors_total{pool,operation}` |
 | Kafka | `kafka_producer_records_total{client,topic,result}`, `kafka_producer_send_duration_seconds{client,topic}`, `kafka_consumer_records_total{topic,result}`, `kafka_consumer_handler_duration_seconds{topic}`, `kafka_consumer_commit_errors_total`, `kafka_consumer_rebalances_total{event}`, `kafka_consumer_assigned_partitions`, `kafka_client_brokers_up{client}`, `kafka_client_request_errors_total{client}`, `kafka_producer_queue_bytes`, `kafka_producer_queue_max_bytes` |
 | Outbox | `outbox_pending`, `outbox_dead`, `outbox_oldest_age_seconds` |
 | Jobs | `job_runs_total{queue,result}`, `job_duration_seconds{queue}` |
-| Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total` |
-| Readiness, build | `health_check_up{check,critical}`, `app_integration_enabled{integration}`, `build_info{version,revision}` |
+| Valkey | `valkey_client_connected`, `valkey_client_errors_total`, `valkey_client_reconnects_total`, `cache_lookups_total{result}` (CacheAside) |
+| Readiness, build, logs | `health_check_up{check,critical}`, `app_integration_enabled{integration}`, `build_info{version,revision}`, `log_dropped_total{level}` |
 | Process | `process_cpu_{user,system}_seconds_total`, `process_resident_memory_bytes`, `process_start_time_seconds`, `process_open_fds`, `process_max_fds` (Linux), `nodejs_heap_{used,total,limit}_bytes`, `nodejs_external_memory_bytes`, `nodejs_eventloop_delay_seconds{quantile}`, `nodejs_eventloop_utilization`, `nodejs_gc_duration_seconds{kind}`, `nodejs_version_info` |
 
 The rules behind it:
@@ -941,7 +1001,7 @@ same contract as the Go sibling. The harness that makes that cheap is
 | **Unit**        | `*.spec.ts` next to the code — vitest project `unit`, `just test`                                                                                                       | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server                                                                                                                                                                                                                                                                                                               | anything that needs a real dependency                                                                 |
 | **Property**    | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000)            | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec                                                      |
 | **Mutation**    | `packages/resilient-client` — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
-| **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration`                                                                                         | the libs against real Postgres / Valkey / Redpanda from `docker/deps.yml`: the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout                                                                                                                                                                                                                                                                       | route behaviour already proven with fakes; process-level behaviour                                    |
+| **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration`                                                                                         | the libs against real Postgres / Valkey / Redpanda (containers, the images of `docker/deps.yml`), and against the same behind Toxiproxy (`*chaos*`: outages, latency, resets): the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout                                                                                                                                                                                                                                                                       | route behaviour already proven with fakes; process-level behaviour                                    |
 | **E2E**         | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes)                                                             | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ                                                                                                                                                                                                                                                                                                                                  | per-route behaviour, error bodies (unit), the libs' semantics (integration)                           |
 | **Smoke**       | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job                                                                                                | the distroless images start and serve                                                                                                                                                                                                                                                                                                                                                                                                                                                   | everything else                                                                                       |
 | **Contract**    | `apps/api/src/app.contract.integration.spec.ts` (integration project; `createApp` + fastify `inject`, every exchange validated with `loadOpenAPI` from `@base/testing`) | the running app honours [`api/tsp`](api/tsp): every route, every declared status, problem bodies, 404/405 routing                                                                                                                                                                                                                                                                                                                                                                       | inputs the schema can generate (generative)                                                           |
@@ -962,9 +1022,33 @@ it (the e2e harness waits for `/readyz`), it does not assert it again.
   env the app reads (`DATABASE_URL`, `VALKEY_URL`, `KAFKA_BROKERS`), **skips**
   the suite locally when a service is unset (`describe.skipIf(infra.skip)`)
   and **fails** it when `CI` is set, so a pipeline can never go green by
-  silently skipping the layer. No container orchestration in the test process,
-  no extra dependency: `just deps` locally, the deps compose in CI. Suites
-  isolate through `unique("prefix")` names, never a fresh service.
+  silently skipping the layer. Suites isolate through `unique("prefix")`
+  names, never a fresh service.
+- **Containers come with the run.** The integration project's global setup
+  (`@base/testing` `containers.global-setup.ts`, testcontainers) reads which
+  services the selected spec files ask for and starts a throwaway container
+  for each one whose variable is unset — Postgres, Valkey, Redpanda,
+  Toxiproxy, the images of `docker/deps.yml` — and stops them afterwards. A
+  variable that is set (`just deps`, the CI services, a shared stand) is used
+  as it is. One file's services start in a few seconds: `just
+  test-integration packages/cache`. The test process itself never talks to
+  Docker.
+- **Chaos**: `integration("postgres", "toxiproxy")` plus `await
+  proxied("postgres")` gives the service behind
+  [Toxiproxy](https://github.com/Shopify/toxiproxy) — `proxy.url` instead of
+  the direct address, then `down()` / `up()`, `latency(ms)`, `toxic("timeout"
+  | "reset_peer" | "limit_data" | …)` and `reset()` in `afterEach`.
+  `proxiedPort(name, port)` does the same for a server the test listens on
+  (bind it to `0.0.0.0`). The twin of the Go sibling's `containers.Proxied`.
+  **A code path written for a failing dependency gets a chaos test before it
+  is trusted**; the reference suites are
+  `resilient-client.chaos.integration.spec.ts` (attempt timeout, retries of a
+  GET but not of a POST, a silent connection, RST, breaker open → probe →
+  closed, a truncated body), `pg-chaos.integration.spec.ts` (a connection
+  lost inside a unit of work, recovery of the pool, bounded waits,
+  `lock_timeout`) and `cache-aside.integration.spec.ts` (Valkey down or
+  silent never fails a read). Each states what the caller sees, how long it
+  takes and what the dependency received.
 - `captureLogs()` (a real pino logger writing JSON into memory) and
   `metricValue(text, name, labels)` (a sample out of Prometheus text; `-1`
   when absent) let a test assert on telemetry instead of mocking it.
@@ -1057,6 +1141,29 @@ response is typed by its status. The e2e suite drives the api with it. Inside
 a service, give it `resilientFetch(new ResilientClient(baseUrl, {
 passthrough4xx: true, getRequestId, getRemainingMs: remainingMs }))` as its
 `fetch`: retries, breaker, the request id and the request budget come along.
+
+What the client promises is the same as golang-basics' `resilient-http-client`
+(`resilient-client.guarantees.spec.ts` is the proof):
+
+- **An attempt has its own timeout** (`attemptTimeoutMs`, 5 s; `timeout` on a
+  pool target) from the request to the end of the response body; it is
+  cancelled, not abandoned.
+- **Only what may be sent twice is retried**: GET, HEAD, OPTIONS, PUT, DELETE,
+  or any method with an `Idempotency-Key` — and only with a body that can be
+  replayed (text or bytes, not a stream). "Try again" is a connection error, an
+  attempt timeout, or 408 / 425 / 429 / 500 / 502 / 503 / 504.
+- **The wait is the jittered backoff or `Retry-After`, whichever is longer.**
+  A `Retry-After` beyond `retry.maxTimeout`, or a wait the caller's budget
+  cannot cover, ends the call; the error carries `retryAfterMs` for whoever
+  requeues it.
+- **Retries are budgeted**: at most `10 + 0.2 × requests` per 10 s per target
+  (`retry.budget`), so an outage does not multiply the traffic.
+- **The breaker counts the dependency's failures only**: connection errors,
+  timeouts and "try again" statuses left after the retries. A 4xx, a
+  rate-limit rejection, a budget spent before sending and the caller's abort
+  (`canceled`) do not open it.
+- **URLs are logged without credentials and query string.**
+- Redirects are not followed: a 3xx is returned as it is.
 
 `just contracts` (`pnpm contracts`) regenerates all of it; the outputs are
 committed, so a reviewer sees the contract diff next to the code diff.
@@ -1269,7 +1376,7 @@ block a change:
 | `pnpm lint`                            | oxlint                                                         |
 | `pnpm format`                          | oxfmt                                                          |
 | `pnpm test`                            | unit layer (vitest project `unit`)                             |
-| `pnpm test:integration`                | integration layer (needs `just deps`)                          |
+| `pnpm test:integration`                | integration + chaos layer (starts its own containers)          |
 | `just contracts`                       | regenerate `api/openapi3` + `@base/contracts` from `api/tsp`   |
 | `just contracts-check [BASE]`          | generated files current + oasdiff breaking-change gate         |
 | `just schemathesis`                    | generative layer against the built api (needs `just deps`)     |

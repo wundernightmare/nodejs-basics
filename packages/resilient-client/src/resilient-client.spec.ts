@@ -70,10 +70,10 @@ describe("ResilientClient", () => {
   // ── Retry logic ───────────────────────────────────────────────────────────
 
   it("retries on 429 and succeeds on the next attempt", async () => {
-    pool.intercept({ path: "/api", method: "POST" }).reply(429, "slow down");
-    pool.intercept({ path: "/api", method: "POST" }).reply(200, "ok");
+    pool.intercept({ path: "/api", method: "GET" }).reply(429, "slow down");
+    pool.intercept({ path: "/api", method: "GET" }).reply(200, "ok");
 
-    const res = await client.request({ path: "/api", method: "POST" });
+    const res = await client.request({ path: "/api", method: "GET" });
     expect(res.statusCode).toBe(200);
   });
 
@@ -118,19 +118,18 @@ describe("ResilientClient", () => {
     );
   });
 
-  it("does NOT throw on 5xx that is not a retry status", async () => {
-    // 500 is not in default retry codes [429, 502, 503, 504]
-    pool.intercept({ path: "/fail", method: "GET" }).reply(500, "internal server error");
+  it("returns a 5xx that is not a retry status (501)", async () => {
+    pool.intercept({ path: "/fail", method: "GET" }).reply(501, "not implemented");
 
     const res = await client.request({ path: "/fail", method: "GET" });
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(501);
   });
 
   // ── Circuit breaker ───────────────────────────────────────────────────────
 
   it("opens the circuit after failures and throws circuitOpen", async () => {
     // volumeThreshold:1, so after one failure the breaker opens
-    pool.intercept({ path: "/api", method: "GET" }).reply(400, "err");
+    pool.intercept({ path: "/api", method: "GET" }).reply(503, "err").times(3);
 
     // First call — fails, trips the breaker
     await expect(client.request({ path: "/api", method: "GET" })).rejects.toBeInstanceOf(
@@ -162,14 +161,14 @@ describe("ResilientClient", () => {
     const fallback = vi.fn().mockResolvedValue(syntheticResponse);
 
     const clientWithFallback = makeClient(pool, { fallback });
-    // First call: 400 → opossum records failure; fallback kicks in → returns 200
-    pool.intercept({ path: "/api", method: "GET" }).reply(400, "err");
+    // First call: 503 ×3 → opossum records failure; fallback kicks in → returns 200
+    pool.intercept({ path: "/api", method: "GET" }).reply(503, "err").times(3);
     const first = await clientWithFallback.request({ path: "/api", method: "GET" });
     expect(first.statusCode).toBe(200);
     expect(fallback).toHaveBeenCalledOnce();
     const firstErr = fallback.mock.calls[0]![2];
     expect(firstErr).toBeInstanceOf(OutboundError);
-    expect(firstErr.errorType).toBe("client_error");
+    expect(firstErr.errorType).toBe("retries_exhausted");
 
     // Wait for opossum to open the circuit
     await new Promise((r) => setTimeout(r, 50));
@@ -394,7 +393,7 @@ describe("ResilientClient", () => {
   });
 
   it("reports halfOpen once resetTimeout elapses after the circuit opened", async () => {
-    pool.intercept({ path: "/api", method: "GET" }).reply(400, "err");
+    pool.intercept({ path: "/api", method: "GET" }).reply(503, "err").times(3);
     await expect(client.request({ path: "/api", method: "GET" })).rejects.toBeInstanceOf(
       OutboundError,
     );

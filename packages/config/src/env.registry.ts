@@ -258,6 +258,32 @@ const REGISTRY = [
   },
 
   {
+    key: "LOG_SAMPLE_INITIAL",
+    yaml: "app.log_sample_initial",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "100",
+    description:
+      "Log sampling: per second and per message, the first N trace/debug/info records pass " +
+      "(warn and above always do). 0 disables sampling. Read at process start (env only).",
+    usedIn: ["logger"],
+  },
+
+  {
+    key: "LOG_SAMPLE_THEREAFTER",
+    yaml: "app.log_sample_thereafter",
+    type: "int",
+    min: 1,
+    required: false,
+    default: "100",
+    description:
+      "Log sampling: after LOG_SAMPLE_INITIAL, every M-th record of the same message passes. " +
+      "log_dropped_total{level} counts the rest. Read at process start (env only).",
+    usedIn: ["logger"],
+  },
+
+  {
     key: "LOG_LEVEL_MAX_TTL",
     yaml: "app.log_level_max_ttl",
     type: "duration",
@@ -274,8 +300,8 @@ const REGISTRY = [
     yaml: "app.admin_token",
     required: false,
     description:
-      "Bearer token for the mutating admin endpoints (PUT/DELETE /admin/log-level, " +
-      "POST /debug/*). Without it the start fails unless ADMIN_HOST is loopback or " +
+      "Bearer token for the admin endpoints: everything under /admin/ and /debug/, " +
+      "reads included. Without it the start fails unless ADMIN_HOST is loopback or " +
       'ADMIN_INSECURE=true; the "Admin server listening" log line says auth=off|bearer.',
     usedIn: ["observability"],
   },
@@ -403,6 +429,19 @@ const REGISTRY = [
     required: false,
     default: "30000",
     description: "Server-side statement_timeout set on every connection.",
+    usedIn: ["database"],
+  },
+
+  {
+    key: "DATABASE_LOCK_TIMEOUT_MS",
+    yaml: "database.lock_timeout_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "5000",
+    description:
+      "Server-side lock_timeout set on every connection: how long a statement waits for a " +
+      "lock before failing with 55P03. 0 disables it.",
     usedIn: ["database"],
   },
 
@@ -1421,6 +1460,20 @@ const REGISTRY = [
       "nodejs-basics-api / nodejs-basics-worker)." +
       " Environment only: telemetry starts in instrumentation.ts, before config.yaml is read.",
     usedIn: ["logger", "observability"],
+  },
+
+  {
+    key: "OTEL_TRACES_SAMPLER_RATIO",
+    type: "number",
+    min: 0,
+    max: 1,
+    required: false,
+    default: "1",
+    description:
+      "Share of traces this service starts that are sampled (0..1). A request that arrives " +
+      "with a sampled or unsampled traceparent keeps the caller's decision. Environment only: " +
+      "telemetry starts in instrumentation.ts, before config.yaml is read.",
+    usedIn: ["observability"],
   },
 
   {

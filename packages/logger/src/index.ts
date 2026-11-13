@@ -12,12 +12,14 @@ export {
   parseDuration,
   parseLogLevelStrict,
 } from "./log-level.js";
+export { LogSampler, type LogSamplerOptions } from "./log-sampler.js";
 export { LoggerModule } from "./logger.module.js";
 export {
   buildPinoOptions,
   ECS_VERSION,
   ecsError,
   logLevel,
+  logSampler,
   pinoLogger,
   serviceIdentity,
 } from "./pino.config.js";

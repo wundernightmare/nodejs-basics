@@ -24,6 +24,7 @@ import {
 import { getHeapStatistics } from "node:v8";
 
 import type { Meter } from "@opentelemetry/api";
+import { logSampler } from "@base/logger";
 
 /** How long one event-loop delay window lasts. */
 export const EVENT_LOOP_WINDOW_MS = 10_000;
@@ -68,6 +69,17 @@ export function registerNodeMetrics(meter: Meter, build: BuildIdentity): () => v
   });
   versionInfo.addCallback((result) => {
     result.observe(1, { version: process.version });
+  });
+
+  // ─── Logs ──────────────────────────────────────────────────────────────────
+
+  const logDropped = meter.createObservableCounter("log_dropped_total", {
+    description: "Log records dropped by sampling, by level.",
+  });
+  logDropped.addCallback((result) => {
+    const dropped = logSampler.dropped();
+    result.observe(dropped.debug, { level: "debug" });
+    result.observe(dropped.info, { level: "info" });
   });
 
   // ─── CPU (cumulative since process start) ──────────────────────────────────

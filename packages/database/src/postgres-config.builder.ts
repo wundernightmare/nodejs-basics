@@ -16,8 +16,8 @@
  *      idempotent SQL.
  *
  * Defaults: a bare `DATABASE_URL=postgresql://…` yields max=20, idle=30s,
- * connect=5s, keepAlive on, plus server-side statement_timeout=30s +
- * idle_in_transaction=60s on every connection — disableable via
+ * connect=5s, keepAlive on, plus server-side statement_timeout=30s,
+ * lock_timeout=5s + idle_in_transaction=60s on every connection — disableable via
  * `DATABASE_STATEMENT_TIMEOUT_MS=0`.
  */
 import { readFileSync } from "node:fs";
@@ -153,6 +153,13 @@ export function buildPostgresConfig(
   const sessionInit: string[] = [];
   if (statementTimeoutMs > 0) {
     sessionInit.push(`SET statement_timeout = ${statementTimeoutMs}`);
+  }
+  // A statement waiting for a lock gives up long before statement_timeout: a
+  // stuck migration or a forgotten transaction then costs one fast error
+  // (55P03), not a pool full of waiters.
+  const lockTimeoutMs = readInt(config, "DATABASE_LOCK_TIMEOUT_MS");
+  if (lockTimeoutMs > 0) {
+    sessionInit.push(`SET lock_timeout = ${lockTimeoutMs}`);
   }
   if (idleInTxTimeoutMs > 0) {
     sessionInit.push(`SET idle_in_transaction_session_timeout = ${idleInTxTimeoutMs}`);
