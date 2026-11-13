@@ -6,6 +6,8 @@ import type { ServiceProxy } from "@base/testing";
 
 import { parseEnvelope, TierCache, type TierCacheConfig } from "./tier-cache.js";
 import { ValkeyRemote } from "./tier-cache.valkey.js";
+import { guardValkeyClient } from "./valkey-deadline.js";
+import { traceValkeyClient } from "./valkey-tracing.js";
 
 /**
  * TierCache with a real Valkey as L2 — IFEQ, NX, the tombstone and Pub/Sub
@@ -120,6 +122,27 @@ describe.skipIf(infra.skip)("TierCache (integration, chaos)", () => {
     const ttl = await direct.pttl(`tc:${name}:k`);
     expect(ttl).toBeGreaterThan(53_000);
     expect(ttl).toBeLessThanOrEqual(66_000);
+  });
+
+  it("works over the client the application wires (traced, deadline-guarded)", async () => {
+    await testCase("NB-1232", "tier cache against Valkey: the application's wrapped client works");
+    const name = cacheName();
+    const wrapped = guardValkeyClient(traceValkeyClient(await connect(infra.url("valkey"))));
+    const rows = new Map([["k", 1]]);
+    const cache = new TierCache<Row>(
+      { name, hardTtlMs: 60_000, softTtlMs: 50 },
+      (key) => Promise.resolve({ key, version: rows.get(key) ?? 0 }),
+      new ValkeyRemote(wrapped),
+    );
+    caches.push(cache);
+    await subscribed(name, 1); // the subscription's own connection came from duplicate()
+    expect((await cache.get("k"))?.version).toBe(1);
+    expect(parseEnvelope((await direct.get(`tc:${name}:k`)) ?? "")?.payload).toBe(
+      '{"key":"k","version":1}',
+    );
+    rows.set("k", 2);
+    await cache.invalidate("k"); // tombstone + publish
+    expect((await cache.get("k"))?.version).toBe(2);
   });
 
   it("an invalidation reaches the other process", async () => {
