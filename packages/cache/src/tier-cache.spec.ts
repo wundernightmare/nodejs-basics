@@ -595,6 +595,107 @@ describe("TierCache", () => {
     expect(seen.at(-1)?.aborted).toBe(true);
   });
 
+  it("reports an invalidation L2 did not get, after the local part is done", async () => {
+    await testCase(
+      "NB-1233",
+      "tier cache: a failed remote invalidation is reported, L1 is dropped",
+    );
+    const server = new FakeServer();
+    const { cache, source } = rig(server);
+    source.rows.set("k", 1);
+    await cache.get("k");
+
+    server.failing = true;
+    source.rows.set("k", 2);
+    const failure = await cache.invalidate("k").catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(2); // the tombstone and the publish
+    expect(await cache.get("k")).toEqual({ key: "k", version: 2 }); // this process is consistent anyway
+  });
+
+  it("returns a value it cannot encode, without caching it", async () => {
+    await testCase("NB-1234", "tier cache: a value that cannot be encoded is served, not cached");
+    let loads = 0;
+    const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
+    const cache = new TierCache<{ self?: unknown }>(
+      { name: "cyclic", hardTtlMs: 10_000 },
+      () => {
+        loads += 1;
+        const value: { self?: unknown } = {};
+        value.self = value; // JSON cannot hold it
+        return Promise.resolve(value);
+      },
+      undefined,
+      { logger: { warn }, now: () => clock },
+    );
+    expect((await cache.get("k"))?.self).toBeDefined();
+    await cache.get("k");
+    expect(loads).toBe(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "tiercache: cannot encode the value for the cache",
+    );
+    await cache.close();
+  });
+
+  it("keeps trying to subscribe, and stops when closed", async () => {
+    await testCase("NB-1235", "tier cache: a failed subscription is retried until close");
+    let attempts = 0;
+    const server = new FakeServer();
+    const remote = server.remote();
+    const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
+    const cache = new TierCache<number>(
+      { name: "sub", hardTtlMs: 10_000 },
+      () => Promise.resolve(1),
+      {
+        ...remote,
+        subscribe: (...args) => {
+          attempts += 1;
+          return attempts === 1
+            ? Promise.reject(new Error("no connection"))
+            : remote.subscribe(...args);
+        },
+      },
+      { logger: { warn } },
+    );
+    expect(await cache.get("k")).toBe(1); // reads do not wait for the subscription
+    await vi.waitFor(
+      () => {
+        expect(server.subscribers.size).toBe(1);
+      },
+      { timeout: 3_000 },
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "tiercache: invalidation subscription failed, retrying",
+    );
+    await cache.close();
+    expect(server.subscribers.size).toBe(0);
+
+    // Closed while waiting for the next attempt: close does not sit out the wait.
+    const never = new TierCache<number>(
+      { name: "sub2", hardTtlMs: 10_000 },
+      () => Promise.resolve(1),
+      {
+        ...remote,
+        subscribe: () => Promise.reject(new Error("no connection")),
+      },
+    );
+    await settle();
+    const started = performance.now();
+    await never.close();
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it("does not start a lookup for a caller that has already gone", async () => {
+    await testCase("NB-1191", "tier cache: each caller honours its own signal");
+    const { cache, source } = rig(undefined);
+    source.rows.set("k", 1);
+    await expect(cache.get("k", AbortSignal.abort(new Error("already gone")))).rejects.toThrow(
+      "already gone",
+    );
+  });
+
   it("rejects a config it cannot run with", async () => {
     await testCase("NB-1193", "tier cache: invalid config is rejected at construction");
     expect(() => build({ name: "", hardTtlMs: 1 })).toThrow("name is required");
