@@ -50,9 +50,14 @@ high-signal, easy-to-miss bits.
   and `noImplicitReturns` — specs included, no relaxed test tsconfig.
 - **Tests** are vitest with ONE root `vitest.config.ts` and two projects:
   `unit` (`*.spec.ts`, `pnpm test`) and `integration` (`*.integration.spec.ts`,
-  `pnpm test:integration`, real services from `just deps` via `DATABASE_URL` /
-  `VALKEY_URL` / `KAFKA_BROKERS` — `integration()` from `@base/testing` skips
-  locally when unset, fails on CI). Import `describe`/`it`/`expect` from
+  `pnpm test:integration`, real services via `DATABASE_URL` / `VALKEY_URL` /
+  `KAFKA_BROKERS` — a throwaway container per requested service whose variable
+  is unset (`containers.global-setup.ts`, testcontainers), else what is set;
+  `integration()` from `@base/testing` skips locally when there is no
+  container runtime, fails on CI). Code written for a failing dependency (a
+  timeout, a retry, a breaker, a fall-through) gets a chaos test through
+  `proxied()` / `proxiedPort()` (Toxiproxy) and resets the proxy in
+  `afterEach`; rootless Podman needs `TESTCONTAINERS_RYUK_DISABLED=true`. Import `describe`/`it`/`expect` from
   `vitest` (no globals); label suites with `meta()` and tests with
   `testCase("NB-<n>", story)` — every test is an Allure test. `@base/*`
   resolves to `src/` in tests through `resolve.conditions: ["source"]`.

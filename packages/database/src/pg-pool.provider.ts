@@ -100,11 +100,23 @@ function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"):
   // db_pool_* and db_query_* (pg-metrics.ts), labelled with this pool.
   measurePgPool(pool, label);
 
+  // A connection that breaks emits "error" on its client. pg-pool listens only
+  // while the client is idle; one that is checked out — a unit of work between
+  // two statements — has no listener, and an "error" event without one is an
+  // uncaught exception: the database restarting would take the process down.
+  // The listener stays for the life of the connection; the failure itself
+  // reaches the caller through the next query, which rejects.
+  pool.on("connect", (client: PoolClient) => {
+    client.on("error", (err: Error) => {
+      logger.warn({ err, "pg.pool": label }, "Postgres connection error");
+    });
+  });
+
   pool.on("error", (err) => {
-    // pg emits these on idle-client errors. Leaving the listener
-    // unregistered would crash the process on a broken socket, which
-    // the pool is perfectly capable of replacing on the next query.
-    logger.warn({ err, "pg.pool": label }, "Postgres pool idle-client error");
+    // pg-pool re-emits the error of an idle client here (it is already logged
+    // by the listener above). Without a listener this event, too, would crash
+    // the process on a broken socket the pool replaces on the next query.
+    logger.debug({ err, "pg.pool": label }, "Postgres pool dropped an idle connection");
   });
 
   return pool;

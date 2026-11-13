@@ -40,7 +40,9 @@ kafka:
 
 # Telemetry is configured by the ENVIRONMENT only — it starts before this file
 # is read: OTEL_SERVICE_NAME (default nodejs-basics-api), OTEL_EXPORTER_OTLP_ENDPOINT
-# (default http://localhost:4317), SENTRY_DSN, PYROSCOPE_SERVER_ADDRESS.
+# (default http://localhost:4317), OTEL_TRACES_SAMPLER_RATIO (default 1),
+# SENTRY_DSN, PYROSCOPE_SERVER_ADDRESS. So is log sampling: LOG_SAMPLE_INITIAL
+# and LOG_SAMPLE_THEREAFTER (default 100 each; 0 turns it off).
 
 # Diagnostics (heap snapshots, crash reports). All keys optional —
 # without an S3 bucket files are written to /tmp only.

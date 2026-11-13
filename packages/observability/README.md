@@ -36,9 +36,9 @@ the alerts and dashboards, then drop the old one.
 | `GET /livez`, `GET /healthz` | –  | Liveness — `200 {"status":"ok"}` while the process runs                                  |
 | `GET /readyz`              | –    | Readiness — `200 {"status":"ok"\|"degraded"}` / `503 {"status":"not_ready"}` + per-check breakdown |
 | `GET /metrics`             | –    | Prometheus exposition (OTel PrometheusExporter)                                          |
-| `GET /version`             | –    | `{service, version, revision, node, started_at, uptime_seconds, env}` (`/admin/info` is an alias) |
-| `GET /admin/config`        | –    | The effective configuration (`configSnapshot` from `@base/config`), secrets redacted     |
-| `GET /admin/log-level`     | –    | `{level, base, expires_at, max_ttl}` — what is in effect and when it reverts             |
+| `GET /version`             | –    | `{service, version, revision, node, started_at, uptime_seconds, env}` (`/admin/info`: the same, bearer) |
+| `GET /admin/config`        | bearer | The effective configuration (`configSnapshot` from `@base/config`), secrets redacted     |
+| `GET /admin/log-level`     | bearer | `{level, base, expires_at, max_ttl}` — what is in effect and when it reverts             |
 | `PUT /admin/log-level`     | bearer | `?level=trace\|debug\|info\|warn\|error\|fatal\|silent&ttl=30m` (or JSON `{level, ttl}`) — change the level for a while |
 | `DELETE /admin/log-level`  | bearer | Revert to the configured level now                                                     |
 | `POST /debug/heapdump`     | bearer | Capture a V8 heap snapshot (`enableHeapSnapshot`)                                      |

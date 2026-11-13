@@ -44,6 +44,7 @@ import { serviceIdentity } from "@base/logger";
 
 import { registerNodeMetrics } from "./node-metrics.js";
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
+import { traceSampler } from "./trace-sampler.js";
 
 export { TELEMETRY_HANDLE, type TelemetryHandle };
 
@@ -132,6 +133,7 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   const traceExporter = new OTLPTraceExporter({ url: otlpEndpoint });
   const tracerProvider = new BasicTracerProvider({
     resource,
+    sampler: traceSampler(process.env["OTEL_TRACES_SAMPLER_RATIO"]),
     spanProcessors: [new BatchSpanProcessor(traceExporter)],
   });
   trace.setGlobalTracerProvider(tracerProvider);

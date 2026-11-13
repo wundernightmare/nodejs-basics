@@ -37,7 +37,12 @@ export {
 } from "./http/request-context.hooks.js";
 
 // Ports
-export { UNIT_OF_WORK, type IUnitOfWork } from "./ports/unit-of-work.port.js";
+export {
+  UNIT_OF_WORK,
+  type IsolationLevel,
+  type IUnitOfWork,
+  type UnitOfWorkOptions,
+} from "./ports/unit-of-work.port.js";
 
 // Errors
 export { DomainError } from "./errors/domain-error.base.js";

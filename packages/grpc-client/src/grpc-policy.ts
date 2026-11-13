@@ -111,6 +111,7 @@ export interface PolicyInstruments {
   requests: Counter;
   duration: Histogram;
   retries: Counter;
+  transitions: Counter;
   /** Stops reporting the breaker states (the gauge's callback outlives its owner otherwise). */
   dispose(): void;
 }
@@ -122,6 +123,7 @@ export interface PolicyInstruments {
  *   grpc_client_request_duration_seconds{target,method}  calls that reached gRPC, retries included
  *   grpc_client_retries_total{target}                    attempts before the one that answered
  *   grpc_client_circuit_breaker_state{target}            0 closed, 1 open, 2 half-open
+ *   grpc_client_circuit_breaker_transitions_total{target,from,to}
  */
 export function createInstruments(
   meter: Meter,
@@ -139,6 +141,9 @@ export function createInstruments(
   const retries = meter.createCounter("grpc_client_retries_total", {
     description: "Retries sent (attempts before the one that answered), by target.",
   });
+  const transitions = meter.createCounter("grpc_client_circuit_breaker_transitions_total", {
+    description: "Circuit breaker state changes, by target, from and to.",
+  });
   const breakerState = meter.createObservableGauge("grpc_client_circuit_breaker_state", {
     description: "Circuit breaker state per target: 0 closed, 1 open, 2 half-open.",
   });
@@ -152,6 +157,7 @@ export function createInstruments(
     requests,
     duration,
     retries,
+    transitions,
     dispose: () => {
       breakerState.removeCallback(observe);
     },
@@ -160,6 +166,9 @@ export function createInstruments(
 
 /** Breaker state as a gauge value — the scale golang-basics uses. */
 const BREAKER_STATE = { closed: 0, open: 1, halfOpen: 2 } as const;
+
+/** Breaker state as a label value — the names golang-basics uses. */
+const BREAKER_LABEL = { closed: "closed", open: "open", halfOpen: "half_open" } as const;
 
 const metadataSetter: TextMapSetter<Metadata> = {
   set(carrier, key, value) {
@@ -202,10 +211,25 @@ export class TargetPolicy {
         resetTimeout: cfg.openTimeoutMs,
       });
       const { logger } = opts;
+      let last: keyof typeof BREAKER_LABEL = "closed";
+      const moved = (to: keyof typeof BREAKER_LABEL): void => {
+        if (to === last) return;
+        instruments.transitions.add(1, {
+          target: target.name,
+          from: BREAKER_LABEL[last],
+          to: BREAKER_LABEL[to],
+        });
+        last = to;
+      };
       this.#breaker.on("open", () => {
+        moved("open");
         logger?.warn({ grpc_target: target.name }, "gRPC circuit breaker opened");
       });
+      this.#breaker.on("halfOpen", () => {
+        moved("halfOpen");
+      });
       this.#breaker.on("close", () => {
+        moved("closed");
         logger?.info({ grpc_target: target.name }, "gRPC circuit breaker closed");
       });
     }

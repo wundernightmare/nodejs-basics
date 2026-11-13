@@ -48,8 +48,8 @@ export interface OutboundTargetConfig {
   selector: string;
   /** Number of connections in the pool. Default: 10 */
   connections?: number;
-  /** Request timeout ms. Default: 10_000 */
-  timeout?: number;
+  /** How long one attempt may take, ms (ResilientClientConfig.attemptTimeoutMs). Default: 5_000 */
+  timeout?: number | false;
   /** Short-lived mode: forces `Connection: close` on every request. */
   shortLived?: boolean;
   retry?: RetryConfig;
@@ -128,6 +128,14 @@ export function outcomeOf(status: number | undefined, err?: OutboundError): stri
 /** Breaker state as a gauge value — the scale golang-basics uses. */
 const BREAKER_STATE = { closed: 0, open: 1, halfOpen: 2 } as const;
 
+/** Breaker state as a label value — the names golang-basics uses. */
+const BREAKER_LABEL = { closed: "closed", open: "open", halfOpen: "half_open" } as const;
+
+/** The URL as it may be logged: no credentials, no query (tokens travel in both). */
+export function logUrl(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
 /**
  * Multi-target outbound HTTP pool.
  *
@@ -140,6 +148,8 @@ const BREAKER_STATE = { closed: 0, open: 1, halfOpen: 2 } as const;
  *   http_client_request_duration_seconds{target,method}
  *   http_client_retries_total{target}                    attempts after the first
  *   http_client_circuit_breaker_state{target}            0 closed, 1 open, 2 half-open
+ *   http_client_retry_budget_exhausted_total{target}     retries the budget refused
+ *   http_client_circuit_breaker_transitions_total{target,from,to}
  *
  * Usage:
  *   const pool = ResilientPool.fromAdapter(new StaticConfigAdapter(targets));
@@ -164,12 +174,13 @@ export class ResilientPool {
     this.#selectors = targets.map((t) => ({ name: t.name, selector: t.selector }));
 
     for (const target of targets) {
-      const { name, selector, connections, timeout: _timeout, ...options } = target;
+      const { name, selector, connections, timeout, ...options } = target;
       this.#clients.set(
         name,
         new ResilientClient(extractBaseUrl(selector), {
           ...options,
           connections: connections ?? 10,
+          ...(timeout === undefined ? {} : { attemptTimeoutMs: timeout }),
         }),
       );
     }
@@ -212,7 +223,7 @@ export class ResilientPool {
     this.#logger.info(
       {
         "http.request.method": method,
-        "url.full": url,
+        "url.full": logUrl(parsed),
         outbound_target: name,
       },
       "Outbound request started",
@@ -227,7 +238,7 @@ export class ResilientPool {
       this.#logger.info(
         {
           "http.request.method": method,
-          "url.full": url,
+          "url.full": logUrl(parsed),
           outbound_target: name,
           "http.response.status_code": response.statusCode,
           "http.response.time_ms": durationMs,
@@ -244,7 +255,7 @@ export class ResilientPool {
       this.#logger.warn(
         {
           "http.request.method": method,
-          "url.full": url,
+          "url.full": logUrl(parsed),
           outbound_target: name,
           "http.response.time_ms": durationMs,
           "error.type": outErr.errorType,
@@ -322,6 +333,28 @@ export class ResilientPool {
     });
     retries.addCallback((result) => {
       for (const [name, client] of this.#clients) result.observe(client.retries, { target: name });
+    });
+
+    const budgetExhausted = this.meter.createObservableCounter(
+      "http_client_retry_budget_exhausted_total",
+      { description: "Retries not sent because the target's retry budget was spent, by target." },
+    );
+    budgetExhausted.addCallback((result) => {
+      for (const [name, client] of this.#clients) {
+        result.observe(client.retryBudgetExhausted, { target: name });
+      }
+    });
+
+    const transitions = this.meter.createObservableCounter(
+      "http_client_circuit_breaker_transitions_total",
+      { description: "Circuit breaker state changes, by target, from and to." },
+    );
+    transitions.addCallback((result) => {
+      for (const [name, client] of this.#clients) {
+        for (const { from, to, count } of client.breakerTransitions) {
+          result.observe(count, { target: name, from: BREAKER_LABEL[from], to: BREAKER_LABEL[to] });
+        }
+      }
     });
 
     const cbState = this.meter.createObservableGauge("http_client_circuit_breaker_state", {
