@@ -562,7 +562,7 @@ Every key is also a YAML path (`--config-reference` prints both).
 | — | `queued.min.messages` | 1000 | prefetch target in messages instead of 100000 |
 | `KAFKA_CONSUMER_FETCH_MAX_BYTES` | `fetch.max.bytes` (`receive.message.max.bytes` = +512) | 4194304 | one fetch response ≤ 4 MiB instead of 50 MB |
 | `KAFKA_CONSUMER_PARTITION_FETCH_MAX_BYTES` | `max.partition.fetch.bytes` (+ its alias `fetch.message.max.bytes`, which the compat layer would otherwise set to 10 MiB) | 1048576 | one hot partition cannot fill a whole fetch |
-| — | `allow.auto.create.topics` | `true` | the client may ask; the broker decides (see "Topics") |
+| `KAFKA_ALLOW_AUTO_TOPIC_CREATION` | `allow.auto.create.topics` (and the create request before subscribing) | `true` | the client may ask; the broker decides (see "Topics"). `false` where topics are provisioned |
 | `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` | kafkajs-compat `partitionsConsumedConcurrently` | 1 | order holds per partition at any value |
 | `KAFKA_CONSUMER_MAX_RETRIES` | — (runner) | 5 | then the message is parked; see "Commits" |
 | `KAFKA_CONSUMER_RETRY_BACKOFF_MS` / `_MAX_MS` | — (runner) | 1000 / 60000 | the pause before a failed message is handled again, doubling |
@@ -717,7 +717,10 @@ owns are refused at start (exit 78, naming the key): the sizes above
 (`message.max.bytes`, `queue.buffering.max.kbytes` / `.messages`,
 `queued.max.messages.kbytes`, `fetch.max.bytes`, `receive.message.max.bytes`,
 `max.partition.fetch.bytes` / `fetch.message.max.bytes`) and
-`partition.assignment.strategy` — one place per setting. They may carry
+`partition.assignment.strategy`, and the delivery guarantees (`acks`,
+`enable.idempotence`, `enable.auto.commit`, `allow.auto.create.topics`) — one
+place per setting, and a guarantee is weakened only where `/admin/config`
+shows it. They may carry
 credentials: `/admin/config` redacts them whole, and a config error never
 repeats their text.
 
@@ -755,6 +758,8 @@ dead-letter topics are provisioned like any other.
   (`kafka.log.suppressed`); `debug` in `KAFKA_EXTRA_PROPERTIES` turns on its
   debug contexts (`{"debug":"broker,protocol"}`).
 - What to do about each signal: [docs/RUNBOOK.md](docs/RUNBOOK.md).
+- What is left of a pod after it died — crash reports, heap snapshots, where
+  they go and how to read them: [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md).
 - What a service built from this repo gets, rule by rule, with the test that
   proves each: [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md).
 

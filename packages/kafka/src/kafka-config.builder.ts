@@ -201,10 +201,11 @@ export function buildConsumerConfig(
     "group.id": groupId,
     "auto.offset.reset": readString(config, "KAFKA_CONSUMER_AUTO_OFFSET_RESET"),
     // Topics are the broker's call: a dev broker auto-creates them
-    // (docker/deps.yml), a provisioned cluster refuses — so the client may
-    // always ask. Without it a consumer that subscribes before the first
+    // (docker/deps.yml), a provisioned cluster refuses — so by default the
+    // client may ask. Without it a consumer that subscribes before the first
     // message sits on an empty assignment until the next metadata refresh.
-    "allow.auto.create.topics": true,
+    // KAFKA_ALLOW_AUTO_TOPIC_CREATION=false where a typo must not become a topic.
+    "allow.auto.create.topics": readBool(config, "KAFKA_ALLOW_AUTO_TOPIC_CREATION"),
     "enable.auto.commit": readBool(config, "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT"),
     "session.timeout.ms": readInt(config, "KAFKA_CONSUMER_SESSION_TIMEOUT_MS"),
     "max.poll.interval.ms": readInt(config, "KAFKA_CONSUMER_MAX_POLL_INTERVAL_MS"),

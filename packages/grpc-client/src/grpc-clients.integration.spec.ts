@@ -696,6 +696,15 @@ describe.skipIf(infra.skip)(
         expect((await send(client, 1, "outage")).err).toBeNull();
 
         await plain.down();
+        // The scenario is a call made while the connection is known to be down.
+        // One written to the connection in the instant it dies is another:
+        // it fails with "Connection dropped", wait-for-ready or not.
+        await expect
+          .poll(() => client.getChannel().getConnectivityState(false), {
+            timeout: 5000,
+            interval: 5,
+          })
+          .not.toBe(connectivityState.READY);
         const back = sleep(700).then(() => plain.up());
         const answer = await send(client, 1, "outage");
         await back;
