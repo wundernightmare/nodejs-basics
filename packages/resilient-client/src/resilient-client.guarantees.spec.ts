@@ -1,3 +1,4 @@
+import { type AddressInfo, createServer, type Socket } from "node:net";
 import { Readable } from "node:stream";
 
 import type { Dispatcher } from "undici";
@@ -126,8 +127,10 @@ describe("ResilientClient — what is retried", () => {
   it.each([501, 505])("does not retry status %i", async (status) => {
     await testCase("NB-1113", "retryable statuses: 408, 425, 429 and 5xx except 501 and 505");
     const { dispatcher, calls } = scripted([reply(status), reply(200)]);
-    const res = await client(dispatcher).request({ path: "/x", method: "GET" });
-    expect(res.statusCode).toBe(status);
+    await expect(client(dispatcher).request({ path: "/x", method: "GET" })).rejects.toMatchObject({
+      errorType: "server_error",
+      statusCode: status,
+    });
     expect(calls).toHaveLength(1);
   });
 });
@@ -296,4 +299,117 @@ describe("ResilientClient — what the breaker counts", () => {
     expect((await probe).statusCode).toBe(200);
     expect(c.breakerState).toBe("closed");
   });
+});
+
+/** A promise and the function that settles it. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+describe("ResilientClient — an answer that comes after the caller stopped waiting", () => {
+  it("is discarded: the caller got its timeout, the late body is closed", async () => {
+    await testCase("NB-1326", "a response that arrives after the attempt timeout is discarded");
+    // A transport that ignores the signal — what undici does while it is
+    // still making the connection — and answers after the attempt timed out.
+    const body = Readable.from(["too late"]);
+    const late = deferred();
+    const dispatcher = {
+      request: () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ statusCode: 200, headers: {}, body });
+            late.resolve();
+          }, 120);
+        }),
+      close: () => Promise.resolve(),
+    } as unknown as Dispatcher;
+
+    const started = performance.now();
+    await expect(
+      client(dispatcher, { attemptTimeoutMs: 40, retry: { maxRetries: 0 } }).request({
+        path: "/x",
+        method: "GET",
+      }),
+    ).rejects.toMatchObject({ errorType: "timeout" });
+    expect(performance.now() - started).toBeLessThan(110); // at the timeout, not at the answer
+
+    await late.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(body.destroyed).toBe(true); // nobody will read it: not left open
+  });
+
+  it("a transport failure after the caller stopped waiting changes nothing", async () => {
+    await testCase("NB-1327", "a late transport error is swallowed");
+    const late = deferred();
+    const dispatcher = {
+      request: () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => {
+            reject(
+              Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" }),
+            );
+            late.resolve();
+          }, 100);
+        }),
+      close: () => Promise.resolve(),
+    } as unknown as Dispatcher;
+
+    const api = client(dispatcher, { attemptTimeoutMs: 30, retry: { maxRetries: 0 } });
+    await expect(api.request({ path: "/x", method: "GET" })).rejects.toMatchObject({
+      errorType: "timeout",
+    });
+    await late.promise; // no unhandled rejection, no second error
+    expect(api.retries).toBe(0);
+  });
+});
+
+describe("ResilientClient — a connection that cannot be made", () => {
+  it("the attempt timeout and the caller's budget end a call stuck in the TLS handshake", async () => {
+    await testCase("NB-1325", "the attempt timeout covers making the connection");
+    // Accepts the TCP connection and never says a word: a TLS handshake that hangs.
+    const accepted: Socket[] = [];
+    const silent = createServer((socket) => {
+      accepted.push(socket);
+    });
+    await new Promise<void>((resolve) => {
+      silent.listen(0, "127.0.0.1", resolve);
+    });
+    const base = `https://127.0.0.1:${(silent.address() as AddressInfo).port}`;
+    const made: ResilientClient[] = [];
+    try {
+      // undici alone waits out its 10 s connect timeout whatever the signal says.
+      const bounded = new ResilientClient(base, {
+        attemptTimeoutMs: 300,
+        retry: { maxRetries: 0 },
+      });
+      made.push(bounded);
+      const started = performance.now();
+      await expect(bounded.request({ path: "/", method: "GET" })).rejects.toMatchObject({
+        errorType: "timeout",
+      });
+      expect(performance.now() - started).toBeLessThan(1000);
+
+      // The caller's budget is shorter than the attempt timeout: it ends the wait.
+      const budgeted = new ResilientClient(base, {
+        attemptTimeoutMs: 1000,
+        retry: { maxRetries: 0 },
+        getRemainingMs: () => 250,
+      });
+      made.push(budgeted);
+      const again = performance.now();
+      await expect(budgeted.request({ path: "/", method: "GET" })).rejects.toMatchObject({
+        errorType: "deadline_exceeded",
+      });
+      expect(performance.now() - again).toBeLessThan(800);
+    } finally {
+      // The abandoned connection attempts end when the peer goes away.
+      for (const socket of accepted) socket.destroy();
+      silent.close();
+      await Promise.all(made.map((opened) => opened.close().catch(() => {})));
+    }
+  }, 20_000);
 });

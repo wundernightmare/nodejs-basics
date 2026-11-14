@@ -93,10 +93,14 @@ describe("ResilientClient", () => {
     });
     pool.intercept({ path: "/api", method: "GET" }).reply(502, "bad gateway");
 
-    // 502 is not a retry code → immediately throws retriesExhausted? No — 502 is a 5xx,
-    // not in [429], and not 4xx → it's returned as-is without error or retry
-    const res = await specialClient.request({ path: "/api", method: "GET" });
-    expect(res.statusCode).toBe(502);
+    // Not a retry status here, so sent once — and still a failure of the
+    // dependency: a typed error, never a response that reads as a success.
+    await expect(specialClient.request({ path: "/api", method: "GET" })).rejects.toMatchObject({
+      errorType: "server_error",
+      statusCode: 502,
+      kind: "fatal",
+    });
+    expect(specialClient.retries).toBe(0);
   });
 
   // ── Client errors (4xx) ───────────────────────────────────────────────────
@@ -118,11 +122,14 @@ describe("ResilientClient", () => {
     );
   });
 
-  it("returns a 5xx that is not a retry status (501)", async () => {
+  it("throws serverError for a 5xx that is not a retry status (501)", async () => {
     pool.intercept({ path: "/fail", method: "GET" }).reply(501, "not implemented");
 
-    const res = await client.request({ path: "/fail", method: "GET" });
-    expect(res.statusCode).toBe(501);
+    await expect(client.request({ path: "/fail", method: "GET" })).rejects.toMatchObject({
+      errorType: "server_error",
+      statusCode: 501,
+      kind: "fatal",
+    });
   });
 
   // ── Circuit breaker ───────────────────────────────────────────────────────

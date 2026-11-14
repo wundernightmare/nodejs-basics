@@ -106,6 +106,22 @@ export class OutboundError extends Error {
     );
   }
 
+  /**
+   * A 5xx that is not a "try again" status (501, 505, …): the server's final
+   * word that it cannot do this. Fatal for the caller — repeating the request
+   * will not help — and a failure of the dependency for the breaker.
+   */
+  static serverError(status: number, target: string): OutboundError {
+    return new OutboundError(
+      "fatal",
+      "server_error",
+      `HTTP ${status}: ${target}`,
+      undefined,
+      target,
+      status,
+    );
+  }
+
   static noMatchingTarget(url: string): OutboundError {
     return new OutboundError("fatal", "no_matching_target", `No configured target matches: ${url}`);
   }

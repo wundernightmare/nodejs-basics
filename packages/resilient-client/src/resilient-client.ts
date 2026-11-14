@@ -16,6 +16,49 @@ function isTimeoutAbort(err: unknown): boolean {
   return e?.name === "TimeoutError" || e?.cause?.name === "TimeoutError";
 }
 
+/**
+ * The request, or the signal's reason as soon as the signal fires — whichever
+ * comes first. undici honours the signal once a request is on a connection;
+ * while the connection is still being made (a SYN nobody answers, a TLS
+ * handshake that hangs) the request waits for the connect timeout whatever
+ * the signal says. The attempt timeout and the caller's budget are promises
+ * about how long the CALLER waits, so the wait ends here; a response that
+ * still arrives afterwards is discarded.
+ */
+function endingWith(
+  signal: AbortSignal | undefined,
+  request: Promise<Dispatcher.ResponseData>,
+): Promise<Dispatcher.ResponseData> {
+  if (signal === undefined) return request;
+  return new Promise<Dispatcher.ResponseData>((resolve, reject) => {
+    let abandoned = false;
+    const onAbort = (): void => {
+      abandoned = true;
+      // The signal's own reason (a TimeoutError, the caller's abort reason).
+      const reason: unknown = signal.reason;
+      reject(reason instanceof Error ? reason : new Error("aborted", { cause: reason }));
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    request.then(
+      (response) => {
+        signal.removeEventListener("abort", onAbort);
+        if (abandoned) {
+          response.body.on("error", () => {});
+          response.body.destroy();
+        } else resolve(response);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        if (!abandoned) reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
+}
+
+/** undici's own default for making a connection, the ceiling of ours. */
+const CONNECT_TIMEOUT_MS = 10_000;
+
 /** Methods that may be sent more than once (RFC 9110 §9.2.2). */
 const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set([
   "GET",
@@ -508,11 +551,13 @@ export class ResilientClient {
       pipelining,
       ...(keepAliveTimeout === undefined ? {} : { keepAliveTimeout }),
       ...(shortLived === true ? { keepAliveMaxTimeout: 0 } : {}),
-      // TLS options are only consulted by undici when the base URL scheme is
-      // `https://`. Passing them on a plaintext URL is harmless (undici
-      // ignores `connect` on http:// connections) but keep the conditional
-      // so a debugger doesn't see a stray connect callback in dev.
-      ...(tls && this.baseUrl.startsWith("https://") ? { connect: tls } : {}),
+      // TLS options are only consulted when the base URL is https://.
+      // The attempt timeout bounds making the connection too: a socket that
+      // cannot be connected within it is closed, not left to undici's 10 s.
+      connect: {
+        ...(tls && this.baseUrl.startsWith("https://") ? tls : {}),
+        timeout: Math.min(this.#attemptTimeoutMs ?? CONNECT_TIMEOUT_MS, CONNECT_TIMEOUT_MS),
+      },
     };
 
     return connections > 1
@@ -644,7 +689,11 @@ export class ResilientClient {
       let dispatchErr: unknown;
 
       try {
-        response = await this.#dispatcher.request(this.#withLimits(opts, left));
+        const limited = this.#withLimits(opts, left);
+        response = await endingWith(
+          limited.signal as AbortSignal | undefined,
+          this.#dispatcher.request(limited),
+        );
       } catch (e) {
         dispatchErr = e;
       }
@@ -697,12 +746,23 @@ export class ResilientClient {
     }
   }
 
-  /** A response that is final: returned, or — a 4xx without passthrough4xx — thrown. */
+  /**
+   * A response that is final: returned, or thrown — a 4xx (without
+   * passthrough4xx), and any 5xx. A 5xx that reaches here is one the retry
+   * policy does not repeat (501, 505, or one left out of `retry.statusCodes`):
+   * returned as a response it would read as a success to a caller that
+   * relies on the throw, and to the breaker.
+   */
   async #answer(response: Dispatcher.ResponseData): Promise<Dispatcher.ResponseData> {
-    const isClientError = response.statusCode >= 400 && response.statusCode < 500;
+    const status = response.statusCode;
+    if (status >= 500) {
+      await this.#drainBody(response);
+      throw OutboundError.serverError(status, this.baseUrl);
+    }
+    const isClientError = status >= 400;
     if (!isClientError || this.#passthrough4xx) return response;
     await this.#drainBody(response);
-    throw this.#notTheDependency(OutboundError.clientError(response.statusCode, this.baseUrl));
+    throw this.#notTheDependency(OutboundError.clientError(status, this.baseUrl));
   }
 
   /** May the request be sent more than once: retries on, idempotent, body replayable. */
