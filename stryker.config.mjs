@@ -53,9 +53,18 @@ export const TARGETS = {
     mutate: ["packages/observability/src/http-rate-limit.ts"],
     break: 82,
   },
-  // Not a target yet: @base/logger (redact, debug subjects, the background
-  // guard). Stryker 10's instrumenter throws on one of its files
-  // ("UpdateExpression expected … got TSNonNullExpression").
+  // Masking of private data, debug subjects, the background guard, sampling, the runtime level.
+  logger: {
+    dir: "packages/logger",
+    mutate: [
+      "packages/logger/src/redact.ts",
+      "packages/logger/src/debug-subjects.ts",
+      "packages/logger/src/background-guard.ts",
+      "packages/logger/src/log-sampler.ts",
+      "packages/logger/src/log-level.ts",
+    ],
+    break: 0,
+  },
 };
 
 const name = process.env["MUTATE_TARGET"] ?? "resilient-client";
