@@ -1041,7 +1041,11 @@ a URL (`postgres://app:xxxxx@db`), a query parameter named like a secret
 (`?token=[redacted]`) and a keyword-DSN password are masked — in an error
 message and a stack trace too. Numbers, booleans and empty strings are left
 alone, a `Secret` prints its fingerprint, and the message itself is never
-rewritten: put values in fields, not in the message. `LOG_REDACT_KEYS`
+rewritten: put values in fields, not in the message. A logged error is masked
+whole — message, stack, cause and whatever a driver hangs on it (`config.url`,
+a connection string). What cannot be walked is not shown: an object that
+refers to itself prints as `[Circular]`, one nested more than eight levels
+deep as `[Truncated]`. `LOG_REDACT_KEYS`
 (`email,iban`) adds exact field names for private data of the domain.
 
 **One tenant or user, for a while**: `PUT /admin/debug-subjects/{subject}?ttl=15m`
@@ -1567,7 +1571,7 @@ its own with its own threshold:
 | `secret` | `Secret` | 98.0 % (the survivor is equivalent) | 95 |
 | `tier-cache` | the two-level cache | 75.7 % | 70 |
 | `rate-limit` | the inbound rate limit | 87.8 % | 82 |
-| `logger` | masking of private data, debug subjects, the background guard, sampling, the runtime level | 82.3 % (redact 71, debug subjects 71) | 77 |
+| `logger` | masking of private data, debug subjects, the background guard, sampling, the runtime level | 82.3 %; 99.3 % after its survivors were triaged | 94 |
 
 ```sh
 just mutate              # every target → reports/mutation/<target>.html (+ .json)

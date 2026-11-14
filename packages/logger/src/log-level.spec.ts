@@ -8,6 +8,11 @@ describe("parseLogLevelStrict", () => {
     expect(parseLogLevelStrict(" INFO ")).toBe("info");
     expect(parseLogLevelStrict("warning")).toBe("warn");
     expect(parseLogLevelStrict("silent")).toBe("silent");
+    // The error names what was given — nothing, when nothing was — and what is accepted.
+    expect(() => parseLogLevelStrict(undefined)).toThrow(
+      'unknown log level "" (want trace|debug|info|warn|error|fatal|silent)',
+    );
+    expect(() => parseLogLevelStrict("verbose")).toThrow('unknown log level "verbose" (want ');
   });
 
   it("rejects typos instead of falling back", () => {

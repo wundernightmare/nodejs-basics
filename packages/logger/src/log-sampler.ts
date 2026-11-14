@@ -58,6 +58,7 @@ export class LogSampler {
     // update of a non-null assertion.)
     const n = (this.#count[slot] ?? 0) + 1;
     this.#count[slot] = n;
+    // Stryker disable next-line EqualityOperator: at n === initial the second half is true as well
     if (n <= this.#initial || (n - this.#initial) % this.#thereafter === 0) return true;
 
     if (levelValue >= INFO) this.#droppedInfo++;
@@ -74,6 +75,7 @@ export class LogSampler {
 /** FNV-1a over the message, mixed with the level. */
 function slotOf(levelValue: number, message: string): number {
   let hash = 0x811c9dc5;
+  // Stryker disable next-line EqualityOperator: one more step changes every hash alike
   for (let i = 0; i < message.length; i++) {
     hash ^= message.codePointAt(i) ?? 0;
     hash = Math.imul(hash, 0x01000193);

@@ -32,9 +32,11 @@ describe("guardBackground", () => {
 
     await expect(relay(3)).resolves.toBeUndefined(); // never rejects
 
-    expect(
-      metricValue(await capture.scrape(), "background_panics_total", { task: "outbox-relay" }),
-    ).toBe(1);
+    const scraped = await capture.scrape();
+    expect(metricValue(scraped, "background_panics_total", { task: "outbox-relay" })).toBe(1);
+    expect(scraped).toContain(
+      "# HELP background_panics_total Unexpected errors that escaped a background task, by task.",
+    );
     expect(records).toHaveLength(1);
     expect(records[0]?.message).toBe("Panic in background task — stopping the process");
     expect(records[0]?.fields).toMatchObject({
@@ -48,6 +50,7 @@ describe("guardBackground", () => {
     const [err, task] = onFatal.mock.calls[0]!;
     expect(task).toBe("outbox-relay");
     expect(err).toBeInstanceOf(BackgroundPanicError);
+    expect((err as Error).name).toBe("BackgroundPanicError");
     expect((err as BackgroundPanicError).message).toMatch(
       /^background task "outbox-relay": panic: /u,
     );

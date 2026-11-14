@@ -20,7 +20,9 @@
  *
  * Objects and arrays are walked; a secret key redacts its whole subtree. A
  * value that serializes itself (`toJSON`: a `Secret`, a `Buffer`) is left to
- * do so. The log message is never rewritten.
+ * do so. What cannot be walked is not shown: an object that is its own
+ * ancestor becomes "[Circular]", one nested more than eight levels deep
+ * "[Truncated]". The log message is never rewritten.
  */
 
 export const REDACTED = "[redacted]";
@@ -41,8 +43,11 @@ const DSN_PAIR = /\b(password|passwd|pwd|sslpassword)=('(?:[^'\\]|\\.)*'|[^\s&;]
 /** What a `Secret` prints for itself. */
 const FINGERPRINTED = /^\[redacted:[0-9a-f]{1,16}\]$/u;
 
-/** How deep a log record is walked; below that a value is written as it is. */
+/** How deep a value is walked; an object below that is replaced, never passed on unseen. */
 const MAX_DEPTH = 8;
+/** What stands in for an object that is its own ancestor, and for one nested too deep. */
+export const CIRCULAR = "[Circular]";
+export const TRUNCATED = "[Truncated]";
 /** Key lookups are cached; a service logs a few hundred distinct keys at most. */
 const MAX_CACHED_KEYS = 4096;
 
@@ -53,21 +58,27 @@ export function isSecretKey(key: string): boolean {
 
 /** Masks credentials inside a string: URL passwords, secret query parameters, DSN passwords. */
 export function redactUrl(value: string): string {
+  // The includes() checks are fast paths only — every log line's strings come
+  // through here: a string without the character cannot match the pattern.
   if (value.includes("://")) {
+    // Stryker disable next-line StringLiteral,ConditionalExpression: fast path, same result
     const masked = value.includes("@") ? value.replace(URL_USERINFO, "$1:xxxxx@") : value;
+    // Stryker disable next-line StringLiteral,ConditionalExpression: fast path, same result
     return masked.includes("=") ? masked.replace(SECRET_PARAM, `$1=${REDACTED}`) : masked;
   }
+  // Stryker disable next-line StringLiteral,ConditionalExpression: fast path, same result
   if (!value.includes("=")) return value;
   return value.replace(DSN_PAIR, `$1=${REDACTED}`).replace(SECRET_PARAM, `$1=${REDACTED}`);
 }
 
 /** Masks secret parameters of a bare query string (`page=2&token=abc`, no leading `?`). */
 export function redactQuery(query: string): string {
+  // Stryker disable next-line StringLiteral,ConditionalExpression: fast path, same result
   return query.includes("=") ? query.replace(SECRET_PARAM, `$1=${REDACTED}`) : query;
 }
 
 export function redact(value: unknown, secret = false): unknown {
-  return walk(value, secret, isSecretKey, 0, undefined);
+  return walk(value, secret, isSecretKey, 0, new Set());
 }
 
 /** Parses LOG_REDACT_KEYS: comma-separated exact key names, case-insensitive. */
@@ -91,12 +102,14 @@ export function logRecordMasker(
   const cache = new Map<string, boolean>();
   const sensitive = (key: string): boolean => {
     const known = cache.get(key);
+    // Stryker disable next-line all: a cache — the answer is the same without it
     if (known !== undefined) return known;
     const result = isSecretKey(key) || extraKeys.has(key.toLowerCase());
+    // Stryker disable next-line all: a cache and its bound — not observable from outside
     if (cache.size < MAX_CACHED_KEYS) cache.set(key, result);
     return result;
   };
-  return (record) => walk(record, false, sensitive, 0, new WeakSet()) as Record<string, unknown>;
+  return (record) => walk(record, false, sensitive, 0, new Set()) as Record<string, unknown>;
 }
 
 function walk(
@@ -104,7 +117,8 @@ function walk(
   secret: boolean,
   sensitive: (key: string) => boolean,
   depth: number,
-  seen: WeakSet<object> | undefined,
+  /** The objects being walked right now, outermost first: meeting one again is a cycle. */
+  path: Set<object>,
 ): unknown {
   if (typeof value === "string") {
     // Already masked at the source (a Secret's rendering, the config
@@ -115,53 +129,44 @@ function walk(
   if (typeof value !== "object" || value === null) return value; // number, boolean, bigint, undefined…
   if (value instanceof Date) return value;
   if (value instanceof URL) return secret ? REDACTED : redactUrl(value.toString());
-  if (value instanceof Error) return secret ? REDACTED : maskError(value);
+  // An Error is the `err` serializer's to print (pino.config.ts): its output —
+  // message, stack, the properties a driver hangs on it — is masked there.
   // Serializes itself: a Secret prints its fingerprint, a Buffer its bytes.
-  if (typeof (value as { toJSON?: unknown }).toJSON === "function") {
+  if (value instanceof Error || typeof (value as { toJSON?: unknown }).toJSON === "function") {
     return secret && !isSelfRedacting(value) ? REDACTED : value;
   }
-  if (depth >= MAX_DEPTH) return secret ? REDACTED : value;
-  if (seen !== undefined) {
-    if (seen.has(value)) return value; // a cycle: the serializer deals with it
-    seen.add(value);
-  }
+  // What is not walked is not shown: handing the original on would print
+  // whatever it holds, unmasked.
+  if (path.has(value)) return CIRCULAR;
+  if (depth >= MAX_DEPTH) return TRUNCATED;
 
-  if (Array.isArray(value)) {
+  path.add(value);
+  try {
+    if (Array.isArray(value)) {
+      let changed = false;
+      const out = value.map((item: unknown) => {
+        const masked = walk(item, secret, sensitive, depth + 1, path);
+        if (masked !== item) changed = true;
+        return masked;
+      });
+      return changed ? out : value;
+    }
+
     let changed = false;
-    const out = value.map((item: unknown) => {
-      const masked = walk(item, secret, sensitive, depth + 1, seen);
+    const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      const masked = walk(item, secret || sensitive(key), sensitive, depth + 1, path);
       if (masked !== item) changed = true;
-      return masked;
+      return [key, masked] as const;
     });
-    return changed ? out : value;
+    // Object.fromEntries, not `out[key] = …`: an own "__proto__" key (what
+    // JSON.parse produces for it) must stay a key, not become the prototype.
+    return changed ? Object.fromEntries(entries) : value;
+  } finally {
+    path.delete(value);
   }
-
-  let changed = false;
-  const entries = Object.entries(value as Record<string, unknown>).map(([key, item]) => {
-    const masked = walk(item, secret || sensitive(key), sensitive, depth + 1, seen);
-    if (masked !== item) changed = true;
-    return [key, masked] as const;
-  });
-  // Object.fromEntries, not `out[key] = …`: an own "__proto__" key (what
-  // JSON.parse produces for it) must stay a key, not become the prototype.
-  return changed ? Object.fromEntries(entries) : value;
 }
 
 /** A `Secret` (or anything shaped like it) already prints "[redacted:<fingerprint>]". */
 function isSelfRedacting(value: object): boolean {
   return typeof (value as { expose?: unknown }).expose === "function";
-}
-
-/** An error whose message or stack carries a credential is logged as a masked copy. */
-function maskError(err: Error): Error {
-  const message = redactUrl(err.message);
-  const stack = err.stack === undefined ? undefined : redactUrl(err.stack);
-  if (message === err.message && stack === err.stack) return err;
-  const copy = Object.create(Object.getPrototypeOf(err) as object) as Error;
-  Object.defineProperties(copy, Object.getOwnPropertyDescriptors(err));
-  Object.defineProperty(copy, "message", { value: message, enumerable: false, writable: true });
-  if (stack !== undefined) {
-    Object.defineProperty(copy, "stack", { value: stack, enumerable: false, writable: true });
-  }
-  return copy;
 }

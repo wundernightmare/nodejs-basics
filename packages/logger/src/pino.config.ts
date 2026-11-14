@@ -134,14 +134,6 @@ const serializers: NonNullable<pino.LoggerOptions["serializers"]> = {
   res(res: Record<string, unknown>) {
     return { "http.response.status_code": res["statusCode"] };
   },
-  // Runs after formatters.log, on its own output: the message and the stack
-  // of an error are masked here (a driver puts the DSN into both).
-  err(err: unknown) {
-    const out = pino.stdSerializers.err(err as Error) as unknown as Record<string, unknown>;
-    if (typeof out["message"] === "string") out["message"] = redactUrl(out["message"]);
-    if (typeof out["stack"] === "string") out["stack"] = redactUrl(out["stack"]);
-    return out;
-  },
 };
 
 // ─── Dev pretty-print transport ───────────────────────────────────────────────
@@ -223,6 +215,7 @@ export function buildPinoOptions(
   sampler?: LogSampler,
   redactKeys: ReadonlySet<string> = new Set(),
 ): pino.LoggerOptions {
+  const mask = logRecordMasker(redactKeys);
   return {
     messageKey: "message",
     // Pinned: the effective level is `level`, enforced in hooks.logMethod (see file header).
@@ -240,8 +233,14 @@ export function buildPinoOptions(
     // Masking of private data in every attribute (redact.ts): by key name, by
     // the shape of a value, in nested objects. formatters.log sees the merged
     // record — the mixin's fields included — before it is serialized.
-    formatters: { ...formatters, log: logRecordMasker(redactKeys) },
-    serializers,
+    formatters: { ...formatters, log: mask },
+    serializers: {
+      ...serializers,
+      // An error is flattened first (message, stack, cause, and whatever a
+      // driver hangs on it: a config, a URL, a query), then masked like any
+      // other record — formatters.log sees the Error object, not this.
+      err: (err: unknown) => mask(pino.stdSerializers.err(err as Error)),
+    },
   };
 }
 

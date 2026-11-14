@@ -47,6 +47,7 @@ export const DEFAULT_LOG_LEVEL_MAX_TTL_MS = 24 * 60 * 60 * 1_000;
  * apply info. Accepts "warning" as an alias of "warn". Case-insensitive.
  */
 export function parseLogLevelStrict(raw: unknown): LogLevelName {
+  // Stryker disable next-line StringLiteral: any non-level text ends in the same error
   const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   const level = value === "warning" ? "warn" : value;
   if ((LOG_LEVEL_NAMES as readonly string[]).includes(level)) return level as LogLevelName;
@@ -87,7 +88,7 @@ export function parseDuration(raw: string): number {
   // Rounded first: "0.0001ms" is not a positive duration, and a number too
   // long for a double is Infinity, not a duration.
   const ms = Math.round(total);
-  if (matched !== input.length || matched === 0 || !Number.isFinite(ms) || !(ms > 0)) {
+  if (matched !== input.length || !Number.isFinite(ms) || !(ms > 0)) {
     throw new Error(`invalid duration ${JSON.stringify(raw)} (want e.g. 30m, 2h, 45s, 1500ms)`);
   }
   return ms;
@@ -216,6 +217,7 @@ export class LogLevel {
 
   /** Timer callback: acts only if no newer set()/reset() happened since it was armed. */
   private revert(generation: number): void {
+    // Stryker disable next-line ConditionalExpression: a guard for a timer that fires after it was cleared
     if (generation !== this.generation) return;
     const previous = this.current;
     this.timer = null;
