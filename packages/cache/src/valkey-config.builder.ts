@@ -22,6 +22,7 @@ import type { ConnectionOptions as TlsConnectionOptions } from "node:tls";
 
 import type { ConfigService } from "@nestjs/config";
 
+import { Secret } from "@base/common";
 import { readBool, readInt, readJson, readString } from "@base/config";
 import {
   buildCircuitBreaker,
@@ -39,7 +40,8 @@ export interface ValkeyBuilderResult {
   host: string;
   port: number;
   username?: string | undefined;
-  password?: string | undefined;
+  /** Never a plain string: it cannot be logged or serialised by accident; `expose()` at the driver. */
+  password: Secret;
   db: number;
   /** TLS options block when `secure` resolves to true. */
   tls?: TlsConnectionOptions | undefined;
@@ -103,7 +105,7 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   const urlUser = parsed.username.length > 0 ? parsed.username : undefined;
   const urlPass = parsed.password.length > 0 ? parsed.password : undefined;
   const username = readString(config, "VALKEY_USERNAME") ?? urlUser;
-  const password = readString(config, "VALKEY_PASSWORD") ?? urlPass;
+  const password = Secret.of(readString(config, "VALKEY_PASSWORD") ?? urlPass);
   const urlDb = Number(parsed.pathname.replace(/^\//u, ""));
   const db = readInt(config, "VALKEY_DB") ?? (Number.isInteger(urlDb) ? urlDb : 0);
 
@@ -194,7 +196,7 @@ export function toClientOptions(result: ValkeyBuilderResult): Record<string, unk
     host: result.host,
     port: result.port,
     ...(result.username ? { username: result.username } : {}),
-    ...(result.password ? { password: result.password } : {}),
+    ...(result.password.isSet ? { password: result.password.expose() } : {}),
     db: result.db,
     ...(result.tls ? { tls: result.tls } : {}),
     connectTimeout: result.connectTimeoutMs,
@@ -226,7 +228,7 @@ export function toBullMqOptions(result: ValkeyBuilderResult): Record<string, unk
     host: result.host,
     port: result.port,
     ...(result.username ? { username: result.username } : {}),
-    ...(result.password ? { password: result.password } : {}),
+    ...(result.password.isSet ? { password: result.password.expose() } : {}),
     db: result.db,
     ...(result.tls ? { tls: result.tls } : {}),
     connectTimeout: result.connectTimeoutMs,
