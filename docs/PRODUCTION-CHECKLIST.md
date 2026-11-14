@@ -12,7 +12,7 @@ runtimes differ the row says how.
 | --- | --- | --- |
 | The V8 heap limit is checked against the container's memory limit at start; a heap that does not fit is reported with the `--max-old-space-size` to use (Node cannot change it while running) | `packages/observability/src/runtime-memory.ts` (`RUNTIME_HEAP_LIMIT_RATIO`), gauge `nodejs_container_memory_limit_bytes` | `runtime-memory.spec.ts` |
 | CPU profile on demand, behind the token, on the internal port | `packages/observability/src/cpu-profile.ts` (`POST /debug/cpu-profile`) | `cpu-profile.spec.ts`, `admin-server.service.spec.ts` |
-| Heap snapshot when it matters — near the heap limit, on SIGUSR2, on demand — and a diagnostic report of a process that died; both shipped to object storage when a bucket is set | `heap-snapshot.service.ts` (`HEAP_OOM_THRESHOLD`, `HEAP_SNAPSHOT_S3_BUCKET`), `crash-report.service.ts` | `heap-snapshot.service.spec.ts` |
+| Heap snapshot when it matters — near the heap limit, on SIGUSR2, on demand — and a diagnostic report of a process that died; both shipped to object storage when a bucket is set | `heap-snapshot.service.ts` (`HEAP_OOM_THRESHOLD`, `HEAP_SNAPSHOT_S3_BUCKET`), `crash-report.service.ts`, [DIAGNOSTICS.md](DIAGNOSTICS.md) | `heap-snapshot.service.spec.ts` |
 | Continuous profiling — **opt-in** `PYROSCOPE_SERVER_ADDRESS` | `packages/observability/src/setup-telemetry.ts` (push SDK: Node has no scrape-able pprof endpoint) | — |
 | Runtime metrics: event-loop delay, heap, GC, handles | `packages/observability/src/node-metrics.ts` | `node-metrics.spec.ts` |
 | Nothing left running: every test file must leave no handle that keeps the process alive | `packages/testing/src/leaks.setup.ts` | every suite; `leaks.spec.ts` |

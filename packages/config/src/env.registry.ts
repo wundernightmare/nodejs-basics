@@ -84,6 +84,13 @@ export interface EnvEntry {
  * Aliases included.
  */
 const KAFKA_OWNED_PROPERTIES = {
+  // The delivery guarantees: weakened through their own keys only, where
+  // /admin/config and --config-reference show it — never from inside a blob.
+  acks: "KAFKA_PRODUCER_ACKS",
+  "request.required.acks": "KAFKA_PRODUCER_ACKS",
+  "enable.idempotence": "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE",
+  "enable.auto.commit": "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT",
+  "allow.auto.create.topics": "KAFKA_ALLOW_AUTO_TOPIC_CREATION",
   "partition.assignment.strategy": "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY",
   "queue.buffering.max.kbytes": "KAFKA_PRODUCER_QUEUE_MAX_KBYTES",
   "queue.buffering.max.messages": "KAFKA_PRODUCER_QUEUE_MAX_MESSAGES",
@@ -1243,7 +1250,10 @@ const REGISTRY = [
     values: ["all", "-1", "0", "1"],
     required: false,
     default: "all",
-    description: "Producer acks.",
+    description:
+      "Producer acks. `all` (with idempotence) is what the outbox's at-least-once delivery " +
+      "rests on: with 1 or 0 a record acknowledged to the relay can be lost in a leader " +
+      "failover, and the outbox row is already marked as sent.",
     usedIn: ["kafka"],
   },
 
@@ -1253,7 +1263,9 @@ const REGISTRY = [
     type: "bool",
     required: false,
     default: "true",
-    description: "Producer enable.idempotence (true|false).",
+    description:
+      "Producer enable.idempotence (true|false). Off, a retried produce request can " +
+      "duplicate or reorder records within a partition.",
     usedIn: ["kafka"],
   },
 
@@ -1530,6 +1542,20 @@ const REGISTRY = [
       "statistics.interval.ms — how often librdkafka reports the stats behind the kafka_client_* / kafka_producer_queue_* " +
       "metrics. 0 disables them. The report lists every topic and partition " +
       "(~2.4 MB / ~5 ms to parse at 300 topics × 12 partitions): raise it for thousands of topics.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_ALLOW_AUTO_TOPIC_CREATION",
+    yaml: "kafka.allow_auto_topic_creation",
+    type: "bool",
+    required: false,
+    default: "true",
+    description:
+      "Whether a consumer may ask the broker to create the topics it subscribes to " +
+      "(allow.auto.create.topics, and the create request it sends before subscribing). The " +
+      "broker still decides: a provisioned cluster refuses. Set false where topics are " +
+      "provisioned and a typo in a topic name must not become a topic.",
     usedIn: ["kafka"],
   },
 
