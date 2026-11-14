@@ -329,6 +329,45 @@ describe("GrpcClients", () => {
     expect(grpc?.circuitBreakerStates()).toEqual({ [target]: "open" });
   });
 
+  it("keeps the fraction of a timeout: a call that answers inside a sub-second timeout succeeds", async () => {
+    await testCase("NB-1288", "gRPC: a timeout under a second is not zero");
+    // grpc-js reads the service config's string form "0.4s" as 4 ns: the call
+    // above "passed" on a deadline that had expired before it was sent.
+    const { client, target } = connect({ timeoutMs: 400 });
+    onUnary = (_call, reply) => {
+      setTimeout(() => {
+        reply(null, { text: "late but in time" });
+      }, 100);
+    };
+    const answered = await unary(client);
+    expect(answered.err).toBeNull();
+    expect(await requests(target, "ok")).toBe(1);
+
+    // And 1500 ms is not 1000 ms: an answer after 1.2 s is still in time.
+    const { client: patient } = connect({ timeoutMs: 1500 });
+    onUnary = (_call, reply) => {
+      setTimeout(() => {
+        reply(null, { text: "ok" });
+      }, 1200);
+    };
+    expect((await unary(patient)).err).toBeNull();
+  });
+
+  it("waitForReady holds a call while the connection is down instead of failing it", async () => {
+    await testCase("NB-1289", "gRPC: the target's waitForReady reaches the call");
+    // Nothing listens there: without waitForReady the call fails at once.
+    const impatient = connect({ address: "127.0.0.1:1", timeoutMs: 600 });
+    const refused = await unary(impatient.client);
+    expect(refused.err?.code).toBe(status.UNAVAILABLE);
+    grpc?.close();
+
+    const waiting = connect({ address: "127.0.0.1:1", timeoutMs: 600, waitForReady: true });
+    const started = performance.now();
+    const held = await unary(waiting.client);
+    expect(held.err?.code).toBe(status.DEADLINE_EXCEEDED); // held until the deadline
+    expect(performance.now() - started).toBeGreaterThan(450);
+  });
+
   it("does not hold a cancelled call against the dependency", async () => {
     await testCase("NB-1083", "CANCELLED: outcome canceled, the breaker stays closed");
     const { client, target } = connect({ circuitBreaker: { failureRatio: 0.5, minRequests: 1 } });

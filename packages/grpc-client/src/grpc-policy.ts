@@ -190,12 +190,15 @@ export interface PolicyOptions {
  */
 export class TargetPolicy {
   readonly target: string;
+  /** The target's `waitForReady`: applied to every call (see PolicyCall.start). */
+  readonly waitForReady: boolean;
   readonly #breaker: CircuitBreaker<[Promise<void>], void> | undefined;
   readonly #m: PolicyInstruments;
   readonly #getRemainingMs: (() => number | undefined) | undefined;
 
   constructor(target: ResolvedGrpcTarget, instruments: PolicyInstruments, opts: PolicyOptions) {
     this.target = target.name;
+    this.waitForReady = target.waitForReady;
     this.#m = instruments;
     this.#getRemainingMs = opts.getRemainingMs;
 
@@ -310,6 +313,33 @@ export class TargetPolicy {
   }
 }
 
+/** The content type of a response that is not gRPC's, or undefined. */
+function foreignContentType(metadata: Metadata): string | undefined {
+  const type = metadata.get("content-type")[0];
+  return typeof type === "string" && !type.startsWith("application/grpc") ? type : undefined;
+}
+
+/**
+ * An HTTP 200 that is not gRPC — a maintenance page, a login form, whatever a
+ * gateway serves instead of the service. grpc-js reads the body as a message
+ * frame, finds an absurd length in its first bytes and reports
+ * RESOURCE_EXHAUSTED ("message larger than max"): a status that reads as the
+ * server's verdict on the request, so the breaker would score the page as a
+ * healthy answer. It is nobody's verdict: UNKNOWN, as grpc-go reports it.
+ * (An HTTP error status is mapped by grpc-js itself and is left alone.)
+ */
+function notGrpc(result: StatusObject, contentType: string | undefined): StatusObject {
+  const code: number = result.code;
+  if (contentType === undefined || code !== RESOURCE_EXHAUSTED) return result;
+  return {
+    ...result,
+    code: status.UNKNOWN,
+    details: `the peer answered with ${contentType}, not gRPC (${result.details})`,
+  };
+}
+
+const RESOURCE_EXHAUSTED: number = status.RESOURCE_EXHAUSTED;
+
 function previousAttempts(metadata: Metadata): number {
   const n = Number(metadata.get(PREVIOUS_ATTEMPTS_KEY)[0]);
   return Number.isInteger(n) ? n : 0;
@@ -382,15 +412,25 @@ class PolicyCall {
     const span = startSpan(method, this.#policy.target);
     propagation.inject(trace.setSpan(context.active(), span), metadata, metadataSetter);
 
+    // grpc-js takes wait-for-ready from the call's metadata options only: the
+    // service config's `waitForReady` is parsed and then never read. A caller
+    // that set the option either way keeps its choice.
+    if (this.#policy.waitForReady && metadata.getOptions().waitForReady === undefined) {
+      metadata.setOptions({ ...metadata.getOptions(), waitForReady: true });
+    }
+
     let attempts = 0;
+    let foreign: string | undefined;
     this.#next = this.#nextCall(withBudget(this.#options, budget));
     this.#next.start(metadata, {
       onReceiveMetadata: (received) => {
         attempts = previousAttempts(received);
+        foreign = foreignContentType(received);
         listener?.onReceiveMetadata?.(received);
       },
       onReceiveMessage: (message) => listener?.onReceiveMessage?.(message),
-      onReceiveStatus: (result) => {
+      onReceiveStatus: (answered) => {
+        const result = notGrpc(answered, foreign);
         endSpan(span, result);
         settle(result, attempts || previousAttempts(result.metadata), () => {
           listener?.onReceiveStatus?.(result);

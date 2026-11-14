@@ -467,6 +467,26 @@ grpc.close(); // on shutdown, after whatever makes the calls has stopped
   from here only (a DNS TXT one is ignored). The keys are golang-basics'
   `grpcx` YAML in camelCase and milliseconds; the breaker differs where
   opossum does (`>` instead of `≥`, one probe, no transitions counter).
+- **Against real servers** — `grpc-clients.integration.spec.ts` runs the
+  scenarios of golang-basics' `grpcx/integration` one for one: Jaeger as the
+  gRPC server (unary and server-streaming, cleartext / TLS / TLS 1.3 only /
+  mutual TLS / an expired certificate), Caddy as an HTTP gateway answering
+  instead of the service, PostgreSQL at a gRPC address, and Toxiproxy in
+  between (handshake faults, an outage, latency, a stream cut or throttled, a
+  silent connection, a dead address, a lost acknowledgement). Where
+  `grpc-js` differs from `grpc-go`, the suite pins what this client does:
+  - **an HTTP error from a gateway is not retried.** A 502/503/504/429 from
+    an ingress or a mesh sidecar reaches the caller as `UNAVAILABLE` at once:
+    to gRPC's retry logic the received response headers commit the call. The
+    breaker counts it. (`grpc-go` retries these.)
+  - **`waitForReady` at a deadline does not name the cause**: the status says
+    `Deadline exceeded … wait_for_ready`, the last connection error is only in
+    the channel's log.
+  - **an HTTP 200 that is not gRPC** (a maintenance page) is `UNKNOWN` and a
+    failure for the breaker — `grpc-js` on its own reports
+    `RESOURCE_EXHAUSTED`, which would read as the server's verdict.
+  - a retry of a call whose answer was lost **is a second delivery**: list
+    idempotent methods in `retry.methods` when that matters.
 - **Not here**: rate limiter, bulkhead, hedging, outlier detection, xDS, a
   server side. The breaker is per target, not per backend address.
 

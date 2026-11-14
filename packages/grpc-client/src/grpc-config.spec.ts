@@ -236,7 +236,7 @@ describe("gRPC service config", () => {
       methodConfig: [
         {
           name: [{}],
-          timeout: "5s",
+          timeout: { seconds: 5, nanos: 0 },
           retryPolicy: {
             maxAttempts: 3,
             initialBackoff: "0.1s",
@@ -277,10 +277,14 @@ describe("gRPC service config", () => {
     });
     const { methodConfig } = serviceConfigOf(target);
     expect(methodConfig).toHaveLength(2);
-    expect(methodConfig[0]).toEqual({ name: [{}], timeout: "5s", waitForReady: true });
+    expect(methodConfig[0]).toEqual({
+      name: [{}],
+      timeout: { seconds: 5, nanos: 0 },
+      waitForReady: true,
+    });
     expect(methodConfig[1]).toMatchObject({
       name: [{ service: "billing.v1.Invoices", method: "Get" }, { service: "billing.v1.Ledger" }],
-      timeout: "5s",
+      timeout: { seconds: 5, nanos: 0 },
       waitForReady: true,
       retryPolicy: { maxAttempts: 2 },
     });

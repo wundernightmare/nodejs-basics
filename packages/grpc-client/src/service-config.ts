@@ -7,7 +7,13 @@ import { type ResolvedGrpcTarget, retries, splitMethod } from "./grpc-config.js"
  */
 interface MethodConfig {
   name: Array<{ service?: string; method?: string }>;
-  timeout?: string;
+  /**
+   * The object form on purpose. grpc-js (1.14) reads the string form's
+   * fraction as that many nanoseconds — "0.4s" is 4 ns, "1.5s" is 1 s — so a
+   * timeout under a second expired every call at once and any other lost its
+   * fraction.
+   */
+  timeout?: { seconds: number; nanos: number };
   waitForReady?: boolean;
   retryPolicy?: {
     maxAttempts: number;
@@ -39,7 +45,12 @@ export function protoDuration(ms: number): string {
  */
 export function serviceConfigOf(target: ResolvedGrpcTarget): ServiceConfig {
   const base: MethodConfig = { name: [{}] };
-  if (target.timeoutMs > 0) base.timeout = protoDuration(target.timeoutMs);
+  if (target.timeoutMs > 0) {
+    base.timeout = {
+      seconds: Math.floor(target.timeoutMs / 1000),
+      nanos: (target.timeoutMs % 1000) * 1_000_000,
+    };
+  }
   if (target.waitForReady) base.waitForReady = true;
 
   const config: ServiceConfig = {
