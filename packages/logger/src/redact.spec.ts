@@ -91,6 +91,14 @@ describe("redact", () => {
     });
   });
 
+  it("keeps a fingerprint that is already there instead of flattening it", () => {
+    expect(redact({ ADMIN_TOKEN: "[redacted:0a1b2c3d]", note: "[redacted:0a1b2c3d]" })).toEqual({
+      ADMIN_TOKEN: "[redacted:0a1b2c3d]",
+      note: "[redacted:0a1b2c3d]",
+    });
+    expect(redact({ ADMIN_TOKEN: "[redacted:not-hex]" })).toEqual({ ADMIN_TOKEN: REDACTED });
+  });
+
   it("rewrites URL passwords inside ordinary string values", () => {
     expect(redact({ DATABASE_URL: "postgres://app:s3cret@h" })).toEqual({
       DATABASE_URL: "postgres://app:xxxxx@h",

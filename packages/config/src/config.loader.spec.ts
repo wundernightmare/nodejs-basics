@@ -119,6 +119,26 @@ describe("yamlConfigLoader + configSnapshot", () => {
     expect(snap.sources["ADMIN_TOKEN"]).toBe("unset");
   });
 
+  it("the snapshot never holds a key the registry marks secret — only its fingerprint", async () => {
+    await testCase("NB-1266", "Config: secret keys are fingerprinted in the snapshot");
+    file("app:\n  port: 3000\n");
+    process.env["ADMIN_TOKEN"] = "s3cret-admin-token";
+    process.env["SENTRY_DSN"] = "https://publickey@o1.ingest.sentry.example/42";
+    try {
+      const { yamlConfigLoader, configSnapshot } = await loader();
+      yamlConfigLoader();
+      const snap = configSnapshot();
+      // printf %s s3cret-admin-token | sha256sum | cut -c1-8
+      expect(snap.config["ADMIN_TOKEN"]).toMatch(/^\[redacted:[0-9a-f]{8}\]$/u);
+      expect(snap.config["SENTRY_DSN"]).toMatch(/^\[redacted:[0-9a-f]{8}\]$/u);
+      expect(JSON.stringify(snap)).not.toMatch(/s3cret-admin-token|publickey/u);
+      expect(snap.sources["ADMIN_TOKEN"]).toBe("env");
+    } finally {
+      delete process.env["ADMIN_TOKEN"];
+      delete process.env["SENTRY_DSN"];
+    }
+  });
+
   it("fails the boot with every problem at once: unknown keys with a hint, bad values", async () => {
     await testCase("NB-961", "a typo or garbage in config.yaml is a startup error, not a default");
     file(

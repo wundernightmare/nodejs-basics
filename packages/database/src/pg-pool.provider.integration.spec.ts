@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { integration, meta, testCase } from "@base/testing";
 
-import { pgPoolProvider } from "./pg-pool.provider.js";
+import { PgGuardRailOffError, pgPoolProvider } from "./pg-pool.provider.js";
 
 const infra = integration("postgres");
 
@@ -59,8 +59,8 @@ describe.skipIf(infra.skip)("pg pool (integration)", () => {
     expect(warnings.map((w) => `${w.name}: ${w.message}`)).toEqual([]);
   });
 
-  it("hands out the connection when the server refuses the session init", async () => {
-    await testCase("NB-1070", "a failing SET is logged, never a pod-wide outage");
+  it("does not hand out a connection whose session timeouts the server refused", async () => {
+    await testCase("NB-1070", "a refused SET fails the checkout: no unguarded connection");
     const pool = pgPoolProvider.useFactory(
       new ConfigService({
         DATABASE_URL: infra.url("postgres"),
@@ -69,7 +69,34 @@ describe.skipIf(infra.skip)("pg pool (integration)", () => {
       }),
     ) as import("pg").Pool;
     try {
-      expect((await pool.query("SELECT 1 AS ok")).rows).toEqual([{ ok: 1 }]);
+      const failure = await pool.query("SELECT 1 AS ok").then(
+        () => undefined,
+        (err: unknown) => err,
+      );
+      expect(failure).toBeInstanceOf(PgGuardRailOffError);
+      expect((failure as PgGuardRailOffError).parameter).toBe("statement_timeout");
+      expect((failure as Error).message).toContain("ALTER ROLE");
+      expect(pool.totalCount).toBe(0); // the connection was discarded, not pooled
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("recycles a connection by age (DATABASE_POOL_MAX_LIFETIME_MS)", async () => {
+    await testCase("NB-1257", "Postgres pool: connections are recycled by age");
+    const pool = pgPoolProvider.useFactory(
+      new ConfigService({
+        DATABASE_URL: infra.url("postgres"),
+        DATABASE_POOL_MAX_LIFETIME_MS: "1000",
+      }),
+    ) as import("pg").Pool;
+    try {
+      const pid = async (): Promise<number> =>
+        (await pool.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]!.pid;
+      const first = await pid();
+      expect(await pid()).toBe(first);
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(await pid()).not.toBe(first);
     } finally {
       await pool.end();
     }

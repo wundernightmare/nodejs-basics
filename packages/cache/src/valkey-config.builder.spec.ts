@@ -68,12 +68,17 @@ describe("valkey config builder", () => {
     const client = toClientOptions(built);
     expect(client).toMatchObject({
       commandTimeout: 250,
+      socketTimeout: 10_000,
       lazyConnect: true,
       enableOfflineQueue: false,
     });
     const bull = toBullMqOptions(built);
     expect(bull).toMatchObject({ maxRetriesPerRequest: null, enableReadyCheck: false });
     expect(bull).not.toHaveProperty("commandTimeout");
+    expect(bull).not.toHaveProperty("socketTimeout"); // a blocking command is silence by design
+    expect(
+      toClientOptions(buildValkeyConfig(config({ VALKEY_SOCKET_TIMEOUT_MS: "0" }))),
+    ).not.toHaveProperty("socketTimeout");
   });
 
   it("reconnect delay grows exponentially with full jitter and never stops", async () => {

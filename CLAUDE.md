@@ -231,6 +231,17 @@ high-signal, easy-to-miss bits.
 - **Inbound rate limit** (`HTTP_RATE_*`, registerRateLimit in
   `@base/observability`) is off by default; `HTTP_TRUSTED_PROXIES` →
   Fastify `trustProxy` decides `request.ip`.
+- **Postgres session timeouts are read back** on every new connection
+  (pg-pool.provider.ts `verify`): one that is not in effect fails the
+  checkout (`PgGuardRailOffError`) — never weaken that into a warning. Behind
+  transaction-pooling PgBouncer they go on the role and the
+  `DATABASE_*_TIMEOUT_MS` keys to 0 (README "Behind PgBouncer"; the suite
+  starts a real one with `startPgBouncer` from `@base/testing`). Anything new
+  that relies on session state (`SET`, session advisory locks, LISTEN) breaks
+  there — use `SET LOCAL` / `pg_advisory_xact_lock`.
+- **A credential in ENV_REGISTRY is marked `secret: true`**: the config
+  snapshot (`/admin/config`) then holds its fingerprint and
+  `--config-reference` prints `(secret)`, whatever the key is called.
 - **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
   (registerRequestContext; `x-request-timeout-ms` can shorten it, not below
   `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound

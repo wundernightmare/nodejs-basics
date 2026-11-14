@@ -11,9 +11,17 @@
  * - Applied migrations are immutable: the runner stores each file's sha256
  *   and refuses to run when an applied file changed or disappeared — fix
  *   forward with a new migration instead.
- * - A session advisory lock serialises concurrent runners (every replica's
- *   init container, a CI job and a laptop): the second one waits, then finds
- *   nothing to do.
+ * - An advisory lock serialises concurrent runners (every replica's init
+ *   container, a CI job and a laptop): the second one waits, then finds
+ *   nothing to do. The lock is a transaction's (`pg_advisory_xact_lock`),
+ *   taken in the transaction that applies a file and released by its COMMIT
+ *   or ROLLBACK — so the runner works through a transaction-pooling
+ *   PgBouncer, where a session lock is taken on one server connection and
+ *   "released" on another, and then held by nobody until that connection
+ *   closes. The applied set is re-read under the lock, file by file.
+ *   A `no-transaction` file cannot hold a transaction lock while it runs; it
+ *   takes the session lock, and so needs a direct connection (or a pooler in
+ *   session mode) — the runner cannot tell, the deployment has to.
  * - No down migrations: rolling a schema back is a new forward migration,
  *   written and reviewed like any other.
  */
@@ -75,8 +83,30 @@ export async function migrate(
 ): Promise<string[]> {
   const table = options.table ?? "schema_migrations";
   if (!TABLE.test(table)) throw new Error(`migrate: invalid table name "${table}"`);
-  await client.query("SELECT pg_advisory_lock(hashtext($1))", [table]);
-  try {
+  const lock = (): Promise<unknown> =>
+    client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [table]);
+
+  /** The checksum an applied migration was recorded with, or undefined. */
+  const appliedChecksum = async (version: string): Promise<string | undefined> => {
+    const { rows } = await client.query<{ checksum: string }>(
+      `SELECT checksum FROM ${table} WHERE version = $1`,
+      [version],
+    );
+    return rows[0]?.checksum;
+  };
+  const record = (m: Migration): Promise<unknown> =>
+    client.query(`INSERT INTO ${table} (version, name, checksum) VALUES ($1, $2, $3)`, [
+      m.version,
+      m.name,
+      m.checksum,
+    ]);
+  const changed = (m: Migration): Error =>
+    new Error(`migrate: ${m.version}_${m.name}.sql changed after it was applied`);
+
+  // The bookkeeping table and the check of what is applied, under the lock:
+  // two runners racing CREATE TABLE IF NOT EXISTS can both lose.
+  await inTransaction(client, async () => {
+    await lock();
     await client.query(`CREATE TABLE IF NOT EXISTS ${table} (
       version    TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
@@ -86,49 +116,63 @@ export async function migrate(
     const { rows } = await client.query<{ version: string; checksum: string }>(
       `SELECT version, checksum FROM ${table}`,
     );
-    const applied = new Map(rows.map((r) => [r.version, r.checksum]));
-    for (const [version, checksum] of applied) {
+    for (const { version, checksum } of rows) {
       const local = migrations.find((m) => m.version === version);
       if (local === undefined) throw new Error(`migrate: applied migration ${version} is missing`);
-      if (local.checksum !== checksum) {
-        throw new Error(`migrate: ${version}_${local.name}.sql changed after it was applied`);
-      }
+      if (local.checksum !== checksum) throw changed(local);
     }
+  });
 
-    const done: string[] = [];
-    for (const m of migrations) {
-      if (applied.has(m.version)) continue;
-      const started = Date.now();
-      const record = (): Promise<unknown> =>
-        client.query(`INSERT INTO ${table} (version, name, checksum) VALUES ($1, $2, $3)`, [
-          m.version,
-          m.name,
-          m.checksum,
-        ]);
-      if (m.transactional) {
-        await client.query("BEGIN");
-        try {
-          await client.query(m.sql);
-          await record();
-          await client.query("COMMIT");
-        } catch (err) {
-          await client.query("ROLLBACK");
-          throw new Error(
-            `migrate: ${m.version}_${m.name}.sql failed: ${err instanceof Error ? err.message : String(err)}`,
-            {
-              cause: err,
-            },
-          );
-        }
-      } else {
-        await client.query(m.sql);
-        await record();
-      }
-      options.onApply?.(m, Date.now() - started);
-      done.push(m.version);
+  /** Applies m unless it is recorded already (read under the caller's lock); true when it ran. */
+  const applyPending = async (m: Migration): Promise<boolean> => {
+    const checksum = await appliedChecksum(m.version);
+    if (checksum !== undefined) {
+      if (checksum !== m.checksum) throw changed(m);
+      return false; // another runner applied it meanwhile
     }
-    return done;
-  } finally {
-    await client.query("SELECT pg_advisory_unlock(hashtext($1))", [table]);
+    try {
+      await client.query(m.sql);
+    } catch (err) {
+      throw new Error(
+        `migrate: ${m.version}_${m.name}.sql failed: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    await record(m);
+    return true;
+  };
+
+  const done: string[] = [];
+  for (const m of migrations) {
+    const started = Date.now();
+    let applied = false;
+    if (m.transactional) {
+      await inTransaction(client, async () => {
+        await lock();
+        applied = await applyPending(m);
+      });
+    } else {
+      await client.query("SELECT pg_advisory_lock(hashtext($1))", [table]);
+      try {
+        applied = await applyPending(m);
+      } finally {
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [table]);
+      }
+    }
+    if (!applied) continue;
+    options.onApply?.(m, Date.now() - started);
+    done.push(m.version);
+  }
+  return done;
+}
+
+async function inTransaction(client: ClientBase, fn: () => Promise<void>): Promise<void> {
+  await client.query("BEGIN");
+  try {
+    await fn();
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
   }
 }

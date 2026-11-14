@@ -58,6 +58,14 @@ export interface EnvEntry {
    * place.
    */
   reserved?: Readonly<Record<string, string>>;
+  /**
+   * The value is a credential (or a blob that may carry one): never printed.
+   * --config-reference shows `(secret)` instead of a default, and the
+   * snapshot behind GET /admin/config holds `[redacted:<fingerprint>]` —
+   * whatever the key is called. A URL with a password in it is not marked:
+   * it is masked by shape, and the rest of it is worth seeing.
+   */
+  secret?: boolean;
   /** Crash at startup if the variable is absent after all sources are merged. */
   required: boolean;
   /** Value used when required=false and the variable is not set. */
@@ -305,6 +313,7 @@ const REGISTRY = [
 
   {
     key: "COOKIE_SECRET",
+    secret: true,
     yaml: "app.cookie_secret",
     required: false,
     description:
@@ -389,6 +398,7 @@ const REGISTRY = [
 
   {
     key: "ADMIN_TOKEN",
+    secret: true,
     yaml: "app.admin_token",
     required: false,
     description:
@@ -400,6 +410,7 @@ const REGISTRY = [
 
   {
     key: "DEBUG_TOKEN",
+    secret: true,
     yaml: "app.debug_token",
     required: false,
     description:
@@ -499,6 +510,20 @@ const REGISTRY = [
     required: false,
     default: "0",
     description: "Recycle a connection after this many checkouts (0 = never).",
+    usedIn: ["database"],
+  },
+
+  {
+    key: "DATABASE_POOL_MAX_LIFETIME_MS",
+    yaml: "database.pool_max_lifetime_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "3600000",
+    description:
+      "Recycle a connection this long after it was opened (0 = never); rounded up to a " +
+      "second. A pool that never reconnects never notices a DNS change, a rebalanced " +
+      "proxy or a setting changed on the role.",
     usedIn: ["database"],
   },
 
@@ -660,6 +685,7 @@ const REGISTRY = [
 
   {
     key: "DATABASE_EXTRA_PROPERTIES",
+    secret: true,
     yaml: "database.extra_properties",
     type: "json",
     required: false,
@@ -797,6 +823,7 @@ const REGISTRY = [
 
   {
     key: "VALKEY_PASSWORD",
+    secret: true,
     yaml: "cache.password",
     required: false,
     description: "Password. Overrides the password in VALKEY_URL.",
@@ -873,6 +900,21 @@ const REGISTRY = [
   },
 
   {
+    key: "VALKEY_SOCKET_TIMEOUT_MS",
+    yaml: "cache.socket_timeout_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "10000",
+    description:
+      "Drop and replace the shared client's connection when the server stays silent this " +
+      "long after a command was written (0 = never) — a peer that vanished without closing " +
+      "the socket. VALKEY_COMMAND_TIMEOUT_MS alone fails the command and keeps the dead " +
+      "connection. Never applied to BullMQ connections.",
+    usedIn: ["cache"],
+  },
+
+  {
     key: "VALKEY_KEEPALIVE_MS",
     yaml: "cache.keepalive_ms",
     type: "int",
@@ -919,6 +961,7 @@ const REGISTRY = [
 
   {
     key: "VALKEY_EXTRA_PROPERTIES",
+    secret: true,
     yaml: "cache.extra_properties",
     type: "json",
     required: false,
@@ -1112,6 +1155,7 @@ const REGISTRY = [
 
   {
     key: "KAFKA_SASL_PASSWORD",
+    secret: true,
     yaml: "kafka.sasl.password",
     required: false,
     description: "SASL password. KAFKA_SASL_PASSWORD_FILE wins.",
@@ -1338,6 +1382,7 @@ const REGISTRY = [
 
   {
     key: "KAFKA_PRODUCER_EXTRA_PROPERTIES",
+    secret: true,
     yaml: "kafka.producer.extra_properties",
     type: "json",
     reserved: KAFKA_OWNED_PROPERTIES,
@@ -1350,6 +1395,7 @@ const REGISTRY = [
 
   {
     key: "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+    secret: true,
     yaml: "kafka.consumer.extra_properties",
     type: "json",
     reserved: KAFKA_OWNED_PROPERTIES,
@@ -1492,6 +1538,7 @@ const REGISTRY = [
 
   {
     key: "KAFKA_EXTRA_PROPERTIES",
+    secret: true,
     yaml: "kafka.extra_properties",
     type: "json",
     reserved: KAFKA_OWNED_PROPERTIES,
@@ -1580,6 +1627,7 @@ const REGISTRY = [
 
   {
     key: "SENTRY_DSN",
+    secret: true,
     required: false,
     description:
       "Sentry DSN for error reporting. When unset, Sentry.init() runs as a no-op " +

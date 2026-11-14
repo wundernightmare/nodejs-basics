@@ -56,6 +56,17 @@ export const LOG_EVENTS: readonly LogEvent[] = [
     source: "packages/observability",
   },
   {
+    action: "pg.guard_rail_off",
+    level: "error",
+    description:
+      "A new Postgres connection was discarded: a configured session timeout " +
+      "(statement / lock / idle-in-transaction) is not in effect on it — the server refused " +
+      "the value, or a pooler in transaction mode is in between (set the timeouts on the " +
+      "role and zero DATABASE_*_TIMEOUT_MS).",
+    fields: ["pg.pool"],
+    source: "packages/database",
+  },
+  {
     action: "background.panic",
     level: "error",
     description:

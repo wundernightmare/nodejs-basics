@@ -323,6 +323,46 @@ Every connection also carries `lock_timeout` (`DATABASE_LOCK_TIMEOUT_MS`, 5 s)
 next to `statement_timeout`: a statement stuck behind a lock fails fast with
 `55P03` instead of holding a pool slot for 30 s.
 
+The three session timeouts (`statement_timeout`, `lock_timeout`,
+`idle_in_transaction_session_timeout`) are set on every new connection and
+**read back**: a connection on which a configured one is not in effect is not
+handed out (`PgGuardRailOffError`, `pg.guard_rail_off` in the logs) — the
+server refused the value, or something between the service and Postgres
+dropped it. A persistent cause fails `/readyz`, so a rollout stops instead of
+shipping a pool without its guard rails. Connections are recycled by age
+(`DATABASE_POOL_MAX_LIFETIME_MS`, 1 h) as well as by use.
+
+#### Behind PgBouncer
+
+Established against a real PgBouncer
+(`packages/database/src/pg-bouncer.integration.spec.ts`,
+`apps/migrate/src/migrate.pgbouncer.integration.spec.ts`):
+
+| | transaction pooling | session pooling |
+| --- | --- | --- |
+| Queries with parameters | work — the driver uses unnamed statements, nothing to re-prepare | work |
+| Unit of work, savepoints, `afterCommit` | work | work |
+| Migrations | work — the lock belongs to the transaction (`pg_advisory_xact_lock`); a `no-transaction` file takes a session lock and needs a direct connection | work |
+| The pool's session `SET` (the timeouts above) | **unsafe**: a `SET` stays on one server connection and reaches whoever is served by it next; other server connections never get it. The read-back cannot be relied on to notice | works; reset between clients by `server_reset_query` |
+| Pool size | PgBouncer's `pool_size` is the real limit: a query waiting for a server connection fails at `query_wait_timeout` | the same |
+
+So behind transaction pooling put the timeouts on the role and switch the
+pool's own off:
+
+```sql
+ALTER ROLE app SET statement_timeout = '30s';
+ALTER ROLE app SET lock_timeout = '5s';
+ALTER ROLE app SET idle_in_transaction_session_timeout = '60s';
+```
+
+```sh
+DATABASE_STATEMENT_TIMEOUT_MS=0 DATABASE_LOCK_TIMEOUT_MS=0 DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS=0
+```
+
+`SET LOCAL` — what a unit of work uses for the request deadline — is safe in
+both modes. Not covered: `LISTEN`/`NOTIFY` (nothing here uses it), PgBouncer
+TLS, `auth_query`, statement pooling.
+
 `OutboxWriter.add()` refuses to run outside a transaction
 (`OutboxOutsideTransactionError`): the event must commit with its change.
 
@@ -686,6 +726,9 @@ The schema lives in `migrations/*.sql` — plain SQL, one file per change,
 row in `schema_migrations` (`-- migrate: no-transaction` on the first line
 for `CREATE INDEX CONCURRENTLY`), under an advisory lock so replicas and CI
 jobs can race safely, and refuses to run when an applied file was edited.
+The lock is the transaction's (`pg_advisory_xact_lock`), so the runner works
+through a transaction-pooling PgBouncer; a `no-transaction` file takes a
+session lock and needs a direct connection.
 A unit test (`apps/migrate/src/migrations-safety.spec.ts`) flags DDL that
 breaks the release still running or locks a busy table — DROP/RENAME COLUMN,
 DROP TABLE, SET NOT NULL, a type change without USING, CREATE INDEX without

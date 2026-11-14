@@ -58,6 +58,7 @@ export function describeEntry(entry: EnvEntry, defaults: LoadOptions["defaults"]
     entry.yaml === undefined ? "(env only)" : `(yaml: ${entry.yaml})`,
     type,
     entry.required ? "required" : fallback === undefined ? "no default" : `default ${fallback}`,
+    ...(entry.secret === true ? ["(secret)"] : []),
   ].join("  ");
   return `${head}\n    ${entry.description}`;
 }

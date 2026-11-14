@@ -38,6 +38,9 @@ const SECRET_PARAM =
 /** `password=…` in a keyword DSN (libpq, ODBC); the value may be single-quoted. */
 const DSN_PAIR = /\b(password|passwd|pwd|sslpassword)=('(?:[^'\\]|\\.)*'|[^\s&;]+)/giu;
 
+/** What a `Secret` prints for itself. */
+const FINGERPRINTED = /^\[redacted:[0-9a-f]{1,16}\]$/u;
+
 /** How deep a log record is walked; below that a value is written as it is. */
 const MAX_DEPTH = 8;
 /** Key lookups are cached; a service logs a few hundred distinct keys at most. */
@@ -104,7 +107,9 @@ function walk(
   seen: WeakSet<object> | undefined,
 ): unknown {
   if (typeof value === "string") {
-    if (secret) return value === "" ? "" : REDACTED;
+    // Already masked at the source (a Secret's rendering, the config
+    // snapshot): the fingerprint is the useful part — keep it.
+    if (secret) return value === "" || FINGERPRINTED.test(value) ? value : REDACTED;
     return redactUrl(value);
   }
   if (typeof value !== "object" || value === null) return value; // number, boolean, bigint, undefined…
