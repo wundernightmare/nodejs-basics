@@ -54,7 +54,10 @@ export class LogSampler {
       this.#resetAt[slot] = now + this.#tickMs;
       this.#count[slot] = 0;
     }
-    const n = ++this.#count[slot]!;
+    // (Not `++this.#count[slot]!`: Stryker's instrumenter cannot parse an
+    // update of a non-null assertion.)
+    const n = (this.#count[slot] ?? 0) + 1;
+    this.#count[slot] = n;
     if (n <= this.#initial || (n - this.#initial) % this.#thereafter === 0) return true;
 
     if (levelValue >= INFO) this.#droppedInfo++;
