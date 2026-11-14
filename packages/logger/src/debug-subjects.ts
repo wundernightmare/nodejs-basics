@@ -87,6 +87,7 @@ export class DebugSubjects {
     const subjects = [...this.#expiry]
       .map(([subject, expires]) => ({ subject, expires_at: new Date(expires).toISOString() }))
       // Map keys: no two subjects are equal.
+      // Stryker disable next-line EqualityOperator: `<=` is the same order for distinct keys
       .toSorted((a, b) => (a.subject < b.subject ? -1 : 1));
     return { subjects, max_ttl: formatDuration(this.maxTtlMs()) };
   }
