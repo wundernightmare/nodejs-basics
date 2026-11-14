@@ -226,6 +226,16 @@ describe("kafka config builders", () => {
       "partition.assignment.strategy",
       "KAFKA_CONSUMER_ASSIGNMENT_STRATEGY",
     ],
+    // The delivery guarantees are weakened through their own keys only.
+    ["KAFKA_PRODUCER_EXTRA_PROPERTIES", "acks", "KAFKA_PRODUCER_ACKS"],
+    ["KAFKA_EXTRA_PROPERTIES", "request.required.acks", "KAFKA_PRODUCER_ACKS"],
+    ["KAFKA_PRODUCER_EXTRA_PROPERTIES", "enable.idempotence", "KAFKA_PRODUCER_ENABLE_IDEMPOTENCE"],
+    ["KAFKA_CONSUMER_EXTRA_PROPERTIES", "enable.auto.commit", "KAFKA_CONSUMER_ENABLE_AUTO_COMMIT"],
+    [
+      "KAFKA_CONSUMER_EXTRA_PROPERTIES",
+      "allow.auto.create.topics",
+      "KAFKA_ALLOW_AUTO_TOPIC_CREATION",
+    ],
   ])("%s may not set %s — it has its own key", async (key, property, owner) => {
     await testCase("NB-1024", "buffer sizes cannot come from an escape hatch");
     const env = stub({ [key]: JSON.stringify({ [property]: 1, "sasl.password": "s3cret" }) });
@@ -236,5 +246,15 @@ describe("kafka config builders", () => {
     expect(build).toThrow(`${key}=…: expected no "${property}" — set ${owner} instead`);
     // The escape hatch may carry credentials: the message never repeats it.
     expect(build).not.toThrow(/s3cret/u);
+  });
+
+  it("a consumer may ask for its topics by default; KAFKA_ALLOW_AUTO_TOPIC_CREATION=false forbids it", async () => {
+    await testCase("NB-1334", "kafka: auto topic creation is a setting");
+    expect(buildConsumerConfig(stub({}), "g")["allow.auto.create.topics"]).toBe(true);
+    expect(
+      buildConsumerConfig(stub({ KAFKA_ALLOW_AUTO_TOPIC_CREATION: "false" }), "g")[
+        "allow.auto.create.topics"
+      ],
+    ).toBe(false);
   });
 });

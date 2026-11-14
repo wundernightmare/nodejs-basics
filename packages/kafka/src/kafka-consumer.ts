@@ -59,7 +59,7 @@ import type { ConfigService } from "@nestjs/config";
 import { metrics, type ObservableResult } from "@opentelemetry/api";
 
 import { withDeadline } from "@base/common";
-import { readInt, readString } from "@base/config";
+import { readBool, readInt, readString } from "@base/config";
 import {
   type AppLogger,
   ecsError,
@@ -479,6 +479,8 @@ export class KafkaConsumerRunner {
   }
 
   private askForTopics(kafka: KafkaJS.Kafka): Promise<void> {
+    // Where topics are provisioned, the consumer does not ask for them either.
+    if (!readBool(this.config, "KAFKA_ALLOW_AUTO_TOPIC_CREATION")) return Promise.resolve();
     return askForTopicsOn(kafka, this.options.topics, this.logger);
   }
 
