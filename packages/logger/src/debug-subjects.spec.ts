@@ -4,6 +4,8 @@ import { trace } from "@opentelemetry/api";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { isDebugLogging } from "@base/common";
+
 import { captureSpans, type SpanCapture, testCase } from "@base/testing";
 
 import {
@@ -108,5 +110,53 @@ describe("debug subjects", () => {
     expect(runAsDebugSubject(subjects, undefined, () => 1)).toBe(1);
     expect(runAsDebugSubject(subjects, "", () => 2)).toBe(2);
     expect(runAsDebugSubject(subjects, "nobody", () => 3)).toBe(3);
+  });
+
+  it("lists subjects in order whatever order they were added in; clear() empties the list", async () => {
+    await testCase("NB-1336", "Debug subjects: sorted list, clear");
+    const { subjects } = clocked();
+    for (const subject of ["charlie", "alpha", "bravo", "delta"]) subjects.put(subject, 60_000);
+    expect(subjects.snapshot().subjects.map((entry) => entry.subject)).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+    ]);
+    subjects.clear();
+    expect(subjects.snapshot().subjects).toEqual([]);
+    expect(subjects.active("alpha")).toBe(false);
+  });
+
+  it("an expired subject is not active, not listed, and frees its place", async () => {
+    await testCase("NB-1337", "Debug subjects: expiry without a timer");
+    const { clock, subjects } = clocked(HOUR, 2);
+    subjects.put("short", 1000);
+    subjects.put("long", 60_000);
+    clock.now += 999;
+    expect(subjects.active("short")).toBe(true);
+    clock.now += 1; // the TTL is exclusive: at its end the subject is gone
+    expect(subjects.active("short")).toBe(false);
+    expect(subjects.snapshot().subjects.map((entry) => entry.subject)).toEqual(["long"]);
+
+    subjects.put("short", 1000);
+    clock.now += 1000;
+    // Full by count, but one of the two has expired: the newcomer gets its place.
+    expect(subjects.put("new", 60_000)).toBe(true);
+    expect(subjects.active("new")).toBe(true);
+  });
+
+  it("the empty subject is nobody, even when listed; a listed one works outside any span", async () => {
+    await testCase("NB-1338", "Debug subjects: no subject, no span");
+    const { subjects } = clocked();
+    subjects.put("", 60_000);
+    subjects.put("tenant-1", 60_000);
+    const debugging = (subject: string | undefined): boolean =>
+      runAsDebugSubject(subjects, subject, () => isDebugLogging());
+    expect(debugging("")).toBe(false); // an unauthenticated request must not match a listed ""
+    expect(debugging(undefined)).toBe(false);
+    expect(debugging("tenant-2")).toBe(false);
+    // No active span to mark (a background job): the debug logging is still on.
+    expect(trace.getActiveSpan()).toBeUndefined();
+    expect(debugging("tenant-1")).toBe(true);
   });
 });

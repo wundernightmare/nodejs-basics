@@ -200,15 +200,44 @@ describe("masking of private data in log records", () => {
     );
   });
 
-  it("survives a cycle and a record deeper than it walks", async () => {
+  it("a cycle or a record deeper than it walks leaks nothing", async () => {
     await testCase("NB-1241", "Logs: masking survives cycles and deep records");
-    const cyclic: Record<string, unknown> = { name: "a" };
+    const cyclic: Record<string, unknown> = { name: "a", password: "p-plaintext" };
     cyclic["self"] = cyclic;
-    expect(() => record({ cyclic })).not.toThrow();
+    const looped = written({ cyclic });
+    expect(looped).not.toContain("p-plaintext");
+    expect(looped).toContain('"self":"[Circular]"');
 
     let deep: Record<string, unknown> = { password: "p-plaintext" };
     for (let i = 0; i < 20; i += 1) deep = { next: deep };
-    expect(() => record({ deep })).not.toThrow();
+    expect(written({ deep })).not.toContain("p-plaintext");
+  });
+
+  it("an error is masked whole: its message, its stack, its cause and what a driver hangs on it", async () => {
+    await testCase("NB-1335", "Logs: every property of a logged error is masked");
+    const cause = new Error("dial postgres://app:p-plaintext@db refused");
+    const err = Object.assign(new Error("request failed", { cause }), {
+      // What an HTTP or database client attaches to the errors it throws.
+      config: {
+        url: "https://api.example/x?api_key=p-plaintext",
+        headers: { authorization: "Bearer p-plaintext" },
+      },
+      connectionString: "host=db password=p-plaintext",
+      code: "ECONNREFUSED",
+    });
+    const out = record({ err });
+    expect(JSON.stringify(out)).not.toContain("p-plaintext");
+    expect(out["err"]).toMatchObject({
+      type: "Error",
+      message: expect.stringContaining("request failed") as string,
+      code: "ECONNREFUSED",
+      config: {
+        url: "https://api.example/x?api_key=[redacted]",
+        headers: { authorization: "[redacted]" },
+      },
+      connectionString: "host=db password=[redacted]",
+    });
+    expect(JSON.stringify(out["err"])).toContain("postgres://app:xxxxx@db");
   });
 
   it("never writes request headers (the req serializer keeps none)", () => {
