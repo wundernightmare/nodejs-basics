@@ -301,6 +301,72 @@ describe("ResilientClient — what the breaker counts", () => {
   });
 });
 
+/** A promise and the function that settles it. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+describe("ResilientClient — an answer that comes after the caller stopped waiting", () => {
+  it("is discarded: the caller got its timeout, the late body is closed", async () => {
+    await testCase("NB-1326", "a response that arrives after the attempt timeout is discarded");
+    // A transport that ignores the signal — what undici does while it is
+    // still making the connection — and answers after the attempt timed out.
+    const body = Readable.from(["too late"]);
+    const late = deferred();
+    const dispatcher = {
+      request: () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ statusCode: 200, headers: {}, body });
+            late.resolve();
+          }, 120);
+        }),
+      close: () => Promise.resolve(),
+    } as unknown as Dispatcher;
+
+    const started = performance.now();
+    await expect(
+      client(dispatcher, { attemptTimeoutMs: 40, retry: { maxRetries: 0 } }).request({
+        path: "/x",
+        method: "GET",
+      }),
+    ).rejects.toMatchObject({ errorType: "timeout" });
+    expect(performance.now() - started).toBeLessThan(110); // at the timeout, not at the answer
+
+    await late.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(body.destroyed).toBe(true); // nobody will read it: not left open
+  });
+
+  it("a transport failure after the caller stopped waiting changes nothing", async () => {
+    await testCase("NB-1327", "a late transport error is swallowed");
+    const late = deferred();
+    const dispatcher = {
+      request: () =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => {
+            reject(
+              Object.assign(new Error("connect timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" }),
+            );
+            late.resolve();
+          }, 100);
+        }),
+      close: () => Promise.resolve(),
+    } as unknown as Dispatcher;
+
+    const api = client(dispatcher, { attemptTimeoutMs: 30, retry: { maxRetries: 0 } });
+    await expect(api.request({ path: "/x", method: "GET" })).rejects.toMatchObject({
+      errorType: "timeout",
+    });
+    await late.promise; // no unhandled rejection, no second error
+    expect(api.retries).toBe(0);
+  });
+});
+
 describe("ResilientClient — a connection that cannot be made", () => {
   it("the attempt timeout and the caller's budget end a call stuck in the TLS handshake", async () => {
     await testCase("NB-1325", "the attempt timeout covers making the connection");
