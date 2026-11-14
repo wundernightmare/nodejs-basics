@@ -36,4 +36,18 @@ export {
 } from "./services.js";
 export { pausable, pause, PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
 export { type PgBouncer, type PgBouncerOptions, startPgBouncer } from "./pgbouncer.js";
+export {
+  type Collector,
+  COLLECTOR_CONFIG_PATH,
+  COLLECTOR_IMAGE,
+  containerRuntimeAvailable,
+  type CollectorOptions,
+  type Jaeger,
+  JAEGER_IMAGE,
+  OBSERVABILITY_COMPOSE_PATH,
+  startCollector,
+  startJaeger,
+  type StoredSpan,
+  type StoredTrace,
+} from "./otel-collector.js";
 export type { PausableService, ProxiedService, Proxy, ServiceProxy } from "./chaos.js";
