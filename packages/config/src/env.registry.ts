@@ -1420,6 +1420,62 @@ const REGISTRY = [
   },
 
   {
+    key: "KAFKA_CONSUMER_HANDLER_TIMEOUT_MS",
+    yaml: "kafka.consumer.handler_timeout_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "30000",
+    description:
+      "How long one attempt of a consumer's handler may take; 0 = no limit. Past it the " +
+      "attempt fails and is retried like any other failure, the handler's outbound calls " +
+      "(Postgres, Valkey, HTTP, gRPC) are cut at that deadline and `from.signal` aborts. " +
+      "Keep it well under max.poll.interval.ms: a handler that outlives that one is thrown " +
+      "out of the group.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_RETRY_BACKOFF_MS",
+    yaml: "kafka.consumer.retry_backoff_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "1000",
+    description:
+      "Pause before a failed message is handled again; doubles per failure of the same " +
+      "partition up to KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS.",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS",
+    yaml: "kafka.consumer.retry_backoff_max_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "60000",
+    description:
+      "Ceiling of the pause between attempts of a failed message (back-pressure is capped " +
+      "at 5 s whatever this says).",
+    usedIn: ["kafka"],
+  },
+
+  {
+    key: "KAFKA_CONSUMER_DRAIN_TIMEOUT_MS",
+    yaml: "kafka.consumer.drain_timeout_ms",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "10000",
+    description:
+      "How long a stopping consumer waits for the handlers in flight; 0 = as long as they " +
+      "take. What has not finished by then is not committed and is delivered again after " +
+      "the restart. Keep it under the pod's termination grace period.",
+    usedIn: ["kafka"],
+  },
+
+  {
     key: "KAFKA_CONSUMER_MAX_RETRIES",
     yaml: "kafka.consumer.max_retries",
     type: "int",
@@ -1428,7 +1484,8 @@ const REGISTRY = [
     default: "5",
     description:
       "How many times a consumer retries a message whose handler fails (paused partition, " +
-      "backoff 1 s → 60 s) before it goes to the dead-letter topic. Back-pressure " +
+      "backoff KAFKA_CONSUMER_RETRY_BACKOFF_MS doubling to KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS) " +
+      "before it goes to the dead-letter topic. Back-pressure " +
       "(KafkaBackpressureError: a full or unreachable downstream) never counts; a " +
       "KafkaPermanentError skips the retries.",
     usedIn: ["kafka"],
