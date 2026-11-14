@@ -84,7 +84,7 @@ export class PgGuardRailOffError extends Error {
 /** Pools that already reported a timeout the server holds at another value. */
 const warnedDrift = new Set<string>();
 
-async function initSession(
+export async function initSession(
   client: PoolClient,
   built: PostgresBuilderResult,
   label: string,
