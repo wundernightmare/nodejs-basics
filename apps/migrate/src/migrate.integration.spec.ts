@@ -77,6 +77,41 @@ describe.skipIf(infra.skip)("migrate (integration)", () => {
     );
   });
 
+  it("concurrent runners apply each file exactly once", async () => {
+    await testCase("NB-1258", "Migrations: three runners at once, every file applied once");
+    const racing = unique("mig");
+    const raceDir = mkdtempSync(join(tmpdir(), "migrations-race-"));
+    const runners = await Promise.all(
+      [0, 1, 2].map(async () => {
+        const runner = new pg.Client({ connectionString: infra.url("postgres") });
+        await runner.connect();
+        return runner;
+      }),
+    );
+    try {
+      for (let i = 1; i <= 4; i += 1) {
+        // Not IF NOT EXISTS: a file applied twice fails loudly.
+        writeFileSync(
+          join(raceDir, `000${i}_t${i}.sql`),
+          `CREATE TABLE ${racing}_t${i} (id int PRIMARY KEY); SELECT pg_sleep(0.05);`,
+        );
+      }
+      const migrations = loadMigrations(raceDir);
+      const applied = await Promise.all(
+        runners.map((runner) => migrate(runner, migrations, { table: racing })),
+      );
+      expect(applied.flat().toSorted()).toEqual(["0001", "0002", "0003", "0004"]);
+      const { rows } = await client.query(`SELECT count(*)::int AS n FROM ${racing}`);
+      expect(rows[0]).toEqual({ n: 4 });
+    } finally {
+      await client.query(
+        `DROP TABLE IF EXISTS ${racing}, ${[1, 2, 3, 4].map((i) => `${racing}_t${i}`).join(", ")}`,
+      );
+      await Promise.all(runners.map((runner) => runner.end()));
+      rmSync(raceDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects file names and duplicate versions it cannot order", async () => {
     await testCase("NB-223", "only <version>_<name>.sql, one file per version");
     const bad = mkdtempSync(join(tmpdir(), "migrations-bad-"));

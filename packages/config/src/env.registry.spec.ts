@@ -184,6 +184,7 @@ describe("env registry", () => {
         "./integrations.js",
         "./env.registry.js",
         "./env.registry.js",
+        "node:crypto",
         "node:fs",
         "node:fs",
         "node:os",

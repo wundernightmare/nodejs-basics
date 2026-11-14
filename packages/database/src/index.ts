@@ -13,6 +13,7 @@ export {
   PG_POOL,
   PG_POOL_READONLY,
   pgBreakerProvider,
+  PgGuardRailOffError,
   pgConfigProvider,
   pgPoolProvider,
   pgReadonlyPoolProvider,
