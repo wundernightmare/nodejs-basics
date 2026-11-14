@@ -2,12 +2,14 @@ import { type KafkaJS } from "@confluentinc/kafka-javascript";
 import { ConfigService } from "@nestjs/config";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { remainingMs } from "@base/common";
 import { AppLogger, pinoLogger } from "@base/logger";
 import { captureMetrics, meta, metricValue, testCase } from "@base/testing";
 
 import {
   KafkaBackpressureError,
   KafkaConsumerRunner,
+  KafkaHandlerTimeoutError,
   KafkaPermanentError,
 } from "./kafka-consumer.js";
 import type { KafkaProducerService } from "./kafka.provider.js";
@@ -267,5 +269,139 @@ describe("KafkaConsumerRunner.handleMessage", () => {
     } finally {
       await capture.stop();
     }
+  });
+});
+
+describe("KafkaConsumerRunner — time limits", () => {
+  meta({ epic: "nodejs-basics", feature: "kafka", owner: "@team-platform", tags: ["kafka"] });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("an attempt that outlives the handler timeout fails, aborts its signal and is retried", async () => {
+    await testCase("NB-1328", "kafka consumer: one attempt has its own deadline");
+    let seen: AbortSignal | undefined;
+    let budget: number | undefined;
+    const hung = new KafkaConsumerRunner(
+      new ConfigService({ KAFKA_CONSUMER_HANDLER_TIMEOUT_MS: "200" }),
+      logger,
+      {
+        groupId: "g",
+        topics: ["t"],
+        handle: (_message, from) => {
+          seen = from.signal;
+          budget = remainingMs(); // what the handler's outbound calls would get
+          return new Promise(() => {}); // never answers
+        },
+      },
+    );
+    Object.assign(hung, { consumer: { commitOffsets: vi.fn() } });
+    const p = payload();
+
+    const attempt = hung.handleMessage(p).catch((err: unknown) => err);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(seen?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const err = await attempt;
+    expect(err).toBeInstanceOf(KafkaHandlerTimeoutError);
+    expect((err as Error).message).toBe("the handler did not finish within 200 ms");
+    expect(seen?.aborted).toBe(true);
+    expect(seen?.reason).toBe(err);
+    expect(budget).toBeGreaterThan(0);
+    expect(budget).toBeLessThanOrEqual(200);
+    expect(p.pause).toHaveBeenCalledOnce(); // retried like any other failure
+  });
+
+  it("a handler that finishes in time is not touched, and 0 turns the limit off", async () => {
+    await testCase("NB-1329", "kafka consumer: the handler timeout only bites when it passes");
+    const quick = runner(() => Promise.resolve(), {
+      config: { KAFKA_CONSUMER_HANDLER_TIMEOUT_MS: "200" },
+    });
+    await quick.runner.handleMessage(payload());
+    expect(quick.commitOffsets).toHaveBeenCalledOnce();
+
+    let finish!: () => void;
+    const slow = runner(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+      { config: { KAFKA_CONSUMER_HANDLER_TIMEOUT_MS: "0" } },
+    );
+    const pending = slow.runner.handleMessage(payload());
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    finish();
+    await pending;
+    expect(slow.commitOffsets).toHaveBeenCalledOnce();
+  });
+
+  it("the retry backoff is configurable: base doubling up to its ceiling", async () => {
+    await testCase("NB-1330", "kafka consumer: KAFKA_CONSUMER_RETRY_BACKOFF_MS / _MAX_MS");
+    const h = runner(failing(), {
+      config: {
+        KAFKA_CONSUMER_RETRY_BACKOFF_MS: "100",
+        KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS: "150",
+      },
+    });
+    const first = vi.fn();
+    const second = vi.fn();
+    await expect(h.runner.handleMessage(payload(0, first))).rejects.toThrow("down");
+    await expect(h.runner.handleMessage(payload(0, second))).rejects.toThrow("down");
+    vi.advanceTimersByTime(100);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled(); // 200 ms by doubling, 150 by the ceiling
+    vi.advanceTimersByTime(50);
+    expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("stop() waits for the handlers in flight at most the drain timeout", async () => {
+    await testCase("NB-1331", "kafka consumer: a bounded drain on shutdown");
+    const warnings: string[] = [];
+    const stuck = new KafkaConsumerRunner(
+      new ConfigService({ KAFKA_CONSUMER_DRAIN_TIMEOUT_MS: "300" }),
+      {
+        warn: (_fields: object, message: string) => {
+          warnings.push(message);
+        },
+        info: () => {},
+        debug: () => {},
+        error: () => {},
+      } as never,
+      { groupId: "g", topics: ["t"], handle: () => Promise.resolve() },
+    );
+    // disconnect() waits for a handler that never returns.
+    const disconnect = vi.fn(() => new Promise<void>(() => {}));
+    Object.assign(stuck, { consumer: { disconnect }, running: true });
+
+    let stopped = false;
+    const stopping = stuck.stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(299);
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await stopping;
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(warnings).toEqual([
+      "Kafka consumer handlers still running at the drain timeout — left behind, not committed",
+    ]);
+    expect(() => {
+      stuck.assertRunning();
+    }).toThrow("consumer not running");
+  });
+
+  it("a consumer whose handlers finish stops as soon as they do", async () => {
+    await testCase("NB-1332", "kafka consumer: the drain timeout is a ceiling, not a wait");
+    const idle = runner();
+    const disconnect = vi.fn(() => Promise.resolve());
+    Object.assign(idle.runner, { consumer: { disconnect }, running: true });
+    await idle.runner.stop();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0); // the drain timer does not outlive the stop
   });
 });

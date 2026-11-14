@@ -22,7 +22,9 @@
  *     would commit the previous message (this one is stored only after
  *     eachMessage returns).
  *   - `handle` throws → not committed: the partition is paused, resumed after
- *     a per-partition backoff (1 s → 60 s), and the same message comes again.
+ *     a per-partition backoff (KAFKA_CONSUMER_RETRY_BACKOFF_MS doubling up to
+ *     KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS: 1 s → 60 s), and the same message
+ *     comes again.
  *     A bare throw would re-fetch at once — a hot loop. After
  *     KAFKA_CONSUMER_MAX_RETRIES retries the message is parked on the
  *     dead-letter topic (KAFKA_DEAD_LETTER_TOPIC, `{topic}.dlq`: key, value
@@ -38,13 +40,25 @@
  *     return from `handle` to drop it (committed and skipped) when nobody
  *     will ever want it back.
  *
+ *   - `handle` takes longer than KAFKA_CONSUMER_HANDLER_TIMEOUT_MS (30 s) →
+ *     the attempt fails with {@link KafkaHandlerTimeoutError} and is retried
+ *     like any other failure. Each attempt has its own deadline: the calls a
+ *     handler makes (Postgres, Valkey, HTTP, gRPC) take what is left of it,
+ *     and `from.signal` aborts — a handler that does its own waiting should
+ *     listen to it. JavaScript cannot stop a function: one that ignores both
+ *     runs on, so the next attempt may overlap it. A handler is idempotent
+ *     anyway (at-least-once).
+ *
  * KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY partitions are handled in parallel;
- * order within a partition (and so per key) holds.
+ * order within a partition (and so per key) holds. stop() waits for the
+ * handlers in flight at most KAFKA_CONSUMER_DRAIN_TIMEOUT_MS (10 s); what has
+ * not finished by then is not committed and comes again after the restart.
  */
 import { KafkaJS } from "@confluentinc/kafka-javascript";
 import type { ConfigService } from "@nestjs/config";
 import { metrics, type ObservableResult } from "@opentelemetry/api";
 
+import { withDeadline } from "@base/common";
 import { readInt, readString } from "@base/config";
 import {
   type AppLogger,
@@ -61,8 +75,6 @@ import { traceKafkaMessage } from "./kafka-tracing.js";
 import type { KafkaProducerService } from "./kafka.provider.js";
 import { kafkaJsConfig, Reconnect } from "./reconnect.js";
 
-const RETRY_BASE_MS = 1_000;
-const RETRY_MAX_MS = 60_000;
 // Back-pressure clears on its own; a long pause would idle the consumer after it has.
 const BACKPRESSURE_MAX_MS = 5_000;
 
@@ -97,13 +109,22 @@ export class KafkaPermanentError extends Error {
   }
 }
 
+/** One handler attempt ran past KAFKA_CONSUMER_HANDLER_TIMEOUT_MS; retried like any failure. */
+export class KafkaHandlerTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`the handler did not finish within ${timeoutMs} ms`);
+    this.name = "KafkaHandlerTimeoutError";
+  }
+}
+
 export interface KafkaConsumerOptions {
   groupId: string;
   topics: string[];
   /** Resolve = done (committed); throw = retry the same message later. */
   handle: (
     message: KafkaJS.KafkaMessage,
-    from: { topic: string; partition: number },
+    /** `signal` aborts when the attempt times out or the consumer stops. */
+    from: { topic: string; partition: number; signal: AbortSignal },
   ) => Promise<void>;
   /** Sends what the consumer gives up on to the dead-letter topic; without it nothing is parked. */
   producer?: KafkaProducerService | undefined;
@@ -158,6 +179,10 @@ export class KafkaConsumerRunner {
   };
   private readonly concurrently: number;
   private readonly maxRetries: number;
+  private readonly handlerTimeoutMs: number;
+  private readonly retryBaseMs: number;
+  private readonly retryMaxMs: number;
+  private readonly drainTimeoutMs: number;
   private readonly deadLetterTopic: string;
   /** The topics named in the subscription: the `topic` label's values (else `other`). */
   private readonly topics: ReadonlySet<string>;
@@ -176,6 +201,13 @@ export class KafkaConsumerRunner {
   ) {
     this.concurrently = readInt(config, "KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY");
     this.maxRetries = readInt(config, "KAFKA_CONSUMER_MAX_RETRIES");
+    this.handlerTimeoutMs = readInt(config, "KAFKA_CONSUMER_HANDLER_TIMEOUT_MS");
+    this.retryBaseMs = readInt(config, "KAFKA_CONSUMER_RETRY_BACKOFF_MS");
+    this.retryMaxMs = Math.max(
+      this.retryBaseMs,
+      readInt(config, "KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS"),
+    );
+    this.drainTimeoutMs = readInt(config, "KAFKA_CONSUMER_DRAIN_TIMEOUT_MS");
     this.deadLetterTopic = readString(config, "KAFKA_DEAD_LETTER_TOPIC");
     this.topics = new Set(options.topics);
     this.assigned.addCallback(this.observeAssigned);
@@ -209,7 +241,7 @@ export class KafkaConsumerRunner {
     try {
       // A consumer still connecting is left to its metadata timeout (see
       // Reconnect) — Nest ends the process once the close hooks return.
-      if (this.running) await this.consumer?.disconnect();
+      if (this.running && this.consumer !== undefined) await this.drain(this.consumer);
     } catch (err) {
       this.logger.warn({ ...ecsError(err) }, "Kafka consumer disconnect failed");
     } finally {
@@ -217,6 +249,69 @@ export class KafkaConsumerRunner {
       this.joined = false;
       this.clientMetrics.dispose();
       this.assigned.removeCallback(this.observeAssigned);
+    }
+  }
+
+  /**
+   * disconnect() waits for the handlers in flight — for as long as they take.
+   * A shutdown has a budget (the pod's termination grace period): past
+   * KAFKA_CONSUMER_DRAIN_TIMEOUT_MS the handlers are left behind. Their
+   * messages are not committed, so they come again after the restart.
+   */
+  private async drain(consumer: KafkaJS.Consumer): Promise<void> {
+    const disconnected = consumer.disconnect();
+    if (this.drainTimeoutMs <= 0) {
+      await disconnected;
+      return;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const gaveUp = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => {
+        resolve("timeout");
+      }, this.drainTimeoutMs);
+    });
+    try {
+      if ((await Promise.race([disconnected, gaveUp])) !== "timeout") return;
+    } finally {
+      clearTimeout(timer);
+    }
+    // Still running in the background: its failure is nobody's to handle now.
+    disconnected.catch(() => {});
+    this.logger.warn(
+      { "kafka.group": this.options.groupId, "kafka.drain_timeout_ms": this.drainTimeoutMs },
+      "Kafka consumer handlers still running at the drain timeout — left behind, not committed",
+    );
+  }
+
+  /**
+   * One attempt of the handler under its own deadline. The deadline is the
+   * attempt's budget (what the handler's outbound calls take what is left of)
+   * and, when it passes, the attempt's failure — whether or not the handler
+   * has noticed.
+   */
+  private async attempt(run: (signal: AbortSignal) => Promise<void>): Promise<void> {
+    const timeoutMs = this.handlerTimeoutMs;
+    if (timeoutMs <= 0) {
+      await run(this.stopping.signal);
+      return;
+    }
+    const expired = new AbortController();
+    const signal = AbortSignal.any([this.stopping.signal, expired.signal]);
+    let timer: NodeJS.Timeout | undefined;
+    const work = withDeadline(timeoutMs, () => run(signal));
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const err = new KafkaHandlerTimeoutError(timeoutMs);
+        expired.abort(err);
+        reject(err);
+      }, timeoutMs);
+    });
+    try {
+      await Promise.race([work, timedOut]);
+    } finally {
+      clearTimeout(timer);
+      // An attempt given up on still ends some day: not an unhandled rejection.
+      work.catch(() => {});
     }
   }
 
@@ -231,7 +326,7 @@ export class KafkaConsumerRunner {
     const requestId = headerString(message.headers?.["x-request-id"]);
     const run = (): Promise<void> =>
       withRequestId(isValidRequestId(requestId) ? requestId : generateRequestId(), () =>
-        this.options.handle(message, { topic, partition }),
+        this.attempt((signal) => this.options.handle(message, { topic, partition, signal })),
       );
     const label = { topic: this.topicLabel(topic) };
     const started = performance.now();
@@ -266,8 +361,8 @@ export class KafkaConsumerRunner {
     this.failures.set(key, failures + 1);
     const backpressure = err instanceof KafkaBackpressureError;
     const delay = Math.min(
-      RETRY_BASE_MS * 2 ** failures,
-      backpressure ? BACKPRESSURE_MAX_MS : RETRY_MAX_MS,
+      this.retryBaseMs * 2 ** failures,
+      backpressure ? BACKPRESSURE_MAX_MS : this.retryMaxMs,
     );
     const fields = {
       ...ecsError(err),
