@@ -35,6 +35,20 @@ export {
   type Service,
 } from "./services.js";
 export { pausable, pause, PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
+export { createPki, type Pki } from "./pki.js";
+export {
+  countSpans,
+  EXPORT_METHOD,
+  type ExportOptions,
+  exportRequest,
+  FIND_TRACES_METHOD,
+  findTracesRequest,
+  GATEWAY_ANSWERS,
+  type GrpcServer,
+  type HttpGateway,
+  startGrpcServer,
+  startHttpGateway,
+} from "./grpc-stack.js";
 export { type PgBouncer, type PgBouncerOptions, startPgBouncer } from "./pgbouncer.js";
 export {
   type Collector,

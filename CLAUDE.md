@@ -247,6 +247,12 @@ high-signal, easy-to-miss bits.
   real collector + Jaeger (`tail-sampling.integration.spec.ts`,
   `startCollector` / `startJaeger` in `@base/testing`). Changing the collector
   image or the file means running that suite; services head-sample at 1.0.
+- **gRPC wiring passes grpc-js what it actually reads**: the service config's
+  `timeout` in object form (the string form loses the fraction — "0.4s" is
+  4 ns) and wait-for-ready as a metadata option (the service config's key is
+  never read). Check a new service-config key against a real call, not only
+  against the JSON (`grpc-clients.integration.spec.ts`, real servers via
+  `startGrpcServer` / `startHttpGateway` / `createPki` in `@base/testing`).
 - **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
   (registerRequestContext; `x-request-timeout-ms` can shorten it, not below
   `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound
