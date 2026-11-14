@@ -22,11 +22,12 @@
  * or an equivalent mutant), lowered only with a reason in the commit.
  */
 export const TARGETS = {
-  // 56.8 % when introduced (2026-09; backoff 95, cache 86, errors 88, pool 39, client 56).
+  // 56.8 % when introduced (2026-09; backoff 95, cache 86, errors 88, pool 39,
+  // client 56); 66.4 % on 2026-11-14, after the guarantees and real-server suites.
   "resilient-client": {
     dir: "packages/resilient-client",
     mutate: ["packages/resilient-client/src/**/*.ts"],
-    break: 50,
+    break: 61,
   },
   // Measured when added (2026-11-14): 93.5 %.
   "grpc-client": {

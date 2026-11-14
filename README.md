@@ -1557,7 +1557,7 @@ its own with its own threshold:
 
 | Target | What | Score when added | `break` |
 | --- | --- | --- | --- |
-| `resilient-client` | backoff, cache, errors, pool, the client (not the OTel wiring) | 56.8 % | 50 |
+| `resilient-client` | backoff, cache, errors, pool, the client (not the OTel wiring) | 56.8 %; 66.4 % on 2026-11-14 | 61 |
 | `grpc-client` | config, service config, the policy | 93.5 % | 88 |
 | `secret` | `Secret` | 98.0 % (the survivor is equivalent) | 95 |
 | `tier-cache` | the two-level cache | 75.7 % | 70 |
