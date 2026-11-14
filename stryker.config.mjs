@@ -53,7 +53,9 @@ export const TARGETS = {
     mutate: ["packages/observability/src/http-rate-limit.ts"],
     break: 82,
   },
-  // Masking of private data, debug subjects, the background guard, sampling, the runtime level.
+  // Masking of private data, debug subjects, the background guard, sampling,
+  // the runtime level. 82.3 % when added (2026-11-14): redact 71, debug
+  // subjects 71, guard 80, sampler 94, level 96.
   logger: {
     dir: "packages/logger",
     mutate: [
@@ -63,7 +65,7 @@ export const TARGETS = {
       "packages/logger/src/log-sampler.ts",
       "packages/logger/src/log-level.ts",
     ],
-    break: 0,
+    break: 77,
   },
 };
 
