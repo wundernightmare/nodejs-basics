@@ -10,6 +10,10 @@ import {
  * the ratio for the traces this service starts. Unset or not a number in
  * 0..1 is 1 — everything; the config check reports the bad value at boot.
  * The same rule as golang-basics' otelx.
+ *
+ * This is head sampling. When the collector does tail sampling
+ * (docker/otel-collector/config.yaml) the ratio stays 1: the collector can
+ * only keep an error or a slow trace that was sent to it.
  */
 export function traceSampler(raw: string | undefined): Sampler {
   return new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(samplerRatio(raw)) });

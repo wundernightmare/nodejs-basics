@@ -1610,8 +1610,9 @@ const REGISTRY = [
     default: "1",
     description:
       "Share of traces this service starts that are sampled (0..1). A request that arrives " +
-      "with a sampled or unsampled traceparent keeps the caller's decision. Environment only: " +
-      "telemetry starts in instrumentation.ts, before config.yaml is read.",
+      "with a sampled or unsampled traceparent keeps the caller's decision. Keep it at 1 " +
+      "when the collector does tail sampling: it can only keep an error trace it was sent. " +
+      "Environment only: telemetry starts in instrumentation.ts, before config.yaml is read.",
     usedIn: ["observability"],
   },
 

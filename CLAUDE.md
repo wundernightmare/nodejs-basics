@@ -242,6 +242,11 @@ high-signal, easy-to-miss bits.
 - **A credential in ENV_REGISTRY is marked `secret: true`**: the config
   snapshot (`/admin/config`) then holds its fingerprint and
   `--config-reference` prints `(secret)`, whatever the key is called.
+- **Tail sampling** lives in `docker/otel-collector/config.yaml` (errors,
+  slow, `debug.subject`, a baseline share; `OTEL_TAIL_*`), tested against a
+  real collector + Jaeger (`tail-sampling.integration.spec.ts`,
+  `startCollector` / `startJaeger` in `@base/testing`). Changing the collector
+  image or the file means running that suite; services head-sample at 1.0.
 - **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
   (registerRequestContext; `x-request-timeout-ms` can shorten it, not below
   `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound

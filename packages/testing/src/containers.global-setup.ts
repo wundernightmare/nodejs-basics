@@ -82,6 +82,8 @@ const START: Record<Service, Starter> = {
     const container = await new GenericContainer(IMAGES.postgres)
       .withEnvironment({ POSTGRES_DB: "app", POSTGRES_USER: "app", POSTGRES_PASSWORD: "app" })
       .withCommand(["postgres", "-c", "max_connections=100", "-c", "fsync=off"])
+      // The data lives for one run: in memory it costs no disk I/O at all.
+      .withTmpFs({ "/var/lib/postgresql": "rw" })
       .withExposedPorts(5432)
       .withLabels(LABELS)
       // The entrypoint starts a temporary server first: ready is the second "ready" line.
