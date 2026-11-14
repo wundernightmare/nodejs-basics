@@ -17,13 +17,13 @@
  *   const adapter = new FastifyAdapter({ genReqId: genRequestId, ... });
  *   registerRequestContext(adapter.getInstance(), { debugToken: process.env.DEBUG_TOKEN });
  */
-import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { parseTimeoutMs, REQUEST_TIMEOUT_HEADER, withDeadline } from "../utils/deadline.js";
 import { generateRequestId } from "../utils/nanoid.js";
+import { Secret } from "../utils/secret.js";
 import {
   DEBUG_LOGGING_HEADER,
   DEBUG_TOKEN_HEADER,
@@ -41,14 +41,13 @@ export function genRequestId(req: IncomingMessage): string {
 }
 
 /**
- * Constant-time equality of two secrets. Length is compared first (a length
- * leak is unavoidable with timingSafeEqual and harmless for a random token).
+ * Whether `got` is the secret `want`, in time that depends on neither value
+ * nor on their lengths (Secret.equals hashes both). An empty or missing
+ * candidate, and an unset secret, equal nothing.
  */
-export function secretEquals(got: string | undefined, want: string): boolean {
+export function secretEquals(got: string | undefined, want: string | Secret): boolean {
   if (got === undefined || got.length === 0) return false;
-  const a = Buffer.from(got);
-  const b = Buffer.from(want);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return Secret.of(want).equals(got);
 }
 
 export interface RequestContextOptions {
@@ -56,7 +55,7 @@ export interface RequestContextOptions {
    * Value of the X-Debug-Token header that turns on debug logging for one
    * request. Empty/undefined disables the feature (no header is inspected).
    */
-  debugToken?: string | undefined;
+  debugToken?: string | Secret | undefined;
   /**
    * The budget of one request in ms (HTTP_REQUEST_TIMEOUT_MS): every outbound
    * call made while handling it gets at most what is left (utils/deadline.ts).
@@ -77,7 +76,7 @@ export function registerRequestContext(
   fastify: FastifyInstance,
   options: RequestContextOptions = {},
 ): void {
-  const debugToken = options.debugToken ?? "";
+  const debugToken = Secret.of(options.debugToken);
   const budget = options.requestTimeoutMs;
   const floor = options.minRequestTimeoutMs ?? 0;
 
@@ -89,7 +88,7 @@ export function registerRequestContext(
       budget === undefined ? asked : asked === undefined ? budget : Math.min(asked, budget);
     const run = (): void => {
       requestIdStorage.run(req.id, () => {
-        if (debugToken === "") {
+        if (!debugToken.isSet) {
           done();
           return;
         }

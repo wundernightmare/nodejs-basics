@@ -157,13 +157,13 @@ describe("redact (property)", () => {
         if (url.split(password).length === 2 && !"xxxxx".includes(password)) {
           expect(masked).not.toContain(password);
         }
-        const out = redact({ dsn: url, list: [url], nested: { url }, secret: url }) as {
-          dsn: string;
+        const out = redact({ target: url, list: [url], nested: { url }, secret: url }) as {
+          target: string;
           list: string[];
           nested: { url: string };
           secret: string;
         };
-        expect(out.dsn).toBe(masked);
+        expect(out.target).toBe(masked);
         expect(out.list[0]).toBe(masked);
         expect(out.nested.url).toBe(masked);
         expect(out.secret).toBe(REDACTED);

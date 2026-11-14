@@ -16,6 +16,10 @@
  *   GET    /admin/log-level  {level, base, expires_at, max_ttl}                  — auth
  *   PUT    /admin/log-level  ?level=debug&ttl=30m (or JSON {level, ttl}) — temporary; auth
  *   DELETE /admin/log-level  Revert to the base level now                        — auth
+ *   GET    /admin/debug-subjects            Subjects being debugged {subjects, max_ttl}  — auth
+ *   PUT    /admin/debug-subjects/{subject}  ?ttl=15m (required) — debug logs and a marked
+ *                                           trace for one tenant / user, temporary; auth
+ *   DELETE /admin/debug-subjects/{subject}  Stop now                                     — auth
  *   POST   /debug/heapdump   Capture a V8 heap snapshot        (if HeapSnapshotService)  — auth
  *   POST   /debug/report     Diagnostic report + heap snapshot (if CrashReportService)   — auth
  *   POST   /debug/cpu-profile ?seconds=10 (1..60) — a .cpuprofile of the process            — auth
@@ -32,6 +36,7 @@
  *
  * Mirrors libs/httpx/admin.go in golang-basics.
  */
+import { getFips } from "node:crypto";
 import http from "node:http";
 
 import {
@@ -45,6 +50,7 @@ import {
 import { processEnv, readInt, readString } from "@base/config";
 import {
   AppLogger,
+  debugSubjects,
   ecsError,
   generateRequestId,
   isValidRequestId,
@@ -53,6 +59,7 @@ import {
   parseLogLevelStrict,
   redact,
   REQUEST_ID_HEADER,
+  Secret,
   serviceIdentity,
   withDebugLogging,
   withRequestId,
@@ -93,6 +100,8 @@ interface AdminContext {
   res: http.ServerResponse;
   url: URL;
   client: string;
+  /** The rest of the path for a route registered with a trailing "/" (already decoded). */
+  param: string;
 }
 
 interface RouteEntry {
@@ -122,8 +131,8 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     @Optional() private readonly crashReport?: CrashReportService,
   ) {
     this.logger = appLogger.child(AdminServerService.name);
-    const token = process.env["ADMIN_TOKEN"] ?? "";
-    this.authMode = token === "" ? "off" : "bearer";
+    const token = Secret.of(process.env["ADMIN_TOKEN"]);
+    this.authMode = token.isSet ? "bearer" : "off";
     this.guard = requireBearer(token, this.logger);
     this.routes = this.buildRoutes();
   }
@@ -153,7 +162,7 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
           {
             "event.action": "admin.started",
             "server.port": this.port,
-            "admin.auth": this.authMode,
+            "admin.guard": this.authMode,
           },
           `Admin server listening — auth=${this.authMode} — ${routes.join(" · ")}`,
         );
@@ -245,6 +254,26 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
         POST: { handler: (ctx) => this.report(ctx, crashReport), auth: true },
       });
     }
+    routes.set("/admin/debug-subjects", {
+      GET: {
+        handler: ({ res }) => {
+          this.sendJson(res, 200, debugSubjects.snapshot());
+        },
+      },
+    });
+    // A trailing "/" makes it a prefix route: the rest of the path is ctx.param.
+    routes.set("/admin/debug-subjects/", {
+      PUT: {
+        handler: (ctx) => {
+          this.putDebugSubject(ctx);
+        },
+      },
+      DELETE: {
+        handler: (ctx) => {
+          this.deleteDebugSubject(ctx);
+        },
+      },
+    });
     routes.set("/debug/cpu-profile", {
       POST: { handler: (ctx) => this.cpuProfile(ctx), auth: true },
     });
@@ -259,13 +288,22 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     res.setHeader(REQUEST_ID_HEADER, requestId);
 
     withRequestId(requestId, () => {
-      void this.dispatch({ req, res, url, client: req.socket.remoteAddress ?? "unknown" });
+      void this.dispatch({
+        req,
+        res,
+        url,
+        client: req.socket.remoteAddress ?? "unknown",
+        param: "",
+      });
     });
   }
 
   private async dispatch(ctx: AdminContext): Promise<void> {
     const { req, res, url } = ctx;
-    const methods = this.routes.get(url.pathname);
+    // A key ending in "/" is a prefix route — never matched as a path itself.
+    const methods = url.pathname.endsWith("/")
+      ? undefined
+      : (this.routes.get(url.pathname) ?? this.prefixRoute(ctx));
     if (methods === undefined) {
       writeProblem(res, { status: 404, detail: "no such route", instance: url.pathname });
       return;
@@ -304,6 +342,21 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
     }
   }
 
+  /** `/admin/debug-subjects/tenant-42` → the "/admin/debug-subjects/" entry, param "tenant-42". */
+  private prefixRoute(ctx: AdminContext): Partial<Record<Method, RouteEntry>> | undefined {
+    const path = ctx.url.pathname;
+    const cut = path.lastIndexOf("/") + 1;
+    if (cut === path.length) return undefined; // nothing after the prefix
+    const methods = this.routes.get(path.slice(0, cut));
+    if (methods === undefined) return undefined;
+    try {
+      ctx.param = decodeURIComponent(path.slice(cut));
+    } catch {
+      return undefined; // a malformed escape names nothing
+    }
+    return methods;
+  }
+
   // ─── Handlers ───────────────────────────────────────────────────────────────
 
   private async readyz({ res }: AdminContext): Promise<void> {
@@ -325,6 +378,9 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       version: serviceIdentity.version,
       revision: process.env["GIT_COMMIT"] ?? "unknown",
       node: process.version,
+      // Whether OpenSSL runs its FIPS provider right now (crypto.getFips()) —
+      // the runtime's answer, not a build flag.
+      fips: getFips() === 1,
       started_at: STARTED_AT.toISOString(),
       uptime_seconds: Math.floor(process.uptime()),
       env: serviceIdentity.environment,
@@ -400,6 +456,60 @@ export class AdminServerService implements OnApplicationBootstrap, OnApplication
       );
     });
     this.sendJson(res, 200, { ...state, previous });
+  }
+
+  /**
+   * PUT /admin/debug-subjects/{subject}?ttl=15m — ttl is required (there is
+   * no "until someone remembers") and capped at LOG_LEVEL_MAX_TTL.
+   */
+  private putDebugSubject({ res, url, client, param }: AdminContext): void {
+    let ttlMs: number;
+    try {
+      ttlMs = parseDuration(url.searchParams.get("ttl") ?? "");
+    } catch {
+      writeProblem(res, {
+        status: 400,
+        detail: "ttl is required: a positive duration such as 15m",
+        instance: url.pathname,
+      });
+      return;
+    }
+    ttlMs = Math.min(ttlMs, logLevel.maxTtlMs);
+    if (!debugSubjects.put(param, ttlMs)) {
+      writeProblem(res, {
+        status: 409,
+        detail: "too many debug subjects; remove one first",
+        instance: url.pathname,
+      });
+      return;
+    }
+    withDebugLogging(() => {
+      this.logger.warn(
+        {
+          "event.action": "debug_subject.added",
+          "debug.subject": param,
+          "debug.subject.ttl_ms": ttlMs,
+          "client.address": client,
+        },
+        "Debug subject added",
+      );
+    });
+    this.sendJson(res, 200, debugSubjects.snapshot());
+  }
+
+  private deleteDebugSubject({ res, client, param }: AdminContext): void {
+    debugSubjects.remove(param);
+    withDebugLogging(() => {
+      this.logger.warn(
+        {
+          "event.action": "debug_subject.removed",
+          "debug.subject": param,
+          "client.address": client,
+        },
+        "Debug subject removed",
+      );
+    });
+    this.sendJson(res, 200, debugSubjects.snapshot());
   }
 
   private async logLevelParams(

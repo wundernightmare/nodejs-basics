@@ -1,5 +1,7 @@
 import type { KafkaJS } from "@confluentinc/kafka-javascript";
 
+import { guardBackground } from "@base/logger";
+
 import { kafkaLogger } from "./kafka-log-creator.js";
 
 const BASE_MS = 1_000;
@@ -52,13 +54,16 @@ export class Reconnect {
   }
 
   start(): void {
-    void this.#run();
+    void this.#guarded();
   }
 
   stop(): void {
     this.#stopped = true;
     clearTimeout(this.#timer);
   }
+
+  /** A throw out of the loop itself (onRetry, a bug here) would end reconnecting for good. */
+  readonly #guarded = guardBackground("kafka-reconnect", () => this.#run());
 
   async #run(): Promise<void> {
     if (this.#stopped) return;
@@ -70,7 +75,7 @@ export class Reconnect {
       const delay = this.#delay;
       this.#delay = Math.min(delay * 2, MAX_MS);
       this.onRetry(err, delay);
-      this.#timer = setTimeout(() => void this.#run(), delay);
+      this.#timer = setTimeout(() => void this.#guarded(), delay);
     }
   }
 }

@@ -62,6 +62,17 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/observability",
   },
   {
+    name: "http_rate_limited_total",
+    kind: "Counter",
+    labels: ["scope"],
+    description: "Requests answered 429 by the server's own rate limit, by scope.",
+    watch:
+      "scope=global: the service sheds load — more traffic than HTTP_RATE_LIMIT allows. " +
+      "scope=client: single addresses over HTTP_RATE_LIMIT_PER_CLIENT, or (with many new " +
+      "addresses) the client table is full.",
+    source: "packages/observability",
+  },
+  {
     name: "http_unhandled_errors_total",
     kind: "Counter",
     labels: [],
@@ -454,6 +465,16 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     labels: ["version", "revision"],
     description: "Build identity of the running service; always 1.",
     source: "packages/observability",
+  },
+  {
+    name: "background_panics_total",
+    kind: "Counter",
+    labels: ["task"],
+    description: "Unexpected errors that escaped a background task, by task.",
+    watch:
+      "Any: a bug in a background loop (outbox relay, Kafka reconnect); the process logged " +
+      "background.panic with the stack and stopped itself in order.",
+    source: "packages/logger",
   },
   {
     name: "log_dropped_total",

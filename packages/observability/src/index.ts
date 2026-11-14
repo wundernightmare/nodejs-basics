@@ -13,6 +13,16 @@ export {
 } from "./crash-report.service.js";
 export { HeapSnapshotService } from "./heap-snapshot.service.js";
 export { registerHttpInstrumentation } from "./http-metrics.js";
+export {
+  type Clock,
+  DEFAULT_RATE_CLIENTS_MAX,
+  parseTrustedProxies,
+  type RateDecision,
+  type RateLimitConfig,
+  RateLimiter,
+  registerRateLimit,
+  TokenBucket,
+} from "./http-rate-limit.js";
 export { registerNodeMetrics } from "./node-metrics.js";
 export { ObservabilityModule, type ObservabilityModuleOptions } from "./observability.module.js";
 export { OtelShutdownService } from "./otel-shutdown.service.js";

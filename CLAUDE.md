@@ -218,6 +218,19 @@ high-signal, easy-to-miss bits.
   scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
+- **Log fields are masked by name** (`@base/logger` redact.ts, also
+  `/admin/config`): a key containing `password|token|secret|auth|cert|dsn|
+  cookie|credential|api_key|…` is written as `[redacted]` — do not name an
+  ordinary field `auth_mode` or `token_count` (a number passes, a string does
+  not). Credentials inside URLs / DSNs are masked in any string field; the
+  message is never rewritten, so values go in fields.
+- **Background work nobody awaits** (a timer loop, a reconnect) runs under
+  `guardBackground(name, fn)` (`@base/logger`): expected failures are the
+  task's own business, what escapes is counted
+  (`background_panics_total{task}`), logged and stops the process in order.
+- **Inbound rate limit** (`HTTP_RATE_*`, registerRateLimit in
+  `@base/observability`) is off by default; `HTTP_TRUSTED_PROXIES` →
+  Fastify `trustProxy` decides `request.ip`.
 - **Request budget**: `HTTP_REQUEST_TIMEOUT_MS` starts a deadline per request
   (registerRequestContext; `x-request-timeout-ms` can shorten it, not below
   `HTTP_REQUEST_TIMEOUT_MIN_MS`). Outbound

@@ -54,7 +54,7 @@ import type { Pool } from "pg";
 import { readInt } from "@base/config";
 import { PG_POOL, withDbOperation } from "@base/database";
 import { KafkaProducerService, toKafkaSendError } from "@base/kafka";
-import { AppLogger, ecsError } from "@base/logger";
+import { AppLogger, ecsError, guardBackground } from "@base/logger";
 
 interface OutboxRow {
   id: string;
@@ -255,10 +255,17 @@ export class OutboxRelay implements OnApplicationBootstrap, BeforeApplicationShu
   private schedule(delayMs: number): void {
     if (this.stopping) return;
     this.timer = setTimeout(() => {
-      this.running = this.tick();
+      this.running = this.guardedTick();
     }, delayMs);
     this.timer.unref();
   }
+
+  /**
+   * tick() handles a failed pass itself (log, back off). What still escapes
+   * it is a bug — and a relay that silently never runs again means events
+   * that are never published: stop the process in order instead.
+   */
+  private readonly guardedTick = guardBackground("outbox-relay", () => this.tick());
 
   private async tick(): Promise<void> {
     let delay = this.intervalMs;

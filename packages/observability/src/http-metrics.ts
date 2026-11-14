@@ -23,6 +23,8 @@
 import { metrics } from "@opentelemetry/api";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { redactQuery } from "@base/logger";
+
 /** Latency buckets (seconds) shared by the HTTP server and client, db and Kafka. */
 export const LATENCY_BUCKETS_SECONDS = [
   0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
@@ -101,7 +103,7 @@ export function registerHttpInstrumentation(fastify: FastifyInstance): void {
           "http.request.method": request.method,
           "http.request.id": request.id,
           "url.path": qIdx === -1 ? url : url.slice(0, qIdx),
-          ...(qIdx !== -1 && { "url.query": url.slice(qIdx + 1) }),
+          ...(qIdx !== -1 && { "url.query": redactQuery(url.slice(qIdx + 1)) }),
           "client.address": request.ip,
         },
         "HTTP request received",
