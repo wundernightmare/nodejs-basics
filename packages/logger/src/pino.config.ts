@@ -4,6 +4,7 @@
  *  - OpenTelemetry trace/span context injection via mixin
  *  - Request context (http.request.id) injection via mixin
  *  - ECS-compatible Fastify request/response serializers
+ *  - Masking of private data in every attribute (redact.ts; LOG_REDACT_KEYS)
  *  - Sampling of repetitive trace/debug/info lines (`logSampler`, see log-sampler.ts)
  *  - A runtime-adjustable level (`logLevel`, see log-level.ts) and per-request
  *    debug logging (withDebugLogging() in @base/common)
@@ -26,7 +27,9 @@ import pino from "pino";
 
 import { isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
 
+import { DebugSubjects, runAsDebugSubject } from "./debug-subjects.js";
 import { LogSampler, messageOf, sampleSetting } from "./log-sampler.js";
+import { logRecordMasker, parseRedactKeys, redactQuery, redactUrl } from "./redact.js";
 import {
   DEFAULT_LOG_LEVEL_MAX_TTL_MS,
   LogLevel,
@@ -90,12 +93,12 @@ function contextMixin(): Record<string, string> {
 
 export function ecsError(err: unknown): Record<string, string | undefined> {
   if (!(err instanceof Error)) {
-    return { "error.message": String(err) };
+    return { "error.message": redactUrl(String(err)) };
   }
   return {
     "error.type": err.constructor?.name ?? err.name,
-    "error.message": err.message,
-    "error.stack_trace": err.stack,
+    "error.message": redactUrl(err.message),
+    "error.stack_trace": err.stack === undefined ? undefined : redactUrl(err.stack),
   };
 }
 
@@ -123,7 +126,7 @@ const serializers: NonNullable<pino.LoggerOptions["serializers"]> = {
       "http.request.method": req["method"],
       "http.request.id": req["id"],
       "url.path": qIdx === -1 ? url : url.slice(0, qIdx),
-      ...(qIdx !== -1 && { "url.query": url.slice(qIdx + 1) }),
+      ...(qIdx !== -1 && { "url.query": redactQuery(url.slice(qIdx + 1)) }),
       "client.address": req["remoteAddress"],
       "client.port": req["remotePort"],
     };
@@ -131,7 +134,14 @@ const serializers: NonNullable<pino.LoggerOptions["serializers"]> = {
   res(res: Record<string, unknown>) {
     return { "http.response.status_code": res["statusCode"] };
   },
-  err: pino.stdSerializers.err,
+  // Runs after formatters.log, on its own output: the message and the stack
+  // of an error are masked here (a driver puts the DSN into both).
+  err(err: unknown) {
+    const out = pino.stdSerializers.err(err as Error) as unknown as Record<string, unknown>;
+    if (typeof out["message"] === "string") out["message"] = redactUrl(out["message"]);
+    if (typeof out["stack"] === "string") out["stack"] = redactUrl(out["stack"]);
+    return out;
+  },
 };
 
 // ─── Dev pretty-print transport ───────────────────────────────────────────────
@@ -194,10 +204,25 @@ export const logLevel = new LogLevel(baseLevelFromEnv(), {
 });
 
 /**
+ * The subjects being debugged in this process (debug-subjects.ts); the admin
+ * server's /admin/debug-subjects drives the list, LOG_LEVEL_MAX_TTL caps it.
+ */
+export const debugSubjects = new DebugSubjects(() => logLevel.maxTtlMs);
+
+/** Runs fn as the work of `subject`: with debug logs and a marked span while it is listed. */
+export function withDebugSubject<T>(subject: string | undefined, fn: () => T): T {
+  return runAsDebugSubject(debugSubjects, subject, fn);
+}
+
+/**
  * pino options that enforce `level` in a logMethod hook. Exported so tests can
  * build an isolated logger with the same semantics on a sink of their own.
  */
-export function buildPinoOptions(level: LogLevel, sampler?: LogSampler): pino.LoggerOptions {
+export function buildPinoOptions(
+  level: LogLevel,
+  sampler?: LogSampler,
+  redactKeys: ReadonlySet<string> = new Set(),
+): pino.LoggerOptions {
   return {
     messageKey: "message",
     // Pinned: the effective level is `level`, enforced in hooks.logMethod (see file header).
@@ -212,30 +237,11 @@ export function buildPinoOptions(level: LogLevel, sampler?: LogSampler): pino.Lo
     },
     timestamp: ecsTimestamp,
     mixin: contextMixin,
-    formatters,
+    // Masking of private data in every attribute (redact.ts): by key name, by
+    // the shape of a value, in nested objects. formatters.log sees the merged
+    // record — the mixin's fields included — before it is serialized.
+    formatters: { ...formatters, log: logRecordMasker(redactKeys) },
     serializers,
-    // Pino paths: `*.password` means "a NESTED `password` one level down" — it
-    // matches neither a top-level `password` nor a flat ECS key such as
-    // `"user.password"` (one key containing a dot). Flat keys take the bracket
-    // form. pino.config.spec.ts checks every entry against a real logger.
-    redact: {
-      paths: [
-        '["user.password"]',
-        '["user.token"]',
-        '["auth.token"]',
-        '["auth.secret"]',
-        '["sasl.password"]',
-        "password",
-        "secret",
-        "token",
-        "*.password",
-        "*.secret",
-        "*.token",
-        "req.headers.authorization",
-        "req.headers.cookie",
-      ],
-      censor: "[REDACTED]",
-    },
   };
 }
 
@@ -251,4 +257,7 @@ export const logSampler = new LogSampler({
   thereafter: sampleSetting(process.env["LOG_SAMPLE_THEREAFTER"], 100),
 });
 
-export const pinoLogger = pino(buildPinoOptions(logLevel, logSampler), prettyTransport);
+export const pinoLogger = pino(
+  buildPinoOptions(logLevel, logSampler, parseRedactKeys(process.env["LOG_REDACT_KEYS"])),
+  prettyTransport,
+);

@@ -3,7 +3,7 @@ import { Writable } from "node:stream";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { withDebugLogging, withRequestId } from "@base/common";
+import { Secret, withDebugLogging, withRequestId } from "@base/common";
 
 import { logEnvelopeProblems, testCase } from "@base/testing";
 
@@ -81,7 +81,26 @@ function written(fields: Record<string, unknown>): string {
   return lines.join("");
 }
 
-describe("pino redact", () => {
+/** The single record a real logger with the shared options writes. */
+function record(
+  fields: Record<string, unknown>,
+  extraKeys: string[] = [],
+): Record<string, unknown> {
+  const lines: string[] = [];
+  const sink = new Writable({
+    write(chunk: Buffer, _enc, cb) {
+      lines.push(chunk.toString());
+      cb();
+    },
+  });
+  pino(buildPinoOptions(new LogLevel("info"), undefined, new Set(extraKeys)), sink).info(
+    fields,
+    "msg with postgres://app:in-the-message@db stays as written",
+  );
+  return JSON.parse(lines.join("")) as Record<string, unknown>;
+}
+
+describe("masking of private data in log records", () => {
   // Flat ECS keys, root-level and nested secrets: none may reach the stream.
   const sensitive: Record<string, unknown>[] = [
     { "user.password": "p1-plaintext" },
@@ -93,17 +112,111 @@ describe("pino redact", () => {
     { secret: "p7-plaintext" },
     { token: "p8-plaintext" },
     { db: { password: "p9-plaintext" } },
+    { api_key: "p10-plaintext" },
+    { "client.credential": "p11-plaintext" },
+    { deep: { er: { client_secret: "p12-plaintext" } } },
+    { headers: { Authorization: "Bearer p13-plaintext", "Set-Cookie": ["s=p14-plaintext"] } },
+    { credentials: { user: "p15-plaintext", list: ["p16-plaintext"] } },
+    { "db.url": "postgres://app:p17-plaintext@db:5432/app" },
+    { "url.full": "https://api.example/x?page=2&access_token=p18-plaintext" },
+    { "error.message": "connect failed: dial postgresql://app:p19-plaintext@db/app" },
+    { dsn_like: "host=db user=app password=p20-plaintext sslmode=require" },
+    { "db.options": "host=db user=app password='p21 plaintext' sslmode=require" },
+    { targets: ["redis://:p22-plaintext@valkey:6379/0"] },
+    { "url.query": "token=p23-plaintext" },
   ];
 
-  it.each(sensitive)("censors %o", (fields) => {
+  it.each(sensitive)("masks %o", async (fields) => {
+    await testCase("NB-1236", "Logs: a secret never reaches the stream, by key or by shape");
     const out = written(fields);
     expect(out).not.toMatch(/plaintext/u);
-    expect(out).toContain("[REDACTED]");
+    expect(out).toMatch(/\[redacted\]|xxxxx/u);
+  });
+
+  it("masks by shape without losing the rest of the value", async () => {
+    await testCase("NB-1237", "Logs: masking by shape keeps the rest of the value");
+    const out = record({
+      "db.url": "postgres://app:s3cret@db:5432/app?sslmode=require",
+      "url.full": "https://api.example/x?page=2&api_key=abc&sort=asc",
+      "error.message": "dial tcp: postgres://app:s3cret@db refused (attempt=2)",
+    });
+    expect(out["db.url"]).toBe("postgres://app:xxxxx@db:5432/app?sslmode=require");
+    expect(out["url.full"]).toBe("https://api.example/x?page=2&api_key=[redacted]&sort=asc");
+    expect(out["error.message"]).toBe("dial tcp: postgres://app:xxxxx@db refused (attempt=2)");
+  });
+
+  it("leaves what is not a secret: numbers, booleans, the empty string, the message", async () => {
+    await testCase("NB-1238", "Logs: what is not a secret is left alone");
+    const when = new Date("2026-01-01T00:00:00Z");
+    const out = record({
+      max_tokens: 4096,
+      debug_token: true,
+      password: "",
+      "http.response.status_code": 200,
+      "url.path": "/tasks/1",
+      when,
+      nothing: null,
+      "event.action": "admin.auth.rejected",
+    });
+    expect(out).toMatchObject({
+      max_tokens: 4096,
+      debug_token: true,
+      password: "",
+      "http.response.status_code": 200,
+      "url.path": "/tasks/1",
+      when: when.toISOString(),
+      nothing: null,
+      "event.action": "admin.auth.rejected",
+      message: "msg with postgres://app:in-the-message@db stays as written",
+    });
+  });
+
+  it("LOG_REDACT_KEYS adds exact key names, case-insensitive, at any depth", async () => {
+    await testCase("NB-1239", "Logs: LOG_REDACT_KEYS adds exact key names");
+    const out = record(
+      { Email: "a@example.com", user: { iban: "DE00" }, email_domain: "example.com" },
+      ["email", "iban"],
+    );
+    expect(out).toMatchObject({
+      Email: "[redacted]",
+      user: { iban: "[redacted]" },
+      email_domain: "example.com", // exact names only — not a substring rule
+    });
+  });
+
+  it("a Secret prints its fingerprint, an Error under `err` is masked in message and stack", async () => {
+    await testCase("NB-1240", "Logs: a Secret prints its fingerprint, an error is masked");
+    const secret = Secret.of("p-plaintext");
+    const out = record({
+      holder: secret,
+      api_token: secret,
+      err: new Error("connect to postgres://app:p-plaintext@db failed"),
+    });
+    expect(JSON.stringify(out)).not.toMatch(/p-plaintext/u);
+    expect(out["holder"]).toBe(`[redacted:${secret.fingerprint()}]`);
+    expect(out["api_token"]).toBe(`[redacted:${secret.fingerprint()}]`);
+    expect((out["err"] as { message: string }).message).toBe(
+      "connect to postgres://app:xxxxx@db failed",
+    );
+  });
+
+  it("survives a cycle and a record deeper than it walks", async () => {
+    await testCase("NB-1241", "Logs: masking survives cycles and deep records");
+    const cyclic: Record<string, unknown> = { name: "a" };
+    cyclic["self"] = cyclic;
+    expect(() => record({ cyclic })).not.toThrow();
+
+    let deep: Record<string, unknown> = { password: "p-plaintext" };
+    for (let i = 0; i < 20; i += 1) deep = { next: deep };
+    expect(() => record({ deep })).not.toThrow();
   });
 
   it("never writes request headers (the req serializer keeps none)", () => {
     const out = written({
-      req: { url: "/x", headers: { authorization: "Bearer plaintext", cookie: "s=plaintext" } },
+      req: {
+        url: "/x?token=plaintext",
+        headers: { authorization: "Bearer plaintext", cookie: "s=plaintext" },
+      },
     });
     expect(out).not.toMatch(/plaintext/u);
   });

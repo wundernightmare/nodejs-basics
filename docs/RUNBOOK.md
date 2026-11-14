@@ -57,7 +57,31 @@ curl -X PUT ':9090/admin/log-level?level=debug&ttl=30m' -H "Authorization: Beare
 ```
 
 It reverts by itself (`LOG_LEVEL_MAX_TTL`). One request only: send it with
-`X-Debug-Token: $DEBUG_TOKEN`.
+`X-Debug-Token: $DEBUG_TOKEN`. One tenant or user, on every replica you ask:
+
+```sh
+curl -X PUT ':9090/admin/debug-subjects/tenant-42?ttl=15m' -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+Logs never show a credential: values under secret-looking keys are
+`[redacted]`, passwords in URLs `xxxxx`. A field you expected and see
+redacted has a name that looks like a secret (`auth…`, `…token…`).
+
+## Clients get 429
+
+The service's own limit (`HTTP_RATE_LIMIT`, `HTTP_RATE_LIMIT_PER_CLIENT`; off
+unless set). `http_rate_limited_total{scope}` says which one: `global` — more
+traffic than the service is allowed to take, scale or raise the limit;
+`client` — single addresses over their share. If every request is refused as
+one client behind a load balancer, `HTTP_TRUSTED_PROXIES` is missing: the
+balancer's address is the client. `client.address` in the access log shows
+who the service thinks is calling.
+
+## A worker or relay stopped by itself
+
+`background.panic` in the logs (with the stack) and
+`background_panics_total{task}`: a bug escaped a background loop and the
+process stopped in order to be restarted. The stack names the line.
 
 ## Signals
 
