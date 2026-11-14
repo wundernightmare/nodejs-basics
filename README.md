@@ -1245,7 +1245,7 @@ same contract as the Go sibling. The harness that makes that cheap is
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Unit**        | `*.spec.ts` next to the code — vitest project `unit`, `just test`                                                                                                       | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server                                                                                                                                                                                                                                                                                                               | anything that needs a real dependency                                                                 |
 | **Property**    | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000)            | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec                                                      |
-| **Mutation**    | `packages/resilient-client` — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
+| **Mutation**    | the HTTP and gRPC clients, `Secret`, the tier cache, the rate limit — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
 | **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration`                                                                                         | the libs against real Postgres / Valkey / Redpanda (containers, the images of `docker/deps.yml`), and against the same behind Toxiproxy (`*chaos*`: outages, latency, resets): the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout                                                                                                                                                                                                                                                                       | route behaviour already proven with fakes; process-level behaviour                                    |
 | **E2E**         | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes)                                                             | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ                                                                                                                                                                                                                                                                                                                                  | per-route behaviour, error bodies (unit), the libs' semantics (integration)                           |
 | **Smoke**       | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job                                                                                                | the distroless images start and serve                                                                                                                                                                                                                                                                                                                                                                                                                                                   | everything else                                                                                       |
@@ -1552,25 +1552,40 @@ comparison, an operator, a branch, empties a literal), re-runs the specs that
 cover the mutated line (`coverageAnalysis: perTest`) and reports every mutant
 that _survived_. It is worth its cost on small, pure, decision-heavy code and
 noise elsewhere, so — like the Go sibling — it is scoped, not global:
-[`stryker.config.mjs`](stryker.config.mjs) mutates `packages/resilient-client`
-only (backoff, cache, errors, pool, the client; not the OTel wiring).
+[`stryker.config.mjs`](stryker.config.mjs) lists the targets, each a run of
+its own with its own threshold:
+
+| Target | What | Score when added | `break` |
+| --- | --- | --- | --- |
+| `resilient-client` | backoff, cache, errors, pool, the client (not the OTel wiring) | 56.8 % | 50 |
+| `grpc-client` | config, service config, the policy | 93.5 % | 88 |
+| `secret` | `Secret` | 98.0 % (the survivor is equivalent) | 95 |
+| `tier-cache` | the two-level cache | 75.7 % | 70 |
+| `rate-limit` | the inbound rate limit | 87.8 % | 82 |
 
 ```sh
-just mutate          # pnpm mutate → reports/mutation/mutation.html (+ mutation.json)
+just mutate              # every target → reports/mutation/<target>.html (+ .json)
+pnpm mutate tier-cache   # one
 ```
 
-Score when introduced: 56.8 % (backoff 95, cache 86, errors 88, pool 39,
-client 56). `thresholds.break` (50) is a ratchet like the coverage gate: the
-run fails below it; raise it as survivors are triaged — a survivor is a
-missing assertion or dead code — lower it only with a reason in the commit.
+`break` is a ratchet like the coverage gate: the run fails below it; raise it
+as survivors are triaged — a survivor is a missing assertion, dead code or an
+equivalent mutant — lower it only with a reason in the commit. `@base/logger`
+(masking, debug subjects, the background guard) is not a target yet:
+Stryker 10's instrumenter throws on one of its files.
+
 Two things make it run in this workspace: Stryker works **in place**
 (`inPlace: true`, the tree is restored on exit, backup under `.stryker-tmp/`)
 because pnpm's `node_modules` symlinks and the `source` export condition do
 not survive a sandbox copy — so never run it alongside a formatter or another
 vitest run; and the root `vitest.config.ts` drops Allure and the integration
-project when `STRYKER_MUTATOR_WORKER` is set. CI runs it nightly and on
-demand (`mutation` job), never per PR: 20 s on a 32-core box, minutes on a
-2-core runner.
+project when `STRYKER_MUTATOR_WORKER` is set. **A run that is killed leaves
+every source file instrumented**: `git checkout -- . && rm -f
+stryker-setup-*.js && rm -rf .stryker-tmp` — which is why `pnpm mutate`
+refuses to start on uncommitted changes under `packages/` or `apps/`
+(`MUTATE_DIRTY=1` overrides). CI runs it nightly and on demand (`mutation`
+job), never per PR: a minute or two per target on a 32-core box, several
+times that on a 2-core runner.
 
 ### Flakiness policy
 
@@ -1671,7 +1686,7 @@ block a change:
 | `just contracts-check [BASE]`          | generated files current + oasdiff breaking-change gate         |
 | `just schemathesis`                    | generative layer against the built api (needs `just deps`)     |
 | `just cov-all` / `cov-check`           | three-layer coverage, merged + gated                           |
-| `just fuzz` / `mutate`                 | property specs with 5000 cases / StrykerJS on resilient-client |
+| `just fuzz` / `mutate`                 | property specs with 5000 cases / StrykerJS on the targets of stryker.config.mjs |
 | `just allure-report`                   | one Allure HTML report from every layer                        |
 | `just e2e` / `e2e-smoke` / `e2e-spawn` | Playwright vs images / @smoke / spawned processes              |
 | `pnpm check`                           | typecheck + lint + format:check                                |

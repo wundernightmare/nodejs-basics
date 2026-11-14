@@ -21,7 +21,7 @@
     "test:integration": "vitest run --project integration",
     "test:all": "vitest run",
     "fuzz": "FC_NUM_RUNS=${FC_NUM_RUNS:-5000} vitest run --project unit .prop.spec.ts",
-    "mutate": "stryker run",
+    "mutate": "node scripts/mutate.mjs",
     "cov:unit": "node scripts/cover.mjs unit",
     "cov:integration": "node scripts/cover.mjs integration",
     "cov:e2e": "node scripts/cover.mjs e2e",

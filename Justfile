@@ -265,9 +265,10 @@ test-watch-integration:
 fuzz FC_NUM_RUNS="5000":
     FC_NUM_RUNS={{FC_NUM_RUNS}} pnpm fuzz
 
-# Mutation testing of @base/resilient-client (StrykerJS, stryker.config.mjs) →
-# reports/mutation/mutation.html; the score table is printed. Runs in place —
-# do not run a formatter or another vitest run alongside it.
+# Mutation testing (StrykerJS) of the targets in stryker.config.mjs →
+# reports/mutation/<target>.html; the score tables are printed. Runs in place —
+# do not run a formatter or another vitest run alongside it, and start from a
+# committed tree (a killed run is undone with `git checkout`).
 mutate:
     pnpm mutate
 
