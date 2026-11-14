@@ -565,6 +565,9 @@ Every key is also a YAML path (`--config-reference` prints both).
 | — | `allow.auto.create.topics` | `true` | the client may ask; the broker decides (see "Topics") |
 | `KAFKA_CONSUMER_PARTITIONS_CONCURRENTLY` | kafkajs-compat `partitionsConsumedConcurrently` | 1 | order holds per partition at any value |
 | `KAFKA_CONSUMER_MAX_RETRIES` | — (runner) | 5 | then the message is parked; see "Commits" |
+| `KAFKA_CONSUMER_RETRY_BACKOFF_MS` / `_MAX_MS` | — (runner) | 1000 / 60000 | the pause before a failed message is handled again, doubling |
+| `KAFKA_CONSUMER_HANDLER_TIMEOUT_MS` | — (runner) | 30000 | one attempt's deadline; keep it well under `max.poll.interval.ms` |
+| `KAFKA_CONSUMER_DRAIN_TIMEOUT_MS` | — (runner) | 10000 | how long a stop waits for handlers in flight |
 | `KAFKA_DEAD_LETTER_TOPIC` | — (runner) | `{topic}.dlq` | `none` keeps a failing message on its partition |
 | `KAFKA_EXTRA_PROPERTIES` / `KAFKA_PRODUCER_` / `KAFKA_CONSUMER_EXTRA_PROPERTIES` | anything else | — | applied last; see "Extra properties" |
 
@@ -665,7 +668,8 @@ then go to another member, which handles the message again.
 partition hands over at most the message in flight, which the new owner
 handles again (at least once; handlers are idempotent — the worker's job id is
 the event id). A handler that throws gets its partition paused and the message
-again after a backoff (1 s → 60 s); after `KAFKA_CONSUMER_MAX_RETRIES` (5)
+again after a backoff (`KAFKA_CONSUMER_RETRY_BACKOFF_MS` doubling up to
+`KAFKA_CONSUMER_RETRY_BACKOFF_MAX_MS`: 1 s → 60 s); after `KAFKA_CONSUMER_MAX_RETRIES` (5)
 retries the message goes to the dead-letter topic `KAFKA_DEAD_LETTER_TOPIC`
 (`{topic}.dlq` — key, value and headers as consumed, plus `dlq_reason`,
 `dlq_error`, `dlq_source_topic` / `_partition` / `_offset`, `dlq_attempts`)
@@ -677,6 +681,20 @@ down) is waited out and never parked. Until the dead-letter topic exists, or
 with `none`, the message keeps its partition. Alert on
 `kafka_consumer_records_total{result="dead_lettered"}` (log: `kafka.dead_lettered`); replay a fixed
 batch by producing the dead-letter topic back to its source.
+
+**Each attempt has a deadline** (`KAFKA_CONSUMER_HANDLER_TIMEOUT_MS`, 30 s):
+past it the attempt fails (`KafkaHandlerTimeoutError`) and is retried like any
+other failure, instead of holding its partition until `max.poll.interval.ms`
+throws the member out of the group. The deadline is the attempt's budget —
+the handler's Postgres, Valkey, HTTP and gRPC calls take what is left of it —
+and `from.signal` aborts, for a handler that does its own waiting. JavaScript
+cannot stop a function: one that ignores both runs on, so the next attempt
+may overlap it; a handler is idempotent anyway.
+
+**A stop is bounded** (`KAFKA_CONSUMER_DRAIN_TIMEOUT_MS`, 10 s): the consumer
+waits that long for the handlers in flight, then leaves them. What they were
+handling is not committed and comes again after the restart. Keep it under
+the pod's termination grace period.
 
 #### TLS and SASL with your own CA
 

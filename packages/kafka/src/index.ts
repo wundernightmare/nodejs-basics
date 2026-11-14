@@ -8,6 +8,7 @@ export {
   KafkaBackpressureError,
   type KafkaConsumerOptions,
   KafkaConsumerRunner,
+  KafkaHandlerTimeoutError,
   KafkaPermanentError,
 } from "./kafka-consumer.js";
 export { kafkaLogger } from "./kafka-log-creator.js";
