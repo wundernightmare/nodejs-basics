@@ -20,6 +20,16 @@ services:
     container_name: nodejs-basics-otelcol
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # Tail-sampling knobs (.env.example). The defaults repeat the ones in
+      # the config file, which also stands on its own outside compose.
+      OTEL_TAIL_DECISION_WAIT: ${OTEL_TAIL_DECISION_WAIT:-10s}
+      OTEL_TAIL_NUM_TRACES: ${OTEL_TAIL_NUM_TRACES:-50000}
+      OTEL_TAIL_SLOW_THRESHOLD_MS: ${OTEL_TAIL_SLOW_THRESHOLD_MS:-500}
+      # The collector file's own default is 1 %: what production runs. This
+      # local stack keeps everything unless told otherwise — a developer
+      # looking for the one request they just made must find it.
+      OTEL_TAIL_SAMPLING_PERCENTAGE: ${OTEL_TAIL_SAMPLING_PERCENTAGE:-100}
     volumes:
       - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro,z   # z: SELinux label (Fedora/RHEL), no-op elsewhere
     ports:

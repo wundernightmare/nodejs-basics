@@ -1019,6 +1019,28 @@ Traces are sampled by `OTEL_TRACES_SAMPLER_RATIO` (0..1, default 1) for the
 traces a service starts; a request that arrives inside a trace keeps its
 caller's decision, so a trace is whole or absent.
 
+That is **head sampling**: decided when the trace starts, before anyone knows
+whether it will fail. The collector of the local stack
+(`docker/otel-collector/config.yaml`) does **tail sampling** instead — it
+holds a trace until it is over and keeps it whole when it has an error, when
+it is slower than `OTEL_TAIL_SLOW_THRESHOLD_MS` (500), when a span carries
+`debug.subject` (a subject listed through `/admin/debug-subjects`), plus
+`OTEL_TAIL_SAMPLING_PERCENTAGE` of the rest (1 % in the file; the local
+stack overrides it to 100 so the request you just made is there). Two rules
+come with it:
+
+1. **With tail sampling, head-sample at 1.0** (the default). The collector
+   only sees what the services send: at a lower ratio an error trace the SDK
+   did not sample never arrives, and no policy can bring it back.
+2. **One collector must see every span of a trace.** With several collector
+   replicas, put a tier with the `loadbalancing` exporter
+   (`routing_key: traceID`) in front of them; behind a plain load balancer
+   each replica decides on a fragment.
+
+`packages/observability/src/tail-sampling.integration.spec.ts` runs that very
+file in a real collector in front of a real Jaeger and asserts each policy —
+and that the collector accepts the configuration at all.
+
 ## Patterns NOT included (build per project)
 
 - **Auth (JWT, OAuth, MFA, PATs)** — strongly project-specific.
