@@ -31,6 +31,14 @@ overrides:
   qs: ^6.16.1                     # GHSA-4mjr-xmp4-gh2g / x5fp-wj9c-mxmx / q8mj-m7cp-5q26 / 6pq8-jhm2-2vcw via @stryker-mutator → typed-rest-client
   source-map-js: ^1.2.2           # GHSA-68fv-2mgg-jv7q via vite/postcss + @vitest/coverage-v8 → magicast
   '@scalar/json-magic>undici': ^7.30.1 # 21 GHSAs (undici floor, was the exact 7.24.4 pin) via @typespec/openapi3 → @scalar/json-magic 0.13.5
+  # GHSA-3g3m-2fjr-6pw4 (an aborted walk keeps reading directories; fixed only
+  # in 14.0.2) via @fastify/static 10.1.5 → glob 13 and, dev-only, testcontainers
+  # → archiver-utils → glob 10. The selector leaves a future fixed copy alone.
+  'glob@>=9 <14.0.2': ^14.0.4
+  # GHSA-g3hv-75wg-m249 (globparts amplification; fixed only in 11.0.1) via
+  # @fastify/otel, @stryker-mutator/core (~10.2.4) and glob. minimatch 5 under
+  # @redocly/openapi-core / readdir-glob is not affected and keeps its old API.
+  'minimatch@>=7 <11.0.1': ^11.0.5
 
 # Peers declared older than what we run, checked to work (drop an entry once
 # the package widens its range): @sentry/nestjs 10 and nestjs-zod predate
@@ -81,3 +89,7 @@ trustPolicy: no-downgrade
 # minimumReleaseAgeExclude:
 #   # CVE floor, released 2026-08-31. Remove after <release date + 7 days>.
 #   - '@opentelemetry/core@2.11.0'
+minimumReleaseAgeExclude:
+  # Drops deepmerge (GHSA-gcqx-w48m-w2h4, no fixed deepmerge release exists);
+  # released 2026-11-08, clears the window on 2026-11-15. Remove after 2026-11-16.
+  - 'nestjs-zod@5.6.0'
