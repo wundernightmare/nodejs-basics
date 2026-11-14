@@ -755,6 +755,8 @@ dead-letter topics are provisioned like any other.
   (`kafka.log.suppressed`); `debug` in `KAFKA_EXTRA_PROPERTIES` turns on its
   debug contexts (`{"debug":"broker,protocol"}`).
 - What to do about each signal: [docs/RUNBOOK.md](docs/RUNBOOK.md).
+- What a service built from this repo gets, rule by rule, with the test that
+  proves each: [docs/PRODUCTION-CHECKLIST.md](docs/PRODUCTION-CHECKLIST.md).
 
 ### Migrations
 

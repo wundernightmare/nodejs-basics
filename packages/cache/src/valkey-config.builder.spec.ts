@@ -41,8 +41,13 @@ describe("valkey config builder", () => {
       port: 6380,
       db: 2,
       username: "user",
-      password: "pw",
     });
+    // Typed: the password shows itself nowhere — only to the driver's options.
+    expect(built.password.expose()).toBe("pw");
+    expect(JSON.stringify(built)).not.toContain('"pw"');
+    expect(String(built.password)).toMatch(/^\[redacted:[0-9a-f]{8}\]$/u);
+    expect(toClientOptions(built)).toMatchObject({ password: "pw" });
+    expect(toBullMqOptions(built)).toMatchObject({ password: "pw" });
     expect(built.tls).toEqual({ rejectUnauthorized: true });
   });
 
@@ -51,7 +56,11 @@ describe("valkey config builder", () => {
     const built = buildValkeyConfig(
       config({ VALKEY_URL: "redis://u:fromurl@localhost:6379", VALKEY_PASSWORD: "fromenv" }),
     );
-    expect(built.password).toBe("fromenv");
+    expect(built.password.expose()).toBe("fromenv");
+    // Without one, none is passed to the driver at all.
+    const open = buildValkeyConfig(config({}));
+    expect(open.password.isSet).toBe(false);
+    expect(toClientOptions(open)).not.toHaveProperty("password");
   });
 
   it("plaintext with three retries per request by default; no VALKEY_URL, no client", async () => {
