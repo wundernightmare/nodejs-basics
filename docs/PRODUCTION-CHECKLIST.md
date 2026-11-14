@@ -70,7 +70,7 @@ Not here: a flight recorder (a Go runtime facility) and a FIPS build mode —
 | Dependencies pinned: exact versions, a frozen lockfile, a release-age window, actions pinned by SHA; a waiver has a date | `pnpm-workspace.yaml`, `scripts/check-waivers.sh` | CI `sast` (waivers), `deps` |
 | Real dependencies in tests, not mocks: Postgres, Valkey, Kafka, S3, Toxiproxy, PgBouncer, an OTel collector, a gRPC server, an HTTP edge | `packages/testing` (containers started by the test run) | CI `integration` |
 | Property-based tests for parsers and pure logic | `*.prop.spec.ts` (fast-check) | CI `unit`; more runs in the nightly `fuzz` job |
-| Mutation testing | `stryker.config.mjs` — the HTTP client only, so far | nightly `mutation` job |
+| Mutation testing of decision logic | `stryker.config.mjs`: the HTTP and gRPC clients, `Secret`, the tier cache, the inbound rate limit | nightly `mutation` job |
 | Coverage of the whole pyramid, merged; a change may not lower any package's | `scripts/cover.mjs`, `scripts/cover.config.mjs` | CI `coverage` |
 | The API is its contract: the server is checked against the OpenAPI document | `api/`, `scripts/schemathesis.sh` | CI `contracts`, `schemathesis` |
 
