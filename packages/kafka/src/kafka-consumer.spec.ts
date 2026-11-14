@@ -404,4 +404,36 @@ describe("KafkaConsumerRunner — time limits", () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0); // the drain timer does not outlive the stop
   });
+  it("drain timeout 0 waits as long as the handlers take; a failing disconnect still ends the stop", async () => {
+    await testCase("NB-1333", "kafka consumer: an unbounded drain, and a disconnect that fails");
+    let finish!: () => void;
+    const patient = runner(() => Promise.resolve(), {
+      config: { KAFKA_CONSUMER_DRAIN_TIMEOUT_MS: "0" },
+    });
+    const disconnect = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    Object.assign(patient.runner, { consumer: { disconnect }, running: true });
+    let stopped = false;
+    const stopping = patient.runner.stop().then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(stopped).toBe(false); // no ceiling: still waiting an hour in
+    finish();
+    await stopping;
+
+    const broken = runner();
+    Object.assign(broken.runner, {
+      consumer: { disconnect: () => Promise.reject(new Error("broker gone")) },
+      running: true,
+    });
+    await expect(broken.runner.stop()).resolves.toBeUndefined(); // logged, not thrown
+    expect(() => {
+      broken.runner.assertRunning();
+    }).toThrow("consumer not running");
+  });
 });
