@@ -1389,11 +1389,39 @@ What the client promises is the same as golang-basics' `resilient-http-client`
 
 - **An attempt has its own timeout** (`attemptTimeoutMs`, 5 s; `timeout` on a
   pool target) from the request to the end of the response body; it is
-  cancelled, not abandoned.
+  cancelled, not abandoned. Making the connection is inside it: a SYN nobody
+  answers or a TLS handshake that hangs ends the attempt at the timeout too
+  (undici alone would wait out its 10 s connect timeout whatever the signal
+  says). The same holds for the caller's budget.
+- **Every status ≥ 400 is an `OutboundError`** (`passthrough4xx` aside): a
+  4xx is `client_error` and not the dependency's failure; a "try again"
+  status that survived the retries is `retries_exhausted`; any other 5xx
+  (501, 505, one left out of `retry.statusCodes`) is `server_error` — fatal
+  for the caller, a failure for the breaker. Nothing ≥ 500 is ever returned
+  as a response.
+- **Protocol**: HTTP/1.1 in cleartext; over TLS whatever ALPN agrees on —
+  HTTP/2 with a server that offers it, so concurrent requests share one
+  connection and a timed-out request resets its stream instead of costing
+  the connection. No h2c, no HTTP/3. Redirects are returned, never followed.
 - **Only what may be sent twice is retried**: GET, HEAD, OPTIONS, PUT, DELETE,
   or any method with an `Idempotency-Key` — and only with a body that can be
   replayed (text or bytes, not a stream). "Try again" is a connection error, an
   attempt timeout, or 408 / 425 / 429 / 500 / 502 / 503 / 504.
+- **Against real servers** — `resilient-client.integration.spec.ts` runs the
+  scenarios of golang-basics' `resilient-http-client/integration`: Caddy as
+  the edge (cleartext, TLS, TLS 1.3 only, a client certificate required, an
+  expired certificate), Redpanda's HTTP API behind it, PostgreSQL at an HTTP
+  address, and Toxiproxy in between (handshake faults, an outage that heals
+  mid-retry, a throttled body, idle connections killed, a lost
+  acknowledgement). Two differences from the Go client are pinned there: a
+  TLS alert from the server (a protocol version it refuses, a client
+  certificate it requires) is **not retried** — connection errors are retried
+  by code, and an alert is not on the list; and a POST with an
+  `Idempotency-Key` whose answer was lost **is sent again**, so a server
+  that ignores the key stores every attempt. And a connection the peer
+  closed while it sat idle is discovered by the next request: undici does
+  not replay it the way Go's `net/http` does — the retry policy does, for
+  requests that may be sent twice.
 - **The wait is the jittered backoff or `Retry-After`, whichever is longer.**
   A `Retry-After` beyond `retry.maxTimeout`, or a wait the caller's budget
   cannot cover, ends the call; the error carries `retryAfterMs` for whoever

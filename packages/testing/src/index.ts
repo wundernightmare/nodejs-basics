@@ -49,6 +49,14 @@ export {
   startGrpcServer,
   startHttpGateway,
 } from "./grpc-stack.js";
+export {
+  BLOB_SHA256,
+  BLOB_SIZE,
+  type HttpStack,
+  KAFKA_JSON,
+  KAFKA_V2,
+  startHttpStack,
+} from "./http-stack.js";
 export { type PgBouncer, type PgBouncerOptions, startPgBouncer } from "./pgbouncer.js";
 export {
   type Collector,
