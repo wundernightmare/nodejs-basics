@@ -48,6 +48,13 @@ export interface ValkeyBuilderResult {
   /** Per-command timeout in ms — clamps a single Valkey response wait. */
   commandTimeoutMs: number;
   /**
+   * How long a connection may stay silent after something was written to it
+   * before it is dropped and replaced (ms; 0 = never). `commandTimeout` only
+   * fails the command — the dead connection would stay, and every next
+   * command would wait out its own timeout on it.
+   */
+  socketTimeoutMs: number;
+  /**
    * TCP keepalive idle delay (ms). 0 = disabled (driver default).
    * iovalkey accepts this on `keepAlive` (number of ms or boolean).
    */
@@ -125,6 +132,7 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
     tls,
     connectTimeoutMs: readInt(config, "VALKEY_CONNECT_TIMEOUT_MS"),
     commandTimeoutMs: readInt(config, "VALKEY_COMMAND_TIMEOUT_MS"),
+    socketTimeoutMs: readInt(config, "VALKEY_SOCKET_TIMEOUT_MS"),
     keepaliveMs: readInt(config, "VALKEY_KEEPALIVE_MS"),
     reconnect: {
       baseDelayMs: readInt(config, "VALKEY_RECONNECT_BASE_DELAY_MS"),
@@ -191,6 +199,8 @@ export function toClientOptions(result: ValkeyBuilderResult): Record<string, unk
     ...(result.tls ? { tls: result.tls } : {}),
     connectTimeout: result.connectTimeoutMs,
     commandTimeout: result.commandTimeoutMs,
+    // Not for BullMQ either: a blocking command is silence by design.
+    ...(result.socketTimeoutMs > 0 ? { socketTimeout: result.socketTimeoutMs } : {}),
     keepAlive: result.keepaliveMs > 0 ? result.keepaliveMs : 0,
     maxRetriesPerRequest: result.maxRetriesPerRequest,
     lazyConnect: true,

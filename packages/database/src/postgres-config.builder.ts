@@ -47,6 +47,12 @@ export interface PostgresBuilderResult {
    * consistently. Empty when the operator disables every timeout.
    */
   sessionInit: string[];
+  /**
+   * What `sessionInit` sets, in ms by server parameter — read back on every
+   * fresh connection (pg-pool.provider.ts): a configured timeout that is not
+   * in effect means the connection is not handed out.
+   */
+  sessionTimeouts: Record<string, number>;
   /** App-level retry policy for idempotent SQL wrapped via `withRetry`. */
   retry: RetryPolicy;
   /**
@@ -151,8 +157,10 @@ export function buildPostgresConfig(
   const queryTimeoutMs = readInt(config, "DATABASE_QUERY_TIMEOUT_MS");
   const idleInTxTimeoutMs = readInt(config, "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS");
   const sessionInit: string[] = [];
+  const sessionTimeouts: Record<string, number> = {};
   if (statementTimeoutMs > 0) {
     sessionInit.push(`SET statement_timeout = ${statementTimeoutMs}`);
+    sessionTimeouts["statement_timeout"] = statementTimeoutMs;
   }
   // A statement waiting for a lock gives up long before statement_timeout: a
   // stuck migration or a forgotten transaction then costs one fast error
@@ -160,9 +168,11 @@ export function buildPostgresConfig(
   const lockTimeoutMs = readInt(config, "DATABASE_LOCK_TIMEOUT_MS");
   if (lockTimeoutMs > 0) {
     sessionInit.push(`SET lock_timeout = ${lockTimeoutMs}`);
+    sessionTimeouts["lock_timeout"] = lockTimeoutMs;
   }
   if (idleInTxTimeoutMs > 0) {
     sessionInit.push(`SET idle_in_transaction_session_timeout = ${idleInTxTimeoutMs}`);
+    sessionTimeouts["idle_in_transaction_session_timeout"] = idleInTxTimeoutMs;
   }
 
   // ── Pool / query knobs ───────────────────────────────────────────────────
@@ -177,6 +187,9 @@ export function buildPostgresConfig(
     min: readInt(config, "DATABASE_POOL_MIN"),
     idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS"),
     maxUses: readInt(config, "DATABASE_POOL_MAX_USES"),
+    // Recycled by age too: a pool that never reconnects never notices a DNS
+    // change, a rebalanced proxy or a server-side setting changed on the role.
+    maxLifetimeSeconds: Math.ceil(readInt(config, "DATABASE_POOL_MAX_LIFETIME_MS") / 1000),
     connectionTimeoutMillis: connectTimeoutMs,
     // Application name is redundant-set (URL + option) because pg-native
     // reads it from libpq params and pure-JS pg writes it via the option
@@ -206,6 +219,7 @@ export function buildPostgresConfig(
     poolOptions,
     useNative,
     sessionInit,
+    sessionTimeouts,
     retry,
     circuitBreaker,
   };

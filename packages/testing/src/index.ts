@@ -35,4 +35,5 @@ export {
   type Service,
 } from "./services.js";
 export { pausable, pause, PROXY_PORTS, proxied, proxiedPort } from "./chaos.js";
+export { type PgBouncer, type PgBouncerOptions, startPgBouncer } from "./pgbouncer.js";
 export type { PausableService, ProxiedService, Proxy, ServiceProxy } from "./chaos.js";

@@ -67,6 +67,16 @@ Logs never show a credential: values under secret-looking keys are
 `[redacted]`, passwords in URLs `xxxxx`. A field you expected and see
 redacted has a name that looks like a secret (`auth…`, `…token…`).
 
+## Queries fail with PgGuardRailOffError
+
+A new Postgres connection was discarded because a configured session timeout
+is not in effect on it (`pg.guard_rail_off` in the logs names the parameter).
+Either the value is one the server refuses, or a pooler in transaction mode
+sits in between: there the timeouts belong on the role (`ALTER ROLE … SET
+statement_timeout = …`) with `DATABASE_STATEMENT_TIMEOUT_MS`,
+`DATABASE_LOCK_TIMEOUT_MS` and `DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS` set
+to `0`.
+
 ## Clients get 429
 
 The service's own limit (`HTTP_RATE_LIMIT`, `HTTP_RATE_LIMIT_PER_CLIENT`; off

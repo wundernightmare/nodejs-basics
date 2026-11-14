@@ -29,6 +29,7 @@
  * configSnapshot() can show an operator the effective configuration with its
  * provenance (GET /admin/config on the admin server, secrets redacted there).
  */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { resolve } from "node:path";
@@ -66,7 +67,10 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 export type ConfigSource = "env" | "yaml" | "default" | "unset";
 
 export interface ConfigSnapshot {
-  /** Effective value per ENV_REGISTRY key (null when unset). NOT redacted. */
+  /**
+   * Effective value per ENV_REGISTRY key (null when unset). A key marked
+   * `secret` holds `[redacted:<fingerprint>]`; everything else is raw.
+   */
   config: Record<string, string | null>;
   /** Provenance per key. */
   sources: Record<string, ConfigSource>;
@@ -77,15 +81,27 @@ const sources = new Map<string, ConfigSource>();
 /**
  * The effective configuration: every ENV_REGISTRY key with the value the
  * process is actually running with (after env, YAML and defaults) and where
- * it came from. Raw values — pass through redact() (@base/logger) before
- * showing it to anyone; the admin server does.
+ * it came from. Keys the registry marks `secret` are fingerprinted here, so
+ * no caller can leak them; the rest is raw — pass it through redact()
+ * (@base/logger) before showing it to anyone (URL passwords, keys that only
+ * look like secrets); the admin server does.
  */
+/**
+ * What a `Secret` prints: the first four bytes of the SHA-256 in hex — enough
+ * to tell whether two pods run the same value, or whether a rotation landed.
+ */
+function fingerprinted(value: string): string {
+  if (value === "") return "";
+  return `[redacted:${createHash("sha256").update(value).digest("hex").slice(0, 8)}]`;
+}
+
 export function configSnapshot(): ConfigSnapshot {
   const config: Record<string, string | null> = {};
   const provenance: Record<string, ConfigSource> = {};
   for (const entry of ENV_REGISTRY) {
     const value = process.env[entry.key];
-    config[entry.key] = value ?? null;
+    config[entry.key] =
+      value === undefined ? null : entry.secret === true ? fingerprinted(value) : value;
     provenance[entry.key] = sources.get(entry.key) ?? (value === undefined ? "unset" : "env");
   }
   return { config, sources: provenance };

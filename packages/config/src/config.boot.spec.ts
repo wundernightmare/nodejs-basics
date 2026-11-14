@@ -77,6 +77,10 @@ describe("bootConfig — command-line flags", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("DATABASE_POOL_MAX  (yaml: database.pool_max)  int 1..  default 10");
     expect(r.out).toContain("OTEL_SERVICE_NAME  (env only)  string  default test-app");
+    // A credential never shows a value — not even a default.
+    expect(r.out).toMatch(/^ADMIN_TOKEN {2}.* {2}no default {2}\(secret\)$/mu);
+    expect(r.out).toMatch(/^SENTRY_DSN {2}.*\(secret\)$/mu);
+    expect(r.out).not.toMatch(/^DATABASE_POOL_MAX .*\(secret\)$/mu);
     expect(r.out).toContain(
       "LOG_LEVEL  (yaml: app.log_level)  trace|debug|info|warn|error|fatal|silent",
     );

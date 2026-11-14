@@ -59,6 +59,72 @@ function resolvePoolCtor(useNative: boolean): typeof Pool {
 }
 
 /**
+ * A configured session timeout is not in effect on a connection: the SET was
+ * refused, or the value read back is 0 ("off") — behind a transaction-pooling
+ * PgBouncer the SET and the read-back land on different server connections.
+ * There, set the timeouts on the role (ALTER ROLE … SET statement_timeout = …)
+ * and zero the DATABASE_*_TIMEOUT_MS keys.
+ */
+export class PgGuardRailOffError extends Error {
+  constructor(
+    readonly parameter: string,
+    readonly configuredMs: number,
+    options?: ErrorOptions,
+  ) {
+    super(
+      `postgres: ${parameter} is not in effect though the config sets ${configuredMs}ms — ` +
+        `a pooler in transaction mode, or a value the server rejects? Set it on the role or ` +
+        `database (ALTER ROLE … SET ${parameter}) and zero it in the config, or fix the value`,
+      options,
+    );
+    this.name = "PgGuardRailOffError";
+  }
+}
+
+/** Pools that already reported a timeout the server holds at another value. */
+const warnedDrift = new Set<string>();
+
+async function initSession(
+  client: PoolClient,
+  built: PostgresBuilderResult,
+  label: string,
+): Promise<void> {
+  const parameters = Object.entries(built.sessionTimeouts);
+  try {
+    await client.query(built.sessionInit.join("; "));
+  } catch (err) {
+    const [parameter, configured] = parameters[0] ?? ["session init", 0];
+    throw new PgGuardRailOffError(parameter, configured, { cause: err });
+  }
+  if (parameters.length === 0) return;
+  // The server's own arithmetic: current_setting() prints "30s", "500ms", "0".
+  const columns = parameters.map(
+    ([name], i) =>
+      `(extract(epoch FROM current_setting('${name}')::interval) * 1000)::bigint::text AS p${i}`,
+  );
+  const { rows } = await client.query<Record<string, string>>(`SELECT ${columns.join(", ")}`);
+  for (const [i, [name, configured]] of parameters.entries()) {
+    const effective = Number(rows[0]?.[`p${i}`]);
+    if (effective === configured) continue;
+    if (effective === 0 || !Number.isFinite(effective)) {
+      throw new PgGuardRailOffError(name, configured);
+    }
+    const key = `${label}:${name}`;
+    if (warnedDrift.has(key)) continue;
+    warnedDrift.add(key);
+    logger.warn(
+      {
+        "pg.pool": label,
+        "pg.parameter": name,
+        "pg.configured_ms": configured,
+        "pg.effective_ms": effective,
+      },
+      "Postgres session timeout differs from the config; the server's value stands",
+    );
+  }
+}
+
+/**
  * Shared pool constructor. Both the primary (read-write) and the read-only
  * provider funnel through this to keep session-init + error handling
  * identical.
@@ -70,22 +136,26 @@ function buildPool(built: PostgresBuilderResult, label: "primary" | "readonly"):
   // caller back until it is done. (Run from a `connect` listener instead,
   // the statements would queue behind each other and the caller's first
   // query behind them — pg deprecates a query issued while another runs.)
-  // Errors here would tear down the connection; we log and hand it out
-  // instead so a transient SET failure doesn't turn into a pod-wide
-  // outage. A persistently-failing SET shows up as a steady stream of
-  // warnings, which is the right signal: operator fixes the server-side
-  // setting or drops the client-side knob.
-  const verify = (client: PoolClient, done: () => void): void => {
-    client.query(built.sessionInit.join("; ")).then(
+  //
+  // Then the timeouts are read back. A connection on which a configured
+  // timeout is not in effect is NOT handed out (PgGuardRailOffError): a
+  // statement without statement_timeout, a lock wait without lock_timeout
+  // is exactly the incident the setting exists to prevent, and it would
+  // happen silently. A persistent cause — a value the server rejects, a
+  // transaction-pooling proxy that sends the SET and the next statement to
+  // different backends — fails /readyz, so a rollout stops instead of
+  // shipping an unguarded pool.
+  const verify = (client: PoolClient, done: (err?: Error) => void): void => {
+    initSession(client, built, label).then(
       () => {
         done();
       },
       (err: unknown) => {
-        logger.warn(
-          { err, "pg.pool": label, statements: built.sessionInit },
-          "Postgres session init failed — connection remains usable",
+        logger.error(
+          { err, "pg.pool": label, "event.action": "pg.guard_rail_off" },
+          "Postgres session timeouts are not in effect — connection discarded",
         );
-        done();
+        done(err instanceof Error ? err : new Error(String(err)));
       },
     );
   };
