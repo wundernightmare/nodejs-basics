@@ -58,6 +58,7 @@ export function guardBackground<A extends unknown[]>(
 ): (...args: A) => Promise<void> {
   const logger = options.logger ?? pinoLogger;
   const onFatal = options.onFatal ?? stopInOrder;
+  // Stryker disable next-line StringLiteral: the meter's name is not exported
   const panics = metrics.getMeter("background").createCounter("background_panics_total", {
     description: "Unexpected errors that escaped a background task, by task.",
   });

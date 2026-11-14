@@ -57,7 +57,8 @@ export class DebugSubjects {
   /** Lists or extends a subject; false when the list is full of live entries. */
   put(subject: string, ttlMs: number): boolean {
     const now = this.now();
-    if (!this.#expiry.has(subject) && this.#expiry.size >= this.max) {
+    if (!this.#expiry.has(subject)) {
+      // A new subject needs room: expired ones give theirs up first.
       this.#sweep(now);
       if (this.#expiry.size >= this.max) return false;
     }
@@ -73,21 +74,21 @@ export class DebugSubjects {
     this.#expiry.clear();
   }
 
-  /** Whether the subject is listed right now. Expiry is checked here — there is no timer. */
+  /**
+   * Whether the subject is listed right now. Expiry is checked here — there
+   * is no timer; an expired entry is dropped by the next put() or snapshot().
+   */
   active(subject: string): boolean {
-    if (this.#expiry.size === 0) return false;
-    const expires = this.#expiry.get(subject);
-    if (expires === undefined) return false;
-    if (expires > this.now()) return true;
-    this.#expiry.delete(subject);
-    return false;
+    return (this.#expiry.get(subject) ?? 0) > this.now();
   }
 
   snapshot(): DebugSubjectsState {
     this.#sweep(this.now());
     const subjects = [...this.#expiry]
       .map(([subject, expires]) => ({ subject, expires_at: new Date(expires).toISOString() }))
-      .toSorted((a, b) => (a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0));
+      // Map keys: no two subjects are equal.
+      // Stryker disable next-line EqualityOperator: `<=` is the same order for distinct keys
+      .toSorted((a, b) => (a.subject < b.subject ? -1 : 1));
     return { subjects, max_ttl: formatDuration(this.maxTtlMs()) };
   }
 
@@ -108,7 +109,8 @@ export function runAsDebugSubject<T>(
   subject: string | undefined,
   fn: () => T,
 ): T {
-  if (subject === undefined || subject === "" || !subjects.active(subject)) return fn();
+  // No subject is no subject — even if someone listed the empty string.
+  if (!subject || !subjects.active(subject)) return fn();
   trace.getActiveSpan()?.setAttribute(DEBUG_SUBJECT_ATTRIBUTE, subject);
   return withDebugLogging(fn);
 }
