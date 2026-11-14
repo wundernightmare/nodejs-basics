@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { AppLogger, logLevel, pinoLogger } from "@base/logger";
+import { AppLogger, debugSubjects, logLevel, pinoLogger } from "@base/logger";
 import { testCase } from "@base/testing";
 
 import { AdminServerService } from "./admin-server.service.js";
@@ -96,6 +96,7 @@ describe("AdminServerService (auth=off)", () => {
       version: expect.any(String),
       revision: expect.any(String),
       node: process.version,
+      fips: false,
       started_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
       uptime_seconds: expect.any(Number),
       env: expect.any(String),
@@ -148,6 +149,62 @@ describe("AdminServerService (auth=off)", () => {
       status: 405,
       request_id: id,
     });
+  });
+
+  it("debug subjects: PUT with a TTL, list sorted, DELETE; a ttl is required and the list is bounded", async () => {
+    await testCase("NB-1256", "Admin: /admin/debug-subjects end to end");
+    debugSubjects.clear();
+    try {
+      const empty = await json(await fetch(`${base}/admin/debug-subjects`));
+      expect(empty).toEqual({ subjects: [], max_ttl: "24h" });
+
+      const put = await fetch(`${base}/admin/debug-subjects/tenant-42?ttl=15m`, { method: "PUT" });
+      expect(put.status).toBe(200);
+      await fetch(`${base}/admin/debug-subjects/${encodeURIComponent("user a/b")}?ttl=1m`, {
+        method: "PUT",
+      });
+      const listed = (await json(await fetch(`${base}/admin/debug-subjects`))) as {
+        subjects: Array<{ subject: string; expires_at: string }>;
+      };
+      expect(listed.subjects.map((entry) => entry.subject)).toEqual(["tenant-42", "user a/b"]);
+      const left = Date.parse(listed.subjects[0]!.expires_at) - Date.now();
+      expect(left).toBeGreaterThan(14 * 60_000);
+      expect(left).toBeLessThanOrEqual(15 * 60_000);
+      expect(debugSubjects.active("tenant-42")).toBe(true);
+
+      for (const ttl of ["", "?ttl=0s", "?ttl=-1m", "?ttl=soon"]) {
+        const bad = await fetch(`${base}/admin/debug-subjects/x${ttl}`, { method: "PUT" });
+        expect(bad.status).toBe(400);
+        expect((await json(bad))["detail"]).toBe(
+          "ttl is required: a positive duration such as 15m",
+        );
+      }
+
+      const del = await fetch(`${base}/admin/debug-subjects/tenant-42`, { method: "DELETE" });
+      expect(del.status).toBe(200);
+      expect(debugSubjects.active("tenant-42")).toBe(false);
+      expect(
+        (await fetch(`${base}/admin/debug-subjects/tenant-42`, { method: "DELETE" })).status,
+      ).toBe(200);
+
+      // The collection takes GET only, a subject PUT and DELETE only.
+      const post = await fetch(`${base}/admin/debug-subjects`, { method: "PUT" });
+      expect(post.status).toBe(405);
+      const get = await fetch(`${base}/admin/debug-subjects/tenant-42`);
+      expect(get.status).toBe(405);
+      expect(get.headers.get("allow")).toBe("PUT, DELETE");
+      expect((await fetch(`${base}/admin/debug-subjects/`, { method: "PUT" })).status).toBe(404);
+
+      debugSubjects.clear();
+      for (let i = 0; i < 100; i += 1) debugSubjects.put(`s${i}`, 60_000);
+      const full = await fetch(`${base}/admin/debug-subjects/one-more?ttl=1m`, { method: "PUT" });
+      expect(full.status).toBe(409);
+      expect((await json(full))["detail"]).toBe("too many debug subjects; remove one first");
+      const extend = await fetch(`${base}/admin/debug-subjects/s1?ttl=1m`, { method: "PUT" });
+      expect(extend.status).toBe(200);
+    } finally {
+      debugSubjects.clear();
+    }
   });
 
   it("PUT/GET/DELETE /admin/log-level end to end, with TTL and strict parsing", async () => {

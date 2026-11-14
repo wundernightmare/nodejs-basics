@@ -40,12 +40,38 @@ export const LOG_EVENTS: readonly LogEvent[] = [
     source: "packages/observability",
   },
   {
+    action: "debug_subject.added",
+    level: "warn",
+    description:
+      "An operator listed a subject (tenant, user) for debug logging and trace marking " +
+      "through PUT /admin/debug-subjects/{subject}; it expires by itself after the TTL.",
+    fields: ["debug.subject", "debug.subject.ttl_ms", "client.address"],
+    source: "packages/observability",
+  },
+  {
+    action: "debug_subject.removed",
+    level: "warn",
+    description: "An operator removed a debug subject before its TTL ran out.",
+    fields: ["debug.subject", "client.address"],
+    source: "packages/observability",
+  },
+  {
+    action: "background.panic",
+    level: "error",
+    description:
+      "An unexpected error escaped a background task (outbox relay, Kafka reconnect). The " +
+      "process counts it in background_panics_total{task} and stops itself in order; the " +
+      "stack is in `error.stack_trace`.",
+    fields: ["background.task"],
+    source: "packages/logger",
+  },
+  {
     action: "admin.started",
     level: "info",
     description:
-      "The admin listener is up. `admin.auth` is `off` when ADMIN_TOKEN is unset — its " +
+      "The admin listener is up. `admin.guard` is `off` when ADMIN_TOKEN is unset — its " +
       "mutations (log level, heap dumps) are then open to anyone who reaches the port.",
-    fields: ["server.port", "admin.auth"],
+    fields: ["server.port", "admin.guard"],
     source: "packages/observability",
   },
   {

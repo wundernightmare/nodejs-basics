@@ -164,6 +164,84 @@ const REGISTRY = [
   },
 
   {
+    key: "HTTP_RATE_LIMIT",
+    yaml: "app.http.rate_limit",
+    type: "number",
+    min: 0,
+    required: false,
+    default: "0",
+    description:
+      "Inbound rate limit of the API listener in requests per second, all clients together " +
+      "(a token bucket). Over it: 429 + Retry-After, http_rate_limited_total{scope=global}. " +
+      "0 = no global limit. The admin listener is never limited.",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
+    key: "HTTP_RATE_BURST",
+    yaml: "app.http.rate_burst",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "0",
+    description:
+      "Depth of the global bucket: how many requests may arrive at once. 0 = max(1, ceil(rate)).",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
+    key: "HTTP_RATE_LIMIT_PER_CLIENT",
+    yaml: "app.http.rate_limit_per_client",
+    type: "number",
+    min: 0,
+    required: false,
+    default: "0",
+    description:
+      "Inbound rate limit per client address in requests per second; 0 = none. A client refused " +
+      "here takes nothing from the global bucket. Behind a load balancer set " +
+      "HTTP_TRUSTED_PROXIES, or all its traffic is one client.",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
+    key: "HTTP_RATE_BURST_PER_CLIENT",
+    yaml: "app.http.rate_burst_per_client",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "0",
+    description: "Depth of a client's bucket. 0 = max(1, ceil(rate)).",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
+    key: "HTTP_RATE_CLIENTS_MAX",
+    yaml: "app.http.rate_clients_max",
+    type: "int",
+    min: 1,
+    required: false,
+    default: "10000",
+    description:
+      "Most client buckets kept in memory. When full, refilled buckets are dropped; if none " +
+      "is, a new client is refused (429, scope=client) until one refills.",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
+    key: "HTTP_TRUSTED_PROXIES",
+    yaml: "app.http.trusted_proxies",
+    type: "string",
+    required: false,
+    default: "",
+    description:
+      "Addresses or CIDRs of the proxies in front of the service, comma-separated " +
+      "(10.0.0.0/8,192.168.1.1). From such a peer the client address is the first entry of " +
+      "X-Forwarded-For that is not itself a trusted proxy; from anyone else the header is " +
+      "ignored. Empty = trust nobody. Used for client.address in logs and the per-client limit.",
+    usedIn: ["apps/api/src/app.ts", "observability"],
+  },
+
+  {
     key: "HTTP_SHUTDOWN_DELAY_MS",
     yaml: "app.http.shutdown_delay_ms",
     type: "int",
@@ -280,6 +358,20 @@ const REGISTRY = [
     description:
       "Log sampling: after LOG_SAMPLE_INITIAL, every M-th record of the same message passes. " +
       "log_dropped_total{level} counts the rest. Read at process start (env only).",
+    usedIn: ["logger"],
+  },
+
+  {
+    key: "LOG_REDACT_KEYS",
+    yaml: "app.log_redact_keys",
+    type: "string",
+    required: false,
+    default: "",
+    description:
+      "Extra log field names whose values are written as [redacted], comma-separated, exact " +
+      "and case-insensitive (email,iban) — for private data of the domain. Keys that look " +
+      "like a credential (password, token, secret, auth, …) and credentials inside URLs and " +
+      "DSNs are always masked. Read at process start (env only).",
     usedIn: ["logger"],
   },
 

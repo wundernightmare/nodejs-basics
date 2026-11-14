@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { REDACTED, redact, redactUrl } from "./redact.js";
+import { parseRedactKeys, REDACTED, redact, redactQuery, redactUrl } from "./redact.js";
 
 describe("redactUrl", () => {
   it("masks the password of a URL with userinfo and leaves everything else alone", () => {
@@ -13,6 +13,51 @@ describe("redactUrl", () => {
     expect(redactUrl("amqp://user@host")).toBe("amqp://user@host");
     expect(redactUrl("not a url with @ and ://")).toBe("not a url with @ and ://");
     expect(redactUrl("plain")).toBe("plain");
+  });
+
+  it("masks a password that itself contains an @, and a URL inside a longer text", () => {
+    expect(redactUrl("postgres://app:p@ss@db/app")).toBe("postgres://app:xxxxx@db/app");
+    expect(redactUrl("error: dial postgres://app:pw@db: refused")).toBe(
+      "error: dial postgres://app:xxxxx@db: refused",
+    );
+    expect(redactUrl("a://u:1@h and b://v:2@g")).toBe("a://u:xxxxx@h and b://v:xxxxx@g");
+  });
+
+  it("masks query parameters named like a secret, keeping the order of the rest", () => {
+    expect(redactUrl("https://h/p?page=2&token=abc&x=1")).toBe(
+      "https://h/p?page=2&token=[redacted]&x=1",
+    );
+    expect(redactUrl("https://h/p?access_token=abc#frag")).toBe(
+      "https://h/p?access_token=[redacted]#frag",
+    );
+    expect(redactUrl("https://h/p?tokens_used=3&author=x")).toBe(
+      "https://h/p?tokens_used=3&author=x",
+    );
+  });
+
+  it("masks the password of a keyword DSN, quoted or not", () => {
+    expect(redactUrl("host=db password=pw user=app")).toBe("host=db password=[redacted] user=app");
+    expect(redactUrl("host=db password='p w\\'x' user=app")).toBe(
+      "host=db password=[redacted] user=app",
+    );
+    expect(redactUrl("a=b; Pwd=secret; c=d")).toBe("a=b; Pwd=[redacted]; c=d");
+    expect(redactUrl("retries=3 mypassword=1")).toBe("retries=3 mypassword=1");
+  });
+});
+
+describe("redactQuery", () => {
+  it("masks secret parameters of a bare query string", () => {
+    expect(redactQuery("page=2&token=abc")).toBe("page=2&token=[redacted]");
+    expect(redactQuery("token=abc&page=2")).toBe("token=[redacted]&page=2");
+    expect(redactQuery("page=2")).toBe("page=2");
+    expect(redactQuery("flag")).toBe("flag");
+  });
+});
+
+describe("parseRedactKeys", () => {
+  it("trims, lowercases and drops empty entries", () => {
+    expect([...parseRedactKeys(" Email, ,IBAN,")]).toEqual(["email", "iban"]);
+    expect(parseRedactKeys(undefined).size).toBe(0);
   });
 });
 

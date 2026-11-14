@@ -23,11 +23,16 @@ import {
   HttpExceptionFilter,
   OptimisticLockConflictError,
   registerRequestContext,
+  Secret,
   type ErrorMap,
 } from "@base/common";
-import { processEnv, readInt } from "@base/config";
+import { processEnv, readInt, readNumber, readString } from "@base/config";
 import { AppLogger, pinoLogger } from "@base/logger";
-import { registerHttpInstrumentation } from "@base/observability";
+import {
+  parseTrustedProxies,
+  registerHttpInstrumentation,
+  registerRateLimit,
+} from "@base/observability";
 
 import { AppModule } from "./app.module.js";
 import { registerMethodNotAllowed } from "./http/method-not-allowed.hook.js";
@@ -80,6 +85,9 @@ export async function createApp(): Promise<NestFastifyApplication> {
     // over-long id is just an id that names nothing — a 404 like any other
     // malformed one (the contract declares 200 | 404, not 414).
     maxParamLength: 1024,
+    // Whose X-Forwarded-For is believed (HTTP_TRUSTED_PROXIES): decides
+    // request.ip — client.address in the logs and the per-client rate limit.
+    trustProxy: parseTrustedProxies(readString(processEnv, "HTTP_TRUSTED_PROXIES")),
   });
 
   // Fastify must register the OTel plugin before any other plugins so its
@@ -99,12 +107,22 @@ export async function createApp(): Promise<NestFastifyApplication> {
   // matches DEBUG_TOKEN (response: X-Debug-Logging: on). DEBUG_TOKEN is read
   // here, after ConfigModule merged config.yaml into process.env.
   registerRequestContext(adapter.getInstance(), {
-    debugToken: process.env["DEBUG_TOKEN"],
+    debugToken: Secret.of(process.env["DEBUG_TOKEN"]),
     requestTimeoutMs,
     minRequestTimeoutMs: readInt(processEnv, "HTTP_REQUEST_TIMEOUT_MIN_MS"),
   });
 
   registerHttpInstrumentation(adapter.getInstance());
+
+  // The server's own limit (HTTP_RATE_*; off unless a rate is set). After the
+  // instrumentation: a refused request is still counted and logged.
+  registerRateLimit(adapter.getInstance(), {
+    rate: readNumber(processEnv, "HTTP_RATE_LIMIT"),
+    burst: readInt(processEnv, "HTTP_RATE_BURST"),
+    perClientRate: readNumber(processEnv, "HTTP_RATE_LIMIT_PER_CLIENT"),
+    perClientBurst: readInt(processEnv, "HTTP_RATE_BURST_PER_CLIENT"),
+    maxClients: readInt(processEnv, "HTTP_RATE_CLIENTS_MAX"),
+  });
 
   // Known path, undeclared method → 405 + Allow (as a problem), not a 404.
   registerMethodNotAllowed(adapter.getInstance());

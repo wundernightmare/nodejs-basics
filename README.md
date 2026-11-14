@@ -76,6 +76,8 @@ Then:
 - `curl -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:9091/admin/config` — the effective config, secrets redacted (every `/admin/*` and `/debug/*` route needs the token when one is set)
 - `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9091/admin/log-level?level=debug&ttl=30m'` — change
   log level live
+- `curl -X PUT -H "Authorization: Bearer $ADMIN_TOKEN" 'http://localhost:9091/admin/debug-subjects/tenant-42?ttl=15m'` — debug
+  logs and a marked trace for one tenant / user (`withDebugSubject`)
 - `curl -X POST -o api.cpuprofile 'http://localhost:9091/debug/cpu-profile?seconds=10'` — a CPU profile
   (Chrome DevTools → Performance → Load profile)
 
@@ -348,8 +350,21 @@ caller can ask for less with `x-request-timeout-ms` (never more), which is
 also how a budget crosses services — but not below `HTTP_REQUEST_TIMEOUT_MIN_MS`
 (1 s; 0 = no floor), so no client can make 504s on demand and drive the 5xx
 rate the alerts watch. Bodies over `HTTP_BODY_LIMIT_BYTES`
-(1 MiB) are a **413** problem. Both statuses are in the contract. Rate
-limiting is left to the gateway / ingress in front of the service.
+(1 MiB) are a **413** problem. Both statuses are in the contract.
+
+The service can also **limit its own intake** — to protect itself, not as a
+quota system (quotas per customer belong to the gateway): `HTTP_RATE_LIMIT`
+(requests per second for the whole listener, a token bucket of depth
+`HTTP_RATE_BURST`) and `HTTP_RATE_LIMIT_PER_CLIENT` / `HTTP_RATE_BURST_PER_CLIENT`
+per client address. Both are off by default. Over a limit the answer is a
+**429** problem with `Retry-After`, counted in `http_rate_limited_total{scope}`
+(`global` | `client`). A client refused at its own bucket takes nothing from
+the global one; the table of clients is bounded (`HTTP_RATE_CLIENTS_MAX`).
+A client is the peer address — behind a load balancer set
+`HTTP_TRUSTED_PROXIES` (addresses / CIDRs), or everything it forwards is one
+client: from a trusted peer the client is the first `X-Forwarded-For` entry
+that is not itself a trusted proxy, from anyone else the header is ignored.
+The admin listener (probes, `/metrics`) is never limited.
 
 On SIGTERM `/readyz` turns 503 first, the api keeps serving for
 `HTTP_SHUTDOWN_DELAY_MS` (2 s — the time a load balancer needs to stop
@@ -928,6 +943,26 @@ A field of the envelope or an event is added freely; renaming or removing one
 takes a release with both. `service.version` is the build's (`SERVICE_VERSION`,
 baked into the image like `GIT_COMMIT`); traces carry the same identity plus
 `service.instance.id` and the semantic-conventions schema URL.
+
+**Private data is masked in every log record** (`@base/logger` `redact.ts`,
+the same rules as `GET /admin/config`): the value under a key that looks like
+a credential (`password`, `token`, `secret`, `auth`, `api_key`, `dsn`,
+`cookie`, … — a substring match that over-redacts on purpose, so name your own
+fields accordingly) becomes `[redacted]`; in any other string the password of
+a URL (`postgres://app:xxxxx@db`), a query parameter named like a secret
+(`?token=[redacted]`) and a keyword-DSN password are masked — in an error
+message and a stack trace too. Numbers, booleans and empty strings are left
+alone, a `Secret` prints its fingerprint, and the message itself is never
+rewritten: put values in fields, not in the message. `LOG_REDACT_KEYS`
+(`email,iban`) adds exact field names for private data of the domain.
+
+**One tenant or user, for a while**: `PUT /admin/debug-subjects/{subject}?ttl=15m`
+lists a subject; work the service wraps in `withDebugSubject(id, fn)` then logs
+at every level and marks its span with `debug.subject` (what a tail-sampling
+collector keeps the trace for). The list is per process, bounded (100) and
+every entry expires (`LOG_LEVEL_MAX_TTL` caps the TTL). The service decides
+who the subject of a request is — after authenticating it, never from a header
+a caller can set.
 
 Repetitive lines are **sampled**: per second and per message the first
 `LOG_SAMPLE_INITIAL` (100) trace/debug/info records pass, then every
