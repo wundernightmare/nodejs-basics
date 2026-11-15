@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { metrics } from "@opentelemetry/api";
 import type { Attributes, Counter, Meter, ObservableResult } from "@opentelemetry/api";
@@ -42,6 +43,8 @@ import { jitter } from "./cache-aside.js";
  * tombstones it in L2 (which refuses the fills of readers that loaded the old
  * row) and publishes it, so every other process drops it from its L1. Pub/Sub
  * is at most once: each time the subscription is re-established L1 is emptied.
+ * A lookup in flight when the key is invalidated still answers the callers it
+ * already has, and nobody else: a read that follows `invalidate()` starts anew.
  *
  * Memory — L1 is bounded by `maxBytes` of encoded entries and evicts the
  * oldest first; nothing is evicted for age (an expired entry is ignored on
@@ -191,10 +194,9 @@ export class RemoteBreaker {
       this.#failures = 0;
       return false;
     }
+    // Not reset on opening: the first failed probe after the cooldown opens it again.
     this.#failures += 1;
     if (this.#failures < this.#threshold) return false;
-    // One short of the threshold: the first failed probe after the cooldown opens it again.
-    this.#failures = this.#threshold - 1;
     this.#openUntil = now + this.#cooldownMs;
     return true;
   }
@@ -221,7 +223,8 @@ type Settled<T> = Required<Omit<TierCacheConfig, "name">> & { name: string } & {
 const MIB = 1024 * 1024;
 
 function positive(value: number | undefined, fallback: number): number {
-  return value !== undefined && value > 0 ? value : fallback;
+  const given = value ?? fallback;
+  return given > 0 ? given : fallback;
 }
 
 function settle<T>(config: TierCacheConfig, codec: TierCodec<T> | undefined): Settled<T> {
@@ -264,14 +267,17 @@ class RemoteTimeoutError extends Error {
   }
 }
 
-/** Rejects when `signal` aborts, without holding the promise it races. */
+/**
+ * Rejects when `signal` aborts, without holding the promise it races. The
+ * signal must not be aborted yet: the promise would be left without a handler.
+ */
 function abortable<V>(promise: Promise<V>, signal: AbortSignal | undefined): Promise<V> {
   if (signal === undefined) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason as Error);
   return new Promise<V>((resolve, reject) => {
     const onAbort = (): void => {
       reject(signal.reason as Error);
     };
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral: the listener is removed below as well; `once` frees it when the promise never settles
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(resolve, reject).finally(() => {
       signal.removeEventListener("abort", onAbort);
@@ -299,6 +305,7 @@ export class TierCache<T> {
    */
   #epoch = 0;
 
+  /** The lookup a read of the key may join. An invalidation takes it out: see #forget. */
   readonly #flights = new Map<string, Promise<Resolved<T>>>();
   readonly #refreshing = new Map<string, Promise<void>>();
   readonly #life = new AbortController();
@@ -332,7 +339,9 @@ export class TierCache<T> {
     this.#channel = `tc:${this.#cfg.name}:inv`;
     this.#labels = { cache: this.#cfg.name };
 
+    // Stryker disable next-line StringLiteral: the meter's name is not exported
     const meter = options.meter ?? metrics.getMeter("tiercache");
+    // Stryker disable StringLiteral,ObjectLiteral: names, descriptions and units are held to METRIC_REGISTRY by metrics.registry.spec.ts
     this.#reads = meter.createCounter("tiercache_reads_total", {
       description:
         "Reads by outcome: fresh or stale (served from L1), l2, load (source of truth), stale_error (expired value served because the source failed), not_found, error.",
@@ -355,6 +364,7 @@ export class TierCache<T> {
       description: "Bytes of encoded entries L1 currently holds (bounded by its capacity).",
       unit: "By",
     });
+    // Stryker restore StringLiteral,ObjectLiteral
     const observe = (result: ObservableResult): void => {
       result.observe(this.#bytes, this.#labels);
     };
@@ -392,16 +402,10 @@ export class TierCache<T> {
       }
     }
 
-    let flight = this.#flights.get(key);
-    if (flight === undefined) {
-      flight = this.#resolve(key, false, this.#life.signal).finally(() => {
-        this.#flights.delete(key);
-      });
-      this.#flights.set(key, flight);
-    }
-
     try {
-      const resolved = await abortable(flight, signal);
+      // Before the lookup starts: one nobody waits for would fail unobserved.
+      signal?.throwIfAborted();
+      const resolved = await abortable(this.#flight(key, false, this.#life.signal), signal);
       this.#reads.add(1, { ...this.#labels, result: resolved.source });
       return resolved.value;
     } catch (err) {
@@ -442,7 +446,11 @@ export class TierCache<T> {
     if (errors.length > 0) throw new AggregateError(errors, "tiercache: invalidate failed");
   }
 
-  /** Stops the subscription and the background refreshes. The cache must not be used afterwards. */
+  /**
+   * Stops the subscription and the background refreshes, and waits for the
+   * lookups in flight (one an invalidation has cut loose is aborted, not
+   * waited for). The cache must not be used afterwards.
+   */
   async close(): Promise<void> {
     this.#life.abort(new Error("tiercache: closed"));
     this.#disposeGauge();
@@ -451,6 +459,32 @@ export class TierCache<T> {
     await Promise.allSettled([...this.#refreshing.values(), ...this.#flights.values()]);
     this.#local.clear();
     this.#bytes = 0;
+  }
+
+  /** The lookup of key in flight, started when there is none to join. */
+  #flight(key: string, refreshing: boolean, signal: AbortSignal): Promise<Resolved<T>> {
+    const joined = this.#flights.get(key);
+    if (joined !== undefined) return joined;
+    const flight = this.#resolve(key, refreshing, signal).finally(() => {
+      // An invalidation may have put a newer lookup in its place.
+      if (this.#flights.get(key) === flight) this.#flights.delete(key);
+    });
+    this.#flights.set(key, flight);
+    return flight;
+  }
+
+  /** Reads an envelope from L2 into its deadlines and value; undefined for one that cannot be used. */
+  #open(held: string): { softMs: number; hardMs: number; value: T; size: number } | undefined {
+    const parsed = parseEnvelope(held);
+    if (parsed === undefined) return undefined;
+    const { softMs, hardMs, payload } = parsed;
+    let value: T;
+    try {
+      value = this.#cfg.codec.decode(payload);
+    } catch {
+      return undefined; // corrupt payload: as good as absent
+    }
+    return { softMs, hardMs, value, size: held.length };
   }
 
   /**
@@ -466,26 +500,13 @@ export class TierCache<T> {
     // What L2 holds now: the value a refresh replaces (compare-and-set), and
     // the fallback when the source fails.
     const held = await this.#remoteGet(remoteKey);
-    let parsed = held === undefined ? undefined : parseEnvelope(held);
-    let heldValue: { value: T } | undefined;
-    if (parsed !== undefined) {
-      try {
-        heldValue = { value: this.#cfg.codec.decode(parsed.payload) };
-      } catch {
-        parsed = undefined; // corrupt payload: as good as absent
-      }
-    }
+    // Stryker disable next-line ConditionalExpression: nothing parses as no envelope either
+    const shared = held === undefined ? undefined : this.#open(held);
 
     const now = this.#now();
-    if (
-      held !== undefined &&
-      parsed !== undefined &&
-      heldValue !== undefined &&
-      now < parsed.hardMs &&
-      (!refreshing || now < parsed.softMs)
-    ) {
-      this.#fill(epoch, key, heldValue.value, parsed.softMs, parsed.hardMs, held.length);
-      return { value: heldValue.value, source: "l2" };
+    if (shared !== undefined && now < shared.hardMs && (!refreshing || now < shared.softMs)) {
+      this.#fill(epoch, key, shared.value, shared.softMs, shared.hardMs, shared.size);
+      return { value: shared.value, source: "l2" };
     }
 
     let value: T | undefined;
@@ -493,7 +514,7 @@ export class TierCache<T> {
       value = await this.#load(key, signal);
     } catch (err) {
       if (!refreshing) {
-        const stale = this.#staleFallback(key, parsed?.hardMs, heldValue);
+        const stale = this.#staleFallback(key, shared);
         if (stale !== undefined) {
           this.#warn("tiercache: source failed, serving an expired value", err);
           return { value: stale.value, source: "stale_error" };
@@ -505,11 +526,11 @@ export class TierCache<T> {
     if (value === undefined) {
       // Gone from the source: stop serving what L1 and L2 still have.
       this.#invalidateLocal(key);
-      if (held !== undefined && this.#remote !== undefined) {
-        const remote = this.#remote;
-        await this.#remoteCall(() => remote.tombstone(remoteKey, this.#cfg.tombstoneTtlMs)).catch(
-          () => {},
-        );
+      if (held !== undefined) {
+        await this.#remoteCall(
+          // Stryker disable next-line OptionalChaining: L2 held something, so there is an L2
+          async () => this.#remote?.tombstone(remoteKey, this.#cfg.tombstoneTtlMs),
+        ).catch(() => {});
       }
       return { value: undefined, source: "not_found" };
     }
@@ -546,14 +567,13 @@ export class TierCache<T> {
    */
   #staleFallback(
     key: string,
-    heldHardMs: number | undefined,
-    heldValue: { value: T } | undefined,
+    shared: { hardMs: number; value: T } | undefined,
   ): { value: T } | undefined {
-    if (this.#cfg.staleIfErrorMs <= 0) return undefined;
+    // With no grace the limit is now, and what got here is past its deadline.
     const limit = this.#now() - this.#cfg.staleIfErrorMs;
-    if (heldValue !== undefined && heldHardMs !== undefined && heldHardMs > limit) return heldValue;
+    if (shared !== undefined && shared.hardMs > limit) return shared;
     const entry = this.#local.get(key);
-    return entry !== undefined && entry.hardMs > limit ? { value: entry.value } : undefined;
+    return entry !== undefined && entry.hardMs > limit ? entry : undefined;
   }
 
   /** Writes to L1 unless an invalidation arrived since `epoch`; evicts the oldest entries. */
@@ -585,6 +605,9 @@ export class TierCache<T> {
   #invalidateLocal(key: string): void {
     this.#epoch += 1;
     this.#drop(key);
+    // The lookup in flight may have read the old row: its callers keep it,
+    // the next read starts its own.
+    this.#flights.delete(key);
     this.#invalidations.add(1, { ...this.#labels, scope: "key" });
   }
 
@@ -593,6 +616,7 @@ export class TierCache<T> {
     this.#epoch += 1;
     this.#local.clear();
     this.#bytes = 0;
+    this.#flights.clear();
     this.#invalidations.add(1, { ...this.#labels, scope: "all" });
   }
 
@@ -620,20 +644,12 @@ export class TierCache<T> {
       AbortSignal.timeout(this.#cfg.refreshTimeoutMs),
     ]);
     // The same flights as get(): a refresh and a synchronous lookup of one
-    // key (after an invalidation, say) are still a single load.
-    let flight = this.#flights.get(key);
-    if (flight === undefined) {
-      flight = this.#resolve(key, true, signal).finally(() => {
-        this.#flights.delete(key);
-      });
-      this.#flights.set(key, flight);
-    }
+    // key (past its hard deadline, say) are still a single load. The flight
+    // may outlive its deadline (a loader that ignores the signal).
     try {
-      await abortable(flight, signal);
+      await abortable(this.#flight(key, true, signal), signal);
       this.#refreshes.add(1, { ...this.#labels, result: "ok" });
     } catch (err) {
-      // The flight may outlive its deadline (a loader that ignores the signal).
-      flight.catch(() => {});
       this.#refreshes.add(1, { ...this.#labels, result: "error" });
       this.#warn("tiercache: background refresh failed, the stale value stays", err);
     }
@@ -660,15 +676,7 @@ export class TierCache<T> {
         return;
       } catch (err) {
         this.#warn("tiercache: invalidation subscription failed, retrying", err);
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(done, 1_000);
-          function done(): void {
-            clearTimeout(timer);
-            life.removeEventListener("abort", done);
-            resolve();
-          }
-          life.addEventListener("abort", done, { once: true });
-        });
+        await sleep(1_000, undefined, { signal: life }).catch(() => {});
       }
     }
   }
@@ -706,11 +714,7 @@ export class TierCache<T> {
       this.#bypassed.add(1, this.#labels);
       return undefined;
     }
-    try {
-      return await this.#remoteCall(() => remote.get(remoteKey));
-    } catch {
-      return undefined;
-    }
+    return this.#remoteCall(() => remote.get(remoteKey)).catch(() => undefined);
   }
 
   /**
