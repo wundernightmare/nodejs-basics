@@ -945,9 +945,20 @@ await afterCommit(() => creds.invalidate(keyOf(apiKey)));
   does not keep it either.
 - **A read that follows an invalidation starts its own lookup**: one already
   in flight may have read the old row, so it answers the callers it has and
-  nobody else. (golang-basics' `singleflight` lets such a read join it.)
+  nobody else.
+- **A deadline no clock of this process could have set is not trusted.** The
+  deadlines are wall-clock instants and an L2 entry is read by other
+  processes: a hard deadline further away than `hardTtlMs` and its jitter (a
+  tenth) came from a clock that runs ahead — or from this one before it was
+  stepped back. Such an entry is a miss in both levels, the load replaces
+  it, and it is not a `staleIfErrorMs` fallback either. So nothing is served
+  for longer than `hardTtlMs` and a tenth by the reader's own clock; what a
+  skew costs is L2 (processes whose clocks differ by more than `hardTtlMs`
+  reload each other's entries). A clock that runs behind only makes entries
+  expire sooner.
 - L1 is bounded by `maxBytes` of encoded entries (default 32 MiB) and evicts
-  the oldest first. Values are handed out as the same object: read-only.
+  the oldest first. A value that outgrew `maxEntryBytes` takes its previous
+  version out of L1. Values are handed out as the same object: read-only.
 - Metrics, every series labelled `cache="<name>"`:
   `tiercache_reads_total{result}`, `tiercache_refreshes_total{result}`,
   `tiercache_invalidations_total{scope}`, `tiercache_l2_bypassed_total`,
