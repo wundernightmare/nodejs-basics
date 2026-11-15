@@ -28,6 +28,8 @@ import {
   trace,
 } from "@opentelemetry/api";
 
+import { followDebugTrace } from "@base/common";
+
 type KafkaHeaders = NonNullable<KafkaJS.Message["headers"]>;
 
 const TRACER = "@base/kafka";
@@ -141,7 +143,8 @@ export function traceKafkaMessage<T>(
       parent,
       async (span) => {
         try {
-          const result = await fn();
+          // A message of a debug trace is logged like one.
+          const result = await followDebugTrace(fn);
           endSpan(span);
           return result;
         } catch (err) {

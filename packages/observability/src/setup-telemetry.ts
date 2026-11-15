@@ -14,6 +14,10 @@
  *  - Sentry (optional, no-op if SENTRY_DSN unset)
  *  - Prometheus metrics exporter (server is started by AdminServerService)
  *  - OTLP gRPC trace exporter (OTEL_EXPORTER_OTLP_ENDPOINT, default :4317)
+ *  - Head sampling (trace-sampler.ts) and the retroactive buffer behind it
+ *    (retro/retro-processor.ts): a warn or error line exports its unsampled trace
+ *  - Debug traces: a request with the debug token is sampled and marked
+ *    (debug-token-propagator.ts)
  *  - AsyncLocalStorage context manager (span context across awaits)
  *  - W3C trace + baggage propagators
  *  - Library instrumentations: caller-supplied — only ones that do not patch
@@ -40,10 +44,14 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic
 import Pyroscope from "@pyroscope/nodejs";
 import * as Sentry from "@sentry/nestjs";
 
-import { serviceIdentity } from "@base/logger";
+import { processEnv, readBool, readInt } from "@base/config";
+import { bindTraceTrigger, type Secret, serviceIdentity } from "@base/logger";
+
+import { DebugTokenPropagator } from "./debug-token-propagator.js";
 
 import { registerNodeMetrics } from "./node-metrics.js";
 import { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
+import { registerRetroMetrics, RetroProcessor } from "./retro/retro-processor.js";
 import { traceSampler } from "./trace-sampler.js";
 
 export { TELEMETRY_HANDLE, type TelemetryHandle };
@@ -66,6 +74,11 @@ export interface SetupTelemetryOptions {
    * @opentelemetry/instrumentation-* libraries.
    */
   instrumentations?: Instrumentation[];
+  /**
+   * The value of X-Debug-Token that makes a request a debug trace: sampled
+   * whatever the ratio, marked for the services behind. Default: DEBUG_TOKEN.
+   */
+  debugToken?: string | Secret | undefined;
 }
 
 export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHandle {
@@ -131,12 +144,33 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   const otlpEndpoint = process.env["OTEL_EXPORTER_OTLP_ENDPOINT"] ?? "http://localhost:4317";
 
   const traceExporter = new OTLPTraceExporter({ url: otlpEndpoint });
+  // The retroactive buffer (retro/retro-processor.ts) sits in front of the
+  // batch processor: the spans of an unsampled trace wait in it, and a warn
+  // or error log line of that trace exports them. On unless
+  // OTEL_RETRO_BUFFER_MIB=0; empty while everything is sampled.
+  const batch = new BatchSpanProcessor(traceExporter);
+  const retroMib = readInt(processEnv, "OTEL_RETRO_BUFFER_MIB");
+  const retro =
+    retroMib > 0
+      ? new RetroProcessor(batch, {
+          capacityBytes: retroMib * 1024 * 1024,
+          triggersPerSecond: readInt(processEnv, "OTEL_RETRO_TRIGGERS_PER_SECOND"),
+        })
+      : undefined;
   const tracerProvider = new BasicTracerProvider({
     resource,
-    sampler: traceSampler(process.env["OTEL_TRACES_SAMPLER_RATIO"]),
-    spanProcessors: [new BatchSpanProcessor(traceExporter)],
+    sampler: traceSampler({
+      ratio: process.env["OTEL_TRACES_SAMPLER_RATIO"],
+      trustRemoteParent: readBool(processEnv, "OTEL_TRACES_TRUST_REMOTE_PARENT"),
+      recordUnsampled: retro !== undefined,
+    }),
+    spanProcessors: [retro ?? batch],
   });
   trace.setGlobalTracerProvider(tracerProvider);
+  if (retro !== undefined) {
+    bindTraceTrigger(retro);
+    registerRetroMetrics(metrics.getMeter("retro"), retro);
+  }
 
   // ─── Context manager ──────────────────────────────────────────────────────
   // Without one `context.active()` is always empty: every span becomes a root
@@ -148,7 +182,12 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   // ─── W3C propagation ──────────────────────────────────────────────────────
   propagation.setGlobalPropagator(
     new CompositePropagator({
-      propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+      propagators: [
+        new W3CTraceContextPropagator(),
+        new W3CBaggagePropagator(),
+        // A request with the debug token is traced whatever the ratio.
+        new DebugTokenPropagator(options.debugToken ?? process.env["DEBUG_TOKEN"]),
+      ],
     }),
   );
 
@@ -193,5 +232,11 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
     await Pyroscope.stop();
   };
 
-  return { prometheusExporter, meterProvider, tracerProvider, stopPyroscope };
+  return {
+    prometheusExporter,
+    meterProvider,
+    tracerProvider,
+    stopPyroscope,
+    ...(retro !== undefined && { retro }),
+  };
 }

@@ -55,13 +55,20 @@ export {
 export {
   DEBUG_LOGGING_HEADER,
   DEBUG_TOKEN_HEADER,
+  DEBUG_TRACESTATE_KEY,
+  DEBUG_TRACESTATE_VALUE,
+  followDebugTrace,
+  forceTrace,
   generateRequestId,
   getRequestId,
   isDebugLogging,
+  isDebugTrace,
+  isTraceForced,
   isValidRequestId,
   REQUEST_ID_HEADER,
   Secret,
   withDebugLogging,
   withRequestId,
 } from "@base/common";
+export { bindTraceTrigger, type TraceTrigger, triggerActiveTrace } from "./trace-trigger.js";
 export { LOG_EVENTS, type LogEvent, logEventsReference } from "./log-events.js";

@@ -27,6 +27,7 @@
     "clean:build": "tsc --build --clean && rm -rf dist coverage"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.9.1",
     "nanoid": "6.0.2"
   },
   "peerDependencies": {

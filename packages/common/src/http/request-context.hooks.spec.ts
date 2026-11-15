@@ -1,5 +1,8 @@
+import { context, createTraceState, ROOT_CONTEXT, trace, TraceFlags } from "@opentelemetry/api";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { captureSpans } from "@base/testing";
 
 import { getRequestId, isDebugLogging } from "../utils/request-context.js";
 
@@ -67,5 +70,37 @@ describe("registerRequestContext", () => {
     expect(res.headers["x-debug-logging"]).toBeUndefined();
     expect(res.json().debug).toBe(false);
     await bare.close();
+  });
+
+  it("turns on debug logging for a request of a debug trace started upstream, without saying so", async () => {
+    const capture = captureSpans();
+    try {
+      const traced = Fastify({ genReqId: genRequestId, logger: false });
+      // What @fastify/otel does before this hook: the server span is active.
+      traced.addHook("onRequest", (req, _reply, done) => {
+        const [flags, tracestate] = String(req.headers["x-test-span"]).split(";");
+        const spanContext = {
+          traceId: "0af7651916cd43dd8448eb211c80319c",
+          spanId: "b7ad6b7169203331",
+          traceFlags: flags === "sampled" ? TraceFlags.SAMPLED : TraceFlags.NONE,
+          traceState: createTraceState(tracestate),
+        };
+        context.with(trace.setSpanContext(ROOT_CONTEXT, spanContext), done);
+      });
+      registerRequestContext(traced, { debugToken: "dbg" });
+      traced.get("/", async () => ({ debug: isDebugLogging() }));
+
+      const ask = async (span: string) => {
+        const res = await traced.inject({ url: "/", headers: { "x-test-span": span } });
+        return { debug: res.json().debug as boolean, header: res.headers["x-debug-logging"] };
+      };
+      expect(await ask("sampled;dbg=1")).toEqual({ debug: true, header: undefined });
+      expect(await ask("sampled;vendor=x")).toEqual({ debug: false, header: undefined });
+      // The mark on a trace nobody samples is not a debug trace.
+      expect(await ask("unsampled;dbg=1")).toEqual({ debug: false, header: undefined });
+      await traced.close();
+    } finally {
+      capture.stop();
+    }
   });
 });

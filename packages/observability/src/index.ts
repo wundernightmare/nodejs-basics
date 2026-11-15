@@ -34,6 +34,15 @@ export {
   ReadinessService,
   type ReadinessStatus,
 } from "./readiness.service.js";
+export { DebugTokenPropagator } from "./debug-token-propagator.js";
+export type { TriggerOutcome, TriggerSource } from "./retro/arena.js";
+export {
+  registerRetroMetrics,
+  type RetroOptions,
+  RetroProcessor,
+  type RetroUsage,
+} from "./retro/retro-processor.js";
+export { traceSampler, type TraceSamplerOptions } from "./trace-sampler.js";
 export { setupTelemetry, type SetupTelemetryOptions } from "./setup-telemetry.js";
 export { TELEMETRY_HANDLE, type TelemetryHandle } from "./setup-telemetry.tokens.js";
 export { METRIC_REGISTRY, type MetricEntry, metricsReference } from "./metrics.registry.js";

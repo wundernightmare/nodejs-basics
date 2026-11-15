@@ -48,7 +48,16 @@ Logs are one JSON object per line (envelope: `docs/log-envelope.schema.json`);
 
 Find the request: every error response carries `errorId` and `request_id`;
 both are fields of the matching log line (`error.id`, `http.request.id`), and
-the log line carries `trace.id` for the trace in Jaeger.
+the log line carries `trace.id` for the trace in Jaeger. A line with
+`trace.unsampled_id` instead belongs to a trace that was not sampled: search
+the logs by that id (every service of the request has it), there is no trace
+to open. A `warn` or `error` line normally has `trace.id` even at a low
+sampling ratio — it exports its trace (retroactive sampling); when it does
+not, `trace_retro_triggers_total{outcome="rate_limited"}` says why.
+
+One request, traced and logged at debug through every service whatever the
+ratio and the level: send it with `X-Debug-Token: $DEBUG_TOKEN` (the response
+says `X-Debug-Logging: on`).
 
 More detail for a while, without a restart:
 

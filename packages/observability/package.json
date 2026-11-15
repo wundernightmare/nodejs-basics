@@ -54,6 +54,9 @@
     "fastify": "5.x"
   },
   "devDependencies": {
-    "@base/testing": "workspace:*"
+    "@base/common": "workspace:*",
+    "@base/testing": "workspace:*",
+    "@fastify/otel": "0.21.2",
+    "pino": "10.4.0"
   }
 }
