@@ -943,6 +943,9 @@ await afterCommit(() => creds.invalidate(keyOf(apiKey)));
 - **A load that raced an invalidation is cached nowhere**: L2 refuses the
   fill (tombstone, or `SET … IFEQ` for a refresh — Valkey ≥ 8.1), and then L1
   does not keep it either.
+- **A read that follows an invalidation starts its own lookup**: one already
+  in flight may have read the old row, so it answers the callers it has and
+  nobody else. (golang-basics' `singleflight` lets such a read join it.)
 - L1 is bounded by `maxBytes` of encoded entries (default 32 MiB) and evicts
   the oldest first. Values are handed out as the same object: read-only.
 - Metrics, every series labelled `cache="<name>"`:
@@ -1569,7 +1572,7 @@ its own with its own threshold:
 | `resilient-client` | backoff, cache, errors, pool, the client (not the OTel wiring) | 56.8 %; 66.4 % on 2026-11-14 | 61 |
 | `grpc-client` | config, service config, the policy | 93.5 % | 88 |
 | `secret` | `Secret` | 98.0 % (the survivor is equivalent) | 95 |
-| `tier-cache` | the two-level cache | 75.7 % | 70 |
+| `tier-cache` | the two-level cache | 75.7 %; 100 % after its survivors were triaged | 95 |
 | `rate-limit` | the inbound rate limit | 87.8 % | 82 |
 | `logger` | masking of private data, debug subjects, the background guard, sampling, the runtime level | 82.3 %; 99.3 % after its survivors were triaged | 94 |
 

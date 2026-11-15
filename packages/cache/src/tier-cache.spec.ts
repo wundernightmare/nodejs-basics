@@ -1,3 +1,4 @@
+import type { Meter } from "@opentelemetry/api";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { captureMetrics, metricValue, testCase } from "@base/testing";
@@ -17,7 +18,13 @@ const TOMB = "\u0000tomb";
 /** One shared "Valkey": keys with tombstones and a channel, with switches to break it. */
 class FakeServer {
   readonly data = new Map<string, string>();
-  readonly subscribers = new Set<{ onMessage: (m: string) => void; onSubscribed: () => void }>();
+  readonly subscribers = new Set<{
+    channel: string;
+    onMessage: (m: string) => void;
+    onSubscribed: () => void;
+  }>();
+  /** Every command that reached the server, as "<name> <key or channel> <ttl ms or message>". */
+  readonly ops: string[] = [];
   failing = false;
   hanging = false;
   calls = 0;
@@ -34,28 +41,32 @@ class FakeServer {
         const raw = this.data.get(key);
         return raw === undefined || raw === TOMB ? undefined : raw;
       },
-      setNX: async (key, value) => {
+      setNX: async (key, value, ttlMs) => {
         await guard();
+        this.ops.push(`setNX ${key} ${ttlMs}`);
         if (this.data.has(key)) return false;
         this.data.set(key, value);
         return true;
       },
-      replace: async (key, old, value) => {
+      replace: async (key, old, value, ttlMs) => {
         await guard();
+        this.ops.push(`replace ${key} ${ttlMs}`);
         if (this.data.get(key) !== old) return false;
         this.data.set(key, value);
         return true;
       },
-      tombstone: async (key) => {
+      tombstone: async (key, ttlMs) => {
         await guard();
+        this.ops.push(`tombstone ${key} ${ttlMs}`);
         this.data.set(key, TOMB);
       },
-      publish: async (_channel, message) => {
+      publish: async (channel, message) => {
         await guard();
-        for (const s of this.subscribers) s.onMessage(message);
+        this.ops.push(`publish ${channel} ${message}`);
+        for (const s of this.subscribers) if (s.channel === channel) s.onMessage(message);
       },
-      subscribe: (_channel, onMessage, onSubscribed) => {
-        const subscriber = { onMessage, onSubscribed };
+      subscribe: (channel, onMessage, onSubscribed) => {
+        const subscriber = { channel, onMessage, onSubscribed };
         this.subscribers.add(subscriber);
         onSubscribed();
         return Promise.resolve(() => {
@@ -139,7 +150,18 @@ describe("tier cache envelope", () => {
       hardMs: 9,
       payload: '{"a":"x|y"}',
     });
-    for (const bad of ["", "2|1|2|x", "1|9|5|x", "1|a|2|x", "1|1|2", '{"a":1}', "1|-1|2|x"]) {
+    // soft == hard is plain cache-aside, not a broken envelope.
+    expect(parseEnvelope("1|5|5|x")).toEqual({ softMs: 5, hardMs: 5, payload: "x" });
+    for (const bad of [
+      "",
+      "2|1|2|x",
+      "1|9|5|x",
+      "1|a|2|x",
+      "1|1|2",
+      '{"a":1}',
+      "1|-1|2|x",
+      "x1|1|2|x",
+    ]) {
       expect(parseEnvelope(bad)).toBeUndefined();
     }
   });
@@ -163,6 +185,11 @@ describe("RemoteBreaker", () => {
     expect(breaker.allow(1_000)).toBe(true);
     expect(breaker.record(1_000, true)).toBe(true);
     expect(breaker.allow(1_500)).toBe(false);
+    // And again, cooldown after cooldown, for as long as the probes fail.
+    expect(breaker.record(2_000, true)).toBe(true);
+    expect(breaker.allow(2_999)).toBe(false);
+    expect(breaker.record(3_000, false)).toBe(false);
+    expect(breaker.record(3_000, true)).toBe(false); // a success starts the count over
   });
 });
 
@@ -628,6 +655,33 @@ describe("TierCache", () => {
       undefined,
       { logger: { warn }, now: () => clock },
     );
+    const capture = captureMetrics();
+    const counted = new TierCache<number>(
+      { name: "enc", hardTtlMs: 10_000 },
+      () => Promise.resolve(1),
+      undefined,
+      {
+        codec: {
+          encode: () => {
+            throw new Error("cannot encode");
+          },
+          decode: () => 1,
+        },
+      },
+    );
+    try {
+      await counted.get("k");
+      expect(
+        metricValue(await capture.scrape(), "tiercache_reads_total", {
+          cache: "enc",
+          result: "load",
+        }),
+      ).toBe(1);
+    } finally {
+      await counted.close();
+      await capture.stop();
+    }
+
     expect((await cache.get("k"))?.self).toBeDefined();
     await cache.get("k");
     expect(loads).toBe(2);
@@ -694,6 +748,494 @@ describe("TierCache", () => {
     await expect(cache.get("k", AbortSignal.abort(new Error("already gone")))).rejects.toThrow(
       "already gone",
     );
+  });
+
+  it("does not answer a read that follows an invalidation with a load that began before it", async () => {
+    await testCase("NB-1342", "tier cache: a read after invalidate() never joins an older lookup");
+    const gates: Array<() => void> = [];
+    let version = 1;
+    let loads = 0;
+    const cache = new TierCache<number>(
+      { name: "ryw", hardTtlMs: 10_000 },
+      async () => {
+        loads += 1;
+        const seen = version; // what a query that began before the write sees
+        await new Promise<void>((resolve) => {
+          gates.push(resolve);
+        });
+        return seen;
+      },
+      undefined,
+      { now: () => clock },
+    );
+    open.push(cache as never);
+
+    const before = cache.get("k");
+    await settle();
+    version = 2;
+    await cache.invalidate("k");
+    const after = cache.get("k"); // must not be handed the row read before the write
+    await settle();
+    expect(loads).toBe(2);
+
+    gates[0]?.(); // the older lookup ends first: it must not take the newer one with it
+    expect(await before).toBe(1);
+    const joined = cache.get("k");
+    await settle();
+    expect(loads).toBe(2);
+    gates[1]?.();
+    expect(await Promise.all([after, joined])).toEqual([2, 2]);
+  });
+
+  it("starts nothing for a caller that has already gone, whatever the source does", async () => {
+    await testCase("NB-1191", "tier cache: each caller honours its own signal");
+    const { cache, source } = rig(undefined);
+    source.failing = true; // a lookup nobody waits for would end in an unhandled rejection
+    await expect(cache.get("k", AbortSignal.abort(new Error("already gone")))).rejects.toThrow(
+      "already gone",
+    );
+    await settle();
+    expect(source.loads).toBe(0);
+  });
+
+  it("serves from L1 strictly before each deadline", async () => {
+    await testCase("NB-1343", "tier cache: a deadline is the first moment a value is too old");
+    const atSoft = rig(undefined);
+    atSoft.source.rows.set("k", 1);
+    await atSoft.cache.get("k");
+    atSoft.advance(1_000); // exactly the soft deadline: stale already
+    await atSoft.cache.get("k");
+    await settle();
+    expect(atSoft.source.loads).toBe(2);
+
+    const atHard = rig(undefined);
+    atHard.source.rows.set("k", 1);
+    await atHard.cache.get("k");
+    atHard.source.rows.set("k", 2);
+    atHard.advance(10_000); // exactly the hard deadline: not served any more
+    expect(await atHard.cache.get("k")).toEqual({ key: "k", version: 2 });
+  });
+
+  it("takes from L2 strictly before each deadline", async () => {
+    await testCase("NB-1343", "tier cache: a deadline is the first moment a value is too old");
+    const server = new FakeServer();
+    const writer = rig(server);
+    writer.source.rows.set("k", 1);
+    await writer.cache.get("k");
+
+    // Stale in L2 is still an answer for a read: no load.
+    writer.advance(1_500);
+    const stale = rig(server);
+    stale.source.rows.set("k", 2);
+    expect(await stale.cache.get("k")).toEqual({ key: "k", version: 1 });
+    expect(stale.source.loads).toBe(0);
+
+    // Exactly at the hard deadline it is not: the source answers.
+    writer.advance(8_500);
+    const late = rig(server);
+    late.source.rows.set("k", 2);
+    expect(await late.cache.get("k")).toEqual({ key: "k", version: 2 });
+    expect(late.source.loads).toBe(1);
+  });
+
+  it("a refresh takes a value somebody else has refreshed, while it is fresh", async () => {
+    await testCase("NB-1344", "tier cache: a refresh reuses a fresh L2 value, never a stale one");
+    const server = new FakeServer();
+    const first = rig(server);
+    const second = rig(server);
+    const third = rig(server);
+    for (const r of [first, second, third]) r.source.rows.set("k", 1);
+    for (const r of [first, second, third]) await r.cache.get("k");
+    expect([second.source.loads, third.source.loads]).toEqual([0, 0]);
+
+    for (const r of [first, second, third]) r.source.rows.set("k", 2);
+    first.advance(1_500);
+    await first.cache.get("k");
+    await settle(); // the first process has refreshed L2: fresh for 1000 ms from now
+
+    await second.cache.get("k"); // stale in its L1: refreshed from L2, not from the source
+    await settle();
+    expect(second.source.loads).toBe(0);
+    expect(await second.cache.get("k")).toEqual({ key: "k", version: 2 });
+
+    first.advance(1_000); // exactly the soft deadline of what L2 holds: not fresh
+    await third.cache.get("k");
+    await settle();
+    expect(third.source.loads).toBe(1);
+  });
+
+  it("serves an expired value strictly within the grace", async () => {
+    await testCase(
+      "NB-1178",
+      "tier cache: stale-if-error serves an expired value for its grace only",
+    );
+    const local = rig(undefined, { staleIfErrorMs: 5_000 });
+    local.source.rows.set("k", 1);
+    await local.cache.get("k");
+    local.source.failing = true;
+    local.advance(14_999);
+    expect(await local.cache.get("k")).toEqual({ key: "k", version: 1 });
+    local.advance(1); // hard deadline + grace, to the millisecond
+    await expect(local.cache.get("k")).rejects.toThrow("source is down");
+
+    const server = new FakeServer();
+    const writer = rig(server, { staleIfErrorMs: 5_000 });
+    writer.source.rows.set("k", 1);
+    await writer.cache.get("k");
+    const shared = rig(server, { staleIfErrorMs: 5_000 });
+    shared.source.failing = true;
+    shared.advance(14_999);
+    expect(await shared.cache.get("k")).toEqual({ key: "k", version: 1 });
+    shared.advance(1);
+    await expect(shared.cache.get("k")).rejects.toThrow("source is down");
+
+    // Nothing to fall back to at all: the source's own error.
+    await expect(shared.cache.get("never-loaded")).rejects.toThrow("source is down");
+  });
+
+  it("a failed refresh is a failed refresh even with the grace on", async () => {
+    await testCase("NB-1190", "tier cache: a failed refresh keeps the stale value");
+    const { cache, source, advance, warn } = rig(undefined, { staleIfErrorMs: 5_000 });
+    source.rows.set("k", 1);
+    await cache.get("k");
+    source.failing = true;
+    advance(1_500);
+    await cache.get("k");
+    await settle();
+    expect(warn.mock.calls.map(([, msg]) => msg)).toEqual([
+      "tiercache: background refresh failed, the stale value stays",
+    ]);
+  });
+
+  it("refreshes a key again once the previous refresh is over", async () => {
+    await testCase("NB-1189", "tier cache: background refreshes are bounded and one per key");
+    // A limit of zero is no limit given: the default applies.
+    const { cache, source, advance } = rig(undefined, { refreshConcurrency: 0 });
+    source.rows.set("k", 1);
+    await cache.get("k");
+    for (const loads of [2, 3]) {
+      advance(1_500);
+      await cache.get("k");
+      await settle();
+      expect(source.loads).toBe(loads);
+    }
+  });
+
+  it("writes to L2 with both deadlines, for the hard TTL and the grace", async () => {
+    await testCase("NB-1345", "tier cache: L2 gets setNX for a new key, replace for a refresh");
+    const server = new FakeServer();
+    const { cache, source, advance } = rig(server, { staleIfErrorMs: 5_000 });
+    source.rows.set("k", 1);
+    await cache.get("k");
+    expect(server.ops).toEqual(["setNX tc:t:k 15000"]);
+    expect(server.data.get("tc:t:k")).toBe(
+      encodeEnvelope(clock + 1_000, clock + 10_000, '{"key":"k","version":1}'),
+    );
+
+    advance(1_500);
+    await cache.get("k");
+    await settle();
+    expect(server.ops).toEqual(["setNX tc:t:k 15000", "replace tc:t:k 15000"]);
+
+    // Not found with nothing in L2: there is nothing to tombstone.
+    await cache.get("absent");
+    expect(server.ops).toHaveLength(2);
+  });
+
+  it("invalidates on its own channel only", async () => {
+    await testCase(
+      "NB-1182",
+      "tier cache: invalidate reaches L1 of every process and tombstones L2",
+    );
+    const server = new FakeServer();
+    const tasks = rig(server, { name: "tasks" });
+    const users = rig(server, { name: "users" });
+    for (const r of [tasks, users]) r.source.rows.set("k", 1);
+    await tasks.cache.get("k");
+    await users.cache.get("k");
+
+    await tasks.cache.invalidate("k");
+    expect(server.ops.slice(-2)).toEqual(["tombstone tc:tasks:k 5000", "publish tc:tasks:inv k"]);
+    await users.cache.get("k"); // another cache's key of the same name is untouched
+    expect(users.source.loads).toBe(1);
+  });
+
+  it("does not publish when invalidation is disabled, and needs no L2 to invalidate", async () => {
+    await testCase("NB-1184", "tier cache: a reconnected subscription empties L1");
+    const server = new FakeServer();
+    const quiet = rig(server, { disableInvalidation: true });
+    await quiet.cache.invalidate("k");
+    expect(server.ops).toEqual(["tombstone tc:t:k 5000"]);
+
+    const alone = rig(undefined);
+    for (let i = 0; i < 8; i += 1) alone.source.rows.set(`k${i}`, 1);
+    await expect(alone.cache.invalidate("k0")).resolves.toBeUndefined();
+    for (let i = 0; i < 8; i += 1) await alone.cache.get(`k${i}`);
+    expect(alone.warn).not.toHaveBeenCalled(); // no L2 is not a failing L2
+  });
+
+  it("names the L2 call that did not answer", async () => {
+    await testCase(
+      "NB-1233",
+      "tier cache: a failed remote invalidation is reported, L1 is dropped",
+    );
+    const server = new FakeServer();
+    const { cache } = rig(server, { remoteTimeoutMs: 20 });
+    server.hanging = true;
+    const failure = (await cache.invalidate("k").catch((err: unknown) => err)) as AggregateError;
+    expect(failure.message).toBe("tiercache: invalidate failed");
+    expect(failure.errors.map((err: Error) => `${err.name}: ${err.message}`)).toEqual([
+      "RemoteTimeoutError: tiercache: L2 did not answer within 20 ms",
+      "RemoteTimeoutError: tiercache: L2 did not answer within 20 ms",
+    ]);
+  });
+
+  it("leaves no timer behind an L2 call that answered", async () => {
+    await testCase("NB-1179", "tier cache: an unreachable L2 never fails a read");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { cache, source } = rig(new FakeServer());
+      source.rows.set("k", 1);
+      await cache.get("k");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops listening to a caller's signal once it has its answer", async () => {
+    await testCase("NB-1191", "tier cache: each caller honours its own signal");
+    const { cache, source } = rig(undefined);
+    source.rows.set("k", 1);
+    const caller = new AbortController();
+    const removed = vi.spyOn(caller.signal, "removeEventListener");
+    await cache.get("k", caller.signal);
+    await settle();
+    expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+  });
+
+  it("does not keep a value that an invalidation and a reset both raced", async () => {
+    await testCase("NB-1183", "tier cache: a load racing an invalidation is not cached anywhere");
+    const server = new FakeServer();
+    const { cache, source } = rig(server);
+    source.rows.set("k", 1);
+    let release!: () => void;
+    source.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reading = cache.get("k");
+    await settle();
+    for (const s of server.subscribers) s.onMessage("other"); // somebody else's invalidation
+    server.reconnect(); // and a reset
+    release();
+    await reading;
+    source.gate = undefined;
+
+    const calls = server.calls;
+    await cache.get("k");
+    expect(server.calls).toBe(calls + 1); // L1 did not keep it
+  });
+
+  it("does not let a read after a reset join a lookup that began before it", async () => {
+    await testCase("NB-1342", "tier cache: a read after invalidate() never joins an older lookup");
+    const server = new FakeServer();
+    const { cache, source } = rig(server);
+    source.rows.set("k", 1);
+    let release!: () => void;
+    source.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const before = cache.get("k");
+    await settle();
+    server.reconnect(); // invalidations may have been missed: whatever is in flight is suspect
+    const after = cache.get("k");
+    await settle();
+    expect(source.loads).toBe(2);
+    release();
+    await Promise.all([before, after]);
+  });
+
+  it("accounts for every byte L1 holds", async () => {
+    await testCase("NB-1187", "tier cache: L1 stays within its byte budget");
+    const capture = captureMetrics();
+    try {
+      const size =
+        1 + encodeEnvelope(clock + 1_000, clock + 10_000, '{"key":"a","version":1}').length;
+      // Both limits are inclusive: an entry of exactly maxEntryBytes, two of exactly maxBytes.
+      const { cache, source, advance } = rig(undefined, {
+        name: "acc",
+        maxEntryBytes: size,
+        maxBytes: 2 * size,
+      });
+      const held = async (): Promise<number> =>
+        metricValue(await capture.scrape(), "tiercache_l1_bytes", { cache: "acc" });
+      for (const key of ["a", "b"]) source.rows.set(key, 1);
+      await cache.get("a");
+      await cache.get("b");
+      await cache.get("a");
+      await cache.get("b");
+      expect(source.loads).toBe(2);
+      expect(await held()).toBe(2 * size);
+
+      advance(1_500); // a refresh replaces the entry: its bytes are not counted twice
+      await cache.get("a");
+      await settle();
+      expect(source.loads).toBe(3);
+      expect(await held()).toBe(2 * size);
+      await cache.get("a");
+      expect(source.loads).toBe(3); // and nothing was evicted to make room for a ghost
+
+      await cache.invalidate("b");
+      expect(await held()).toBe(size);
+    } finally {
+      await capture.stop();
+    }
+  });
+
+  it("reports every outcome under its own label", async () => {
+    await testCase(
+      "NB-1346",
+      "tier cache: every read, refresh and invalidation outcome is counted",
+    );
+    const capture = captureMetrics();
+    try {
+      const server = new FakeServer();
+      const { cache, source, advance } = rig(server, {
+        name: "m",
+        staleIfErrorMs: 5_000,
+        breakerThreshold: 1,
+        refreshTimeoutMs: 20,
+      });
+      source.rows.set("k", 1);
+      await cache.get("k"); // load
+      await cache.get("k"); // fresh
+      await cache.get("absent"); // not_found (and a local invalidation of the key)
+      server.reconnect(); // a reset
+      await cache.get("k"); // l2
+
+      source.failing = true;
+      advance(1_500);
+      await cache.get("k"); // stale, and a refresh that fails
+      await settle();
+      advance(10_000);
+      await cache.get("k"); // stale_error
+      advance(5_000);
+      await cache.get("k").catch(() => {}); // error
+
+      server.failing = true;
+      await cache.get("other").catch(() => {}); // opens the breaker
+      await cache.get("other").catch(() => {}); // bypasses L2
+
+      const text = await capture.scrape();
+      const count = (name: string, labels: Record<string, string>): number =>
+        metricValue(text, name, { cache: "m", ...labels });
+      expect(
+        ["fresh", "stale", "l2", "load", "stale_error", "not_found", "error"].map((result) =>
+          count("tiercache_reads_total", { result }),
+        ),
+      ).toEqual([1, 1, 1, 1, 1, 1, 3]);
+      expect(count("tiercache_refreshes_total", { result: "error" })).toBe(1);
+      expect(count("tiercache_invalidations_total", { scope: "key" })).toBe(1);
+      expect(count("tiercache_invalidations_total", { scope: "all" })).toBe(2); // subscribed, reconnected
+      expect(count("tiercache_l2_bypassed_total", {})).toBe(1);
+      expect(text).toContain("# UNIT tiercache_l1_bytes By");
+    } finally {
+      await capture.stop();
+    }
+  });
+
+  it("takes its gauge callback back on close", async () => {
+    await testCase("NB-1192", "tier cache: close stops the running refreshes");
+    const addCallback = vi.fn<(callback: unknown) => void>();
+    const removeCallback = vi.fn<(callback: unknown) => void>();
+    const meter = {
+      createCounter: () => ({ add: () => {} }),
+      createObservableGauge: () => ({ addCallback, removeCallback }),
+    } as unknown as Meter;
+    const cache = new TierCache<number>(
+      { name: "g", hardTtlMs: 1 },
+      () => Promise.resolve(1),
+      undefined,
+      {
+        meter,
+      },
+    );
+    expect(removeCallback).not.toHaveBeenCalled();
+    await cache.close();
+    // A callback left behind keeps the closed cache, and everything it holds, alive.
+    expect(removeCallback).toHaveBeenCalledWith(addCallback.mock.calls[0]?.[0]);
+  });
+
+  it("warns once a second, with the cause", async () => {
+    await testCase("NB-1347", "tier cache: one warning a second per cache");
+    let now = 1_500; // the very first second of the clock counts too
+    const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
+    const failure: { cause: unknown } = { cause: new Error("cannot encode") };
+    const cache = new TierCache<number>(
+      { name: "noisy", hardTtlMs: 10_000 },
+      () => Promise.resolve(1),
+      undefined,
+      {
+        logger: { warn },
+        now: () => now,
+        codec: {
+          encode: () => {
+            throw failure.cause;
+          },
+          decode: () => 1,
+        },
+      },
+    );
+    open.push(cache as never);
+    await cache.get("k");
+    now = 1_999;
+    await cache.get("k");
+    expect(warn.mock.calls.map(([fields]) => fields)).toEqual([
+      { "cache.name": "noisy", "error.message": "cannot encode" },
+    ]);
+    now = 2_000;
+    failure.cause = "not an error";
+    await cache.get("k");
+    expect(warn.mock.calls.at(-1)?.[0]).toEqual({
+      "cache.name": "noisy",
+      "error.message": "unknown error",
+    });
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("close waits for the lookups in flight and forgets what L1 held", async () => {
+    await testCase("NB-1192", "tier cache: close stops the running refreshes");
+    let loads = 0;
+    let wound = false;
+    let reason: unknown;
+    const cache = new TierCache<number>(
+      { name: "closing2", hardTtlMs: 10_000 },
+      (key, signal) => {
+        loads += 1;
+        if (key === "quick" || signal.aborted) return Promise.resolve(1);
+        return new Promise<number>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            reason = signal.reason;
+            setTimeout(() => {
+              wound = true; // a loader that takes a moment to wind down
+              reject(signal.reason as Error);
+            }, 30);
+          });
+        });
+      },
+      undefined,
+      { now: () => clock },
+    );
+    await cache.get("quick");
+    const pending = cache.get("slow").catch((err: unknown) => err);
+    await settle();
+    await cache.close();
+    expect(wound).toBe(true);
+    expect(((await pending) as Error).message).toBe("tiercache: closed");
+    expect((reason as Error).message).toBe("tiercache: closed");
+
+    await cache.get("quick");
+    expect(loads).toBe(3); // nothing is served from a closed cache's L1
   });
 
   it("rejects a config it cannot run with", async () => {

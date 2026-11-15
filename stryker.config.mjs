@@ -41,11 +41,13 @@ export const TARGETS = {
     mutate: ["packages/common/src/utils/secret.ts"],
     break: 95,
   },
-  // 75.7 %: 111 survivors to triage — the chaos suite covers what the unit layer does not assert.
+  // 75.7 % when added (2026-11-14); 100 % after the 112 survivors were triaged
+  // (2026-11-15). Timeouts count as killed and vary with the load of the
+  // machine, hence the margin.
   "tier-cache": {
     dir: "packages/cache",
     mutate: ["packages/cache/src/tier-cache.ts"],
-    break: 70,
+    break: 95,
   },
   // 87.8 %.
   "rate-limit": {
