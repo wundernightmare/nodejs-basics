@@ -12,6 +12,14 @@ export {
   withRequestId,
 } from "./utils/request-context.js";
 export {
+  DEBUG_TRACESTATE_KEY,
+  DEBUG_TRACESTATE_VALUE,
+  followDebugTrace,
+  forceTrace,
+  isDebugTrace,
+  isTraceForced,
+} from "./utils/debug-trace.js";
+export {
   callBudgetMs,
   DeadlineExceededError,
   parseTimeoutMs,

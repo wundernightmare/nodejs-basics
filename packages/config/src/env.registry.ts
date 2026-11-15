@@ -1700,6 +1700,47 @@ const REGISTRY = [
   },
 
   {
+    key: "OTEL_TRACES_TRUST_REMOTE_PARENT",
+    type: "bool",
+    required: false,
+    default: "true",
+    description:
+      "Whether the sampled flag of a caller's traceparent decides for this service. true: a " +
+      "sampled caller keeps its trace whole through it. Set false on the internet-facing " +
+      "edge: there a client could otherwise have all its requests traced (and, with the " +
+      "debug mark in tracestate, logged at debug) — the decision is drawn afresh at " +
+      "OTEL_TRACES_SAMPLER_RATIO and the client's tracestate is dropped; the trace id is kept.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "OTEL_RETRO_BUFFER_MIB",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "16",
+    description:
+      "Retroactive sampling: memory in MiB, allocated at start and never exceeded, where the " +
+      "spans of unsampled traces wait; a warn or error log line of such a trace exports it. " +
+      "0 turns it off. Empty while everything is sampled (OTEL_TRACES_SAMPLER_RATIO=1); " +
+      "trace_retro_buffer_horizon_seconds shows how far back it reaches under load.",
+    usedIn: ["observability"],
+  },
+
+  {
+    key: "OTEL_RETRO_TRIGGERS_PER_SECOND",
+    type: "int",
+    min: 0,
+    required: false,
+    default: "50",
+    description:
+      "Retroactive sampling: unsampled traces the warn and error lines of this process may " +
+      "export a second; the ones above it stay unsampled " +
+      '(trace_retro_triggers_total{outcome="rate_limited"}).',
+    usedIn: ["observability"],
+  },
+
+  {
     key: "OTEL_EXPORTER_OTLP_ENDPOINT",
     required: false,
     description:

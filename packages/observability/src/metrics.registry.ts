@@ -419,6 +419,58 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     source: "packages/cache",
   },
   {
+    name: "trace_retro_buffer_bytes",
+    kind: "ObservableGauge",
+    unit: "By",
+    labels: [],
+    description: "Bytes of the retroactive sampling buffer in use.",
+    source: "packages/observability",
+  },
+  {
+    name: "trace_retro_buffer_capacity_bytes",
+    kind: "ObservableGauge",
+    unit: "By",
+    labels: [],
+    description: "Bytes the retroactive sampling buffer was allocated with: its limit.",
+    source: "packages/observability",
+  },
+  {
+    name: "trace_retro_buffer_spans",
+    kind: "ObservableGauge",
+    labels: [],
+    description: "Unsampled spans kept for retroactive sampling.",
+    source: "packages/observability",
+  },
+  {
+    name: "trace_retro_buffer_horizon_seconds",
+    kind: "ObservableGauge",
+    unit: "s",
+    labels: [],
+    description:
+      "Time between the oldest and the newest span kept: how far back a trigger reaches.",
+    watch:
+      "Below the duration of a typical request under load: a warn line finds the start of its trace already evicted — raise OTEL_RETRO_BUFFER_MIB.",
+    source: "packages/observability",
+  },
+  {
+    name: "trace_retro_spans_total",
+    kind: "ObservableCounter",
+    labels: ["outcome"],
+    description:
+      "Unsampled spans by what became of them: kept in the buffer, exported by a trigger, evicted by newer ones, or lost to the codec (unencodable, undecodable).",
+    source: "packages/observability",
+  },
+  {
+    name: "trace_retro_triggers_total",
+    kind: "ObservableCounter",
+    labels: ["source", "outcome"],
+    description:
+      "Triggers of retroactive sampling: accepted, repeated for a trace already triggered, or refused by the rate limit; by a log line of this process (local) or asked for by another service (remote).",
+    watch:
+      "rate_limited growing: more failing traces than OTEL_RETRO_TRIGGERS_PER_SECOND lets out — their lines carry trace.unsampled_id, not trace.id.",
+    source: "packages/observability",
+  },
+  {
     name: "valkey_client_connected",
     kind: "ObservableGauge",
     labels: [],

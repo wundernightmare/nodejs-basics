@@ -56,20 +56,104 @@ export async function containerRuntimeAvailable(): Promise<boolean> {
 export interface StoredSpan {
   /** The span's name. */
   operationName: string;
+  /** Lowercase hex, as in a span context. */
+  spanId: string;
+  /** Lowercase hex; "" for a root. */
+  parentSpanId: string;
+  /** service.name of the resource that sent it. */
+  service: string;
+  /** Attributes by key; a value is whatever OTLP/JSON holds (stringValue, intValue, …) unwrapped. */
+  attributes: Record<string, unknown>;
+  /** Names of its events. */
+  events: string[];
+  /** W3C tracestate as it was exported; "" when there is none. */
+  traceState: string;
 }
 
 export interface StoredTrace {
+  /** Lowercase hex, as in a span context. */
   traceID: string;
   spans: StoredSpan[];
+}
+
+interface OtlpValue {
+  stringValue?: string;
+  intValue?: string | number;
+  doubleValue?: number;
+  boolValue?: boolean;
+}
+
+interface OtlpAttribute {
+  key: string;
+  value?: OtlpValue;
+}
+
+interface OtlpSpan {
+  traceId: string;
+  spanId?: string;
+  parentSpanId?: string;
+  name: string;
+  traceState?: string;
+  attributes?: OtlpAttribute[];
+  events?: Array<{ name?: string }>;
 }
 
 /** One chunk of Jaeger's /api/v3/traces stream: OTLP/JSON. */
 interface TracesChunk {
   result?: {
     resourceSpans?: Array<{
-      scopeSpans?: Array<{ spans?: Array<{ traceId: string; name: string }> }>;
+      resource?: { attributes?: OtlpAttribute[] };
+      scopeSpans?: Array<{ spans?: OtlpSpan[] }>;
     }>;
   };
+}
+
+function unwrap(attributes: OtlpAttribute[] | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const { key, value } of attributes ?? []) {
+    out[key] =
+      value?.stringValue ??
+      (value?.intValue === undefined ? undefined : Number(value.intValue)) ??
+      value?.doubleValue ??
+      value?.boolValue;
+  }
+  return out;
+}
+
+/** An id as a span context has it: Jaeger answers in hex, OTLP/JSON proper would be base64. */
+function hexId(id: string | undefined): string {
+  if (id === undefined || id === "") return "";
+  return /^[0-9a-f]+$/iu.test(id) ? id.toLowerCase() : Buffer.from(id, "base64").toString("hex");
+}
+
+/** The traces in the chunks of one answer of /api/v3/traces. */
+function parseTraces(body: string): StoredTrace[] {
+  const byTrace = new Map<string, StoredSpan[]>();
+  for (const line of body.split("\n")) {
+    if (line.trim() === "") continue;
+    const chunk = JSON.parse(line) as TracesChunk;
+    for (const resource of chunk.result?.resourceSpans ?? []) {
+      const serviceName = unwrap(resource.resource?.attributes)["service.name"];
+      const service = typeof serviceName === "string" ? serviceName : "";
+      for (const scope of resource.scopeSpans ?? []) {
+        for (const span of scope.spans ?? []) {
+          const traceID = hexId(span.traceId);
+          const spans = byTrace.get(traceID) ?? [];
+          spans.push({
+            operationName: span.name,
+            spanId: hexId(span.spanId),
+            parentSpanId: hexId(span.parentSpanId),
+            service,
+            attributes: unwrap(span.attributes),
+            events: (span.events ?? []).map((e) => e.name ?? ""),
+            traceState: span.traceState ?? "",
+          });
+          byTrace.set(traceID, spans);
+        }
+      }
+    }
+  }
+  return [...byTrace].map(([traceID, spans]) => ({ traceID, spans }));
 }
 
 export interface Jaeger {
@@ -77,6 +161,8 @@ export interface Jaeger {
   readonly otlpPort: number;
   /** Every trace of `service` it has stored. */
   traces(service: string): Promise<StoredTrace[]>;
+  /** The spans it has stored of one trace (of every service); none when it has none. */
+  trace(traceId: string): Promise<StoredSpan[]>;
   stop(): Promise<void>;
 }
 
@@ -102,21 +188,13 @@ export async function startJaeger(): Promise<Jaeger> {
       const res = await fetch(`${query}/api/v3/traces?${params.toString()}`);
       if (res.status === 404) return [];
       if (!res.ok) throw new Error(`jaeger: ${res.status} ${await res.text()}`);
-      const byTrace = new Map<string, StoredSpan[]>();
-      for (const line of (await res.text()).split("\n")) {
-        if (line.trim() === "") continue;
-        const chunk = JSON.parse(line) as TracesChunk;
-        for (const resource of chunk.result?.resourceSpans ?? []) {
-          for (const scope of resource.scopeSpans ?? []) {
-            for (const span of scope.spans ?? []) {
-              const spans = byTrace.get(span.traceId) ?? [];
-              spans.push({ operationName: span.name });
-              byTrace.set(span.traceId, spans);
-            }
-          }
-        }
-      }
-      return [...byTrace].map(([traceID, spans]) => ({ traceID, spans }));
+      return parseTraces(await res.text());
+    },
+    async trace(traceId) {
+      const res = await fetch(`${query}/api/v3/traces/${traceId}`);
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error(`jaeger: ${res.status} ${await res.text()}`);
+      return parseTraces(await res.text()).flatMap((t) => t.spans);
     },
     async stop() {
       await container.stop({ timeout: 0 });

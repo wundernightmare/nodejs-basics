@@ -11,6 +11,9 @@
  *     every log line passes whatever the current level — and the response
  *     says so with `X-Debug-Logging: on`. A wrong or missing token is ignored
  *     silently: the API port is public and must not become an oracle.
+ *   - A request whose server span belongs to a debug trace (utils/debug-trace.ts:
+ *     an upstream service accepted its own debug token) runs with debug
+ *     logging on as well; nothing in the response says so.
  *
  * Usage in main.ts:
  *
@@ -21,6 +24,7 @@ import type { IncomingMessage } from "node:http";
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
+import { followDebugTrace } from "../utils/debug-trace.js";
 import { parseTimeoutMs, REQUEST_TIMEOUT_HEADER, withDeadline } from "../utils/deadline.js";
 import { generateRequestId } from "../utils/nanoid.js";
 import { Secret } from "../utils/secret.js";
@@ -88,18 +92,18 @@ export function registerRequestContext(
       budget === undefined ? asked : asked === undefined ? budget : Math.min(asked, budget);
     const run = (): void => {
       requestIdStorage.run(req.id, () => {
-        if (!debugToken.isSet) {
-          done();
-          return;
-        }
         const raw = req.headers[DEBUG_TOKEN_HEADER];
         const got = Array.isArray(raw) ? raw[0] : raw;
-        if (!secretEquals(got, debugToken)) {
-          done();
+        if (debugToken.isSet && secretEquals(got, debugToken)) {
+          void reply.header(DEBUG_LOGGING_HEADER, "on");
+          debugLoggingStorage.run(true, () => {
+            done();
+          });
           return;
         }
-        void reply.header(DEBUG_LOGGING_HEADER, "on");
-        debugLoggingStorage.run(true, () => {
+        // A request of a debug trace started upstream is logged like one
+        // (the server span is active here: @fastify/otel's hook ran first).
+        followDebugTrace(() => {
           done();
         });
       });
