@@ -46,6 +46,13 @@ import { jitter } from "./cache-aside.js";
  * A lookup in flight when the key is invalidated still answers the callers it
  * already has, and nobody else: a read that follows `invalidate()` starts anew.
  *
+ * Clocks — the deadlines are wall-clock instants, and an L2 entry is read by
+ * processes other than the one that wrote it. A hard deadline further away
+ * than this process could have set (hardTtlMs and its jitter, a tenth) came
+ * from a clock that runs ahead, or from this one before it was stepped back:
+ * such an entry is a miss in both levels, and the load replaces it. A clock
+ * that runs behind only makes an entry expire sooner.
+ *
  * Memory — L1 is bounded by `maxBytes` of encoded entries and evicts the
  * oldest first; nothing is evicted for age (an expired entry is ignored on
  * read and is what stale-if-error falls back to). Values are kept decoded and
@@ -294,6 +301,8 @@ export class TierCache<T> {
   readonly #random: () => number;
   readonly #breaker: RemoteBreaker;
   readonly #prefix: string;
+  /** The furthest ahead a hard deadline set by this process can be: hardTtlMs with all of its jitter. */
+  readonly #longestMs: number;
   readonly #channel: string;
 
   readonly #local = new Map<string, Entry<T>>();
@@ -336,6 +345,7 @@ export class TierCache<T> {
     this.#random = options.random ?? Math.random;
     this.#breaker = new RemoteBreaker(this.#cfg.breakerThreshold, this.#cfg.breakerCooldownMs);
     this.#prefix = `tc:${this.#cfg.name}:`;
+    this.#longestMs = this.#cfg.hardTtlMs + Math.floor(this.#cfg.hardTtlMs / 10);
     this.#channel = `tc:${this.#cfg.name}:inv`;
     this.#labels = { cache: this.#cfg.name };
 
@@ -391,7 +401,7 @@ export class TierCache<T> {
     const entry = this.#local.get(key);
     if (entry !== undefined) {
       const now = this.#now();
-      if (now < entry.hardMs) {
+      if (now < entry.hardMs && this.#trusted(entry.hardMs, now)) {
         if (now < entry.softMs) {
           this.#reads.add(1, { ...this.#labels, result: "fresh" });
         } else {
@@ -501,9 +511,11 @@ export class TierCache<T> {
     // the fallback when the source fails.
     const held = await this.#remoteGet(remoteKey);
     // Stryker disable next-line ConditionalExpression: nothing parses as no envelope either
-    const shared = held === undefined ? undefined : this.#open(held);
+    const opened = held === undefined ? undefined : this.#open(held);
 
     const now = this.#now();
+    // From a clock ahead of this one: as good as absent, and replaced by the load.
+    const shared = opened !== undefined && this.#trusted(opened.hardMs, now) ? opened : undefined;
     if (shared !== undefined && now < shared.hardMs && (!refreshing || now < shared.softMs)) {
       this.#fill(epoch, key, shared.value, shared.softMs, shared.hardMs, shared.size);
       return { value: shared.value, source: "l2" };
@@ -570,17 +582,34 @@ export class TierCache<T> {
     shared: { hardMs: number; value: T } | undefined,
   ): { value: T } | undefined {
     // With no grace the limit is now, and what got here is past its deadline.
-    const limit = this.#now() - this.#cfg.staleIfErrorMs;
+    const now = this.#now();
+    const limit = now - this.#cfg.staleIfErrorMs;
     if (shared !== undefined && shared.hardMs > limit) return shared;
     const entry = this.#local.get(key);
-    return entry !== undefined && entry.hardMs > limit ? entry : undefined;
+    return entry !== undefined && entry.hardMs > limit && this.#trusted(entry.hardMs, now)
+      ? entry
+      : undefined;
   }
 
-  /** Writes to L1 unless an invalidation arrived since `epoch`; evicts the oldest entries. */
+  /**
+   * Whether a hard deadline is one this process could have set at `now` or
+   * earlier. Without it a writer whose clock runs ahead by an hour gives every
+   * reader a value that stays fresh for an hour, whatever hardTtlMs says.
+   */
+  #trusted(hardMs: number, now: number): boolean {
+    return hardMs - now <= this.#longestMs;
+  }
+
+  /**
+   * Writes to L1 unless an invalidation arrived since `epoch`; evicts the
+   * oldest entries. A value that outgrew L1 takes its previous version out:
+   * that one must not be served in place of the one just read.
+   */
   #fill(epoch: number, key: string, value: T, softMs: number, hardMs: number, size: number): void {
     const bytes = key.length + size;
     if (bytes > this.#cfg.maxEntryBytes) {
       this.#oversize.add(1, this.#labels);
+      this.#drop(key);
       return;
     }
     if (this.#epoch !== epoch) return;

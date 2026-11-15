@@ -1238,6 +1238,67 @@ describe("TierCache", () => {
     expect(loads).toBe(3); // nothing is served from a closed cache's L1
   });
 
+  it("drops the previous version of a key whose value outgrew L1", async () => {
+    await testCase("NB-1188", "tier cache: an oversize entry is served from L2 and counted");
+    const size =
+      1 + encodeEnvelope(clock + 1_000, clock + 10_000, '{"key":"k","version":1}').length;
+    const { cache, source, advance } = rig(undefined, { maxEntryBytes: size });
+    source.rows.set("k", 1);
+    await cache.get("k");
+    source.rows.set("k", 1_000_000); // the row grew: its entry no longer fits
+    advance(1_500);
+    await cache.get("k"); // stale: refreshed behind
+    await settle();
+    // The old version must not be served until its hard deadline in place of the one just loaded.
+    expect(await cache.get("k")).toEqual({ key: "k", version: 1_000_000 });
+  });
+
+  it("does not trust a deadline no clock of its own could have set", async () => {
+    await testCase("NB-1349", "tier cache: an entry from a clock ahead of this one is a miss");
+    const payload = '{"key":"k","version":1}';
+    const server = new FakeServer();
+
+    // The furthest a hard deadline can be: the hard TTL and all of its jitter.
+    server.data.set("tc:t:k", encodeEnvelope(clock + 1_000, clock + 11_000, payload));
+    const within = rig(server);
+    within.source.rows.set("k", 2);
+    expect(await within.cache.get("k")).toEqual({ key: "k", version: 1 });
+    expect(within.source.loads).toBe(0);
+
+    // A millisecond further: written by a clock that runs ahead. The source answers and replaces it.
+    const ahead = encodeEnvelope(clock + 1_000, clock + 11_001, payload);
+    server.data.set("tc:t:k", ahead);
+    const reader = rig(server);
+    reader.source.rows.set("k", 2);
+    expect(await reader.cache.get("k")).toEqual({ key: "k", version: 2 });
+    expect(server.ops.at(-1)).toBe("replace tc:t:k 10000");
+    expect(server.data.get("tc:t:k")).not.toBe(ahead);
+
+    // Nor is it something to fall back to when the source fails.
+    server.data.set("tc:t:k", encodeEnvelope(clock + 3_600_000, clock + 3_610_000, payload));
+    const failing = rig(server, { staleIfErrorMs: 5_000 });
+    failing.source.failing = true;
+    await expect(failing.cache.get("k")).rejects.toThrow("source is down");
+  });
+
+  it("does not trust its own L1 after the clock was stepped back", async () => {
+    await testCase("NB-1349", "tier cache: an entry from a clock ahead of this one is a miss");
+    const { cache, source, advance } = rig(undefined, { staleIfErrorMs: 5_000 });
+    source.rows.set("k", 1);
+    await cache.get("k");
+    try {
+      advance(-3_600_000); // the entry now looks fresh for an hour
+      source.rows.set("k", 2);
+      expect(await cache.get("k")).toEqual({ key: "k", version: 2 });
+
+      advance(-3_600_000);
+      source.failing = true;
+      await expect(cache.get("k")).rejects.toThrow("source is down");
+    } finally {
+      advance(7_200_000);
+    }
+  });
+
   it("rejects a config it cannot run with", async () => {
     await testCase("NB-1193", "tier cache: invalid config is rejected at construction");
     expect(() => build({ name: "", hardTtlMs: 1 })).toThrow("name is required");
