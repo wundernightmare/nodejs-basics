@@ -55,6 +55,21 @@ export const TARGETS = {
     mutate: ["packages/observability/src/http-rate-limit.ts"],
     break: 82,
   },
+  // Head sampling, the debug token, the retroactive buffer: arena, codec,
+  // processor. 86.6 % when added (2026-11-15); 100 % after the 85 survivors
+  // were triaged — redundant checks removed, boundaries of the ring tested.
+  // Timeouts count as killed and vary with the load of the machine.
+  sampling: {
+    dir: "packages/observability",
+    mutate: [
+      "packages/observability/src/trace-sampler.ts",
+      "packages/observability/src/debug-token-propagator.ts",
+      "packages/observability/src/retro/arena.ts",
+      "packages/observability/src/retro/codec.ts",
+      "packages/observability/src/retro/retro-processor.ts",
+    ],
+    break: 95,
+  },
   // Masking of private data, debug subjects, the background guard, sampling,
   // the runtime level. 82.3 % when added (2026-11-14: redact 71, debug
   // subjects 71); 99.3 % after the survivors were triaged — three left, two
@@ -67,6 +82,7 @@ export const TARGETS = {
       "packages/logger/src/background-guard.ts",
       "packages/logger/src/log-sampler.ts",
       "packages/logger/src/log-level.ts",
+      "packages/logger/src/trace-trigger.ts",
     ],
     break: 94,
   },

@@ -25,6 +25,13 @@ this.logger.info({ "user.id": userId }, "Invite sent");
 `trace.id`, `span.id`, `http.request.id` are injected by
 the mixin from the active span / ALS — don't pass them explicitly.
 
+`trace.id` is there when the trace is in the trace store, so a log viewer can
+link from it. A line of a trace the head sampler skipped carries the id as
+`trace.unsampled_id` instead — unless the line is a `warn` or above: that one
+asks the retroactive buffer of `@base/observability` to export its trace
+(`bindTraceTrigger`, `trace-trigger.ts`) and, when the buffer agrees, it and
+every later line of the trace carry `trace.id`.
+
 ## Levels: base, runtime, per-request
 
 - **Base level** — `LOG_LEVEL` (default `info` in production, `debug` elsewhere).

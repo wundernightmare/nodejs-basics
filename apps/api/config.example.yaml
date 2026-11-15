@@ -41,6 +41,9 @@ kafka:
 # Telemetry is configured by the ENVIRONMENT only — it starts before this file
 # is read: OTEL_SERVICE_NAME (default nodejs-basics-api), OTEL_EXPORTER_OTLP_ENDPOINT
 # (default http://localhost:4317), OTEL_TRACES_SAMPLER_RATIO (default 1),
+# OTEL_TRACES_TRUST_REMOTE_PARENT (default true; false on a public edge),
+# OTEL_RETRO_BUFFER_MIB (default 16; 0 = no retroactive sampling),
+# OTEL_RETRO_TRIGGERS_PER_SECOND (default 50),
 # SENTRY_DSN, PYROSCOPE_SERVER_ADDRESS. So is log sampling: LOG_SAMPLE_INITIAL
 # and LOG_SAMPLE_THEREAFTER (default 100 each; 0 turns it off), and
 # LOG_REDACT_KEYS (extra field names to mask in logs: email,iban).

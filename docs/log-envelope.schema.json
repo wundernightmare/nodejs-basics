@@ -28,6 +28,7 @@
     "log.logger": { "type": "string" },
     "event.action": { "type": "string", "description": "One of --log-events-reference." },
     "trace.id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "trace.unsampled_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
     "span.id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
     "transaction.id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
     "http.request.id": { "type": "string", "minLength": 1 },

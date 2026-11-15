@@ -1024,12 +1024,16 @@ this.logger.info({ "task.id": task.id }, "Task archived");
 
 `http.request.id`, `trace.id`, `span.id` are auto-injected from ALS / the
 active span by the pino mixin in `@base/logger`. Don't pass them explicitly.
+`trace.id` is a link — the trace is in the trace store. The lines of a trace
+that was not sampled carry the same id as `trace.unsampled_id`: still found
+together (and across services), never a dead link.
 
 What is a contract and what is not:
 
 - **The envelope** — `@timestamp`, `log.level`, `message`, `ecs.version`,
   `service.name` / `.version` / `.environment`, `process.pid`,
-  `host.hostname` (the pod), and when present `trace.id`, `http.request.id`,
+  `host.hostname` (the pod), and when present `trace.id` (or
+  `trace.unsampled_id`), `http.request.id`,
   `error.*` — is in [`docs/log-envelope.schema.json`](docs/log-envelope.schema.json).
   A log pipeline parses it and an incident search relies on it; a unit test
   checks the logger's lines against it, and the e2e suite (spawn mode) every
@@ -1080,7 +1084,41 @@ come from metrics, not from counting log lines.
 
 Traces are sampled by `OTEL_TRACES_SAMPLER_RATIO` (0..1, default 1) for the
 traces a service starts; a request that arrives inside a trace keeps its
-caller's decision, so a trace is whole or absent.
+caller's decision, so a trace is whole or absent
+(`packages/observability/src/trace-sampler.ts`). Three things sit on top of
+that rule — the same three as in golang-basics' `otelx`:
+
+- **The public edge does not take the client's word.** With
+  `OTEL_TRACES_TRUST_REMOTE_PARENT=false` the sampled flag of an incoming
+  `traceparent` is not followed (the decision is drawn afresh at the ratio,
+  from an id the client did not choose) and its `tracestate` is dropped; the
+  trace id is kept, so a caller still finds its request. Leave it `true`
+  (the default) on services only your own services call.
+- **A debug trace.** A request with a valid `X-Debug-Token` is sampled
+  whatever the ratio, and its `tracestate` gets the mark `dbg=1`. The mark
+  travels with the trace context — HTTP, Kafka, jobs — so every service
+  behind exports its spans *and* writes its debug lines for that request,
+  without knowing the token (`packages/common/src/utils/debug-trace.ts`).
+- **Retroactive sampling.** The spans of a trace that was *not* sampled are
+  not thrown away: they wait, encoded, in a buffer of a fixed size
+  (`OTEL_RETRO_BUFFER_MIB`, 16; `0` turns it off), and a `warn` or `error`
+  log line written inside that trace exports it — the spans that ended
+  before the line come out of the buffer, the rest follow as they end. That
+  line and the ones after it carry `trace.id`. A debug subject's trace is
+  exported the same way. At most `OTEL_RETRO_TRIGGERS_PER_SECOND` (50) traces
+  a second get out, so a storm of errors is not a storm of exports.
+  What it cannot promise is the past: under load the buffer reaches back
+  `trace_retro_buffer_horizon_seconds`, and a restart empties it. The trigger
+  is local to the process — the other services of the request keep their
+  spans unless something tells them: `telemetry.retro.onLocalTrigger()` and
+  `telemetry.retro.trigger(traceId)` are where a bus between services plugs
+  in (`packages/observability/src/retro/`).
+
+  It costs nothing while everything is sampled (ratio 1: the buffer stays
+  empty). Below 1, an unsampled span is recorded like a sampled one instead
+  of being skipped, and keeping it takes about 1.5 µs (a server span with
+  eight attributes is 400 bytes: 16 MiB hold some 40 000 of them). A trigger
+  walks one of the buffer's 64 rings — about 0.1 ms with the buffer full.
 
 That is **head sampling**: decided when the trace starts, before anyone knows
 whether it will fail. The collector of the local stack
@@ -1103,6 +1141,17 @@ come with it:
 `packages/observability/src/tail-sampling.integration.spec.ts` runs that very
 file in a real collector in front of a real Jaeger and asserts each policy —
 and that the collector accepts the configuration at all.
+`retro-sampling.integration.spec.ts` does the same for the three rules above:
+real HTTP services at ratio 0 behind that collector, asserted on what Jaeger
+stored and on the log lines the services wrote.
+
+Tail sampling and retroactive sampling answer the same question — "keep the
+traces that turned out to matter" — at different prices. Tail sampling sees
+whole traces across services and can keep slow ones, but every span of every
+request crosses the network to the collector. Retroactive sampling ships
+nothing until a line says the trace matters, and only knows what a log line
+knows. Use the collector when it can take the volume; lower the ratio and
+rely on the buffer when it cannot.
 
 ## Patterns NOT included (build per project)
 
@@ -1268,7 +1317,7 @@ same contract as the Go sibling. The harness that makes that cheap is
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | **Unit**        | `*.spec.ts` next to the code — vitest project `unit`, `just test`                                                                                                       | pure logic: config builders, backoff, the resilient client against a mock agent, redaction, the runtime log level, the admin router over an in-process `node:http` server                                                                                                                                                                                                                                                                                                               | anything that needs a real dependency                                                                 |
 | **Property**    | `*.prop.spec.ts` next to the code ([fast-check](https://fast-check.dev)) — part of `just test` (100 cases per property), `just fuzz` for the deep run (5000)            | the invariants of the pure parsers and calculators over generated input, where a unit test says "for this one" and a property says "for all": the back-off never leaves its window, `redact()` lets no secret or URL password through and is idempotent, durations round-trip and reject everything else with the documented error, a request id is exactly 1–128 printable ASCII, `metricValue` reads back what an exporter writes, a problem body always carries its standard members | the example-based cases already in the unit spec                                                      |
-| **Mutation**    | the HTTP and gRPC clients, `Secret`, the tier cache, the rate limit, the logger — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
+| **Mutation**    | the HTTP and gRPC clients, `Secret`, the tier cache, the rate limit, the logger, trace sampling — `just mutate` (StrykerJS, [`stryker.config.mjs`](stryker.config.mjs)), the nightly `mutation` CI job                                      | whether the unit tests of the pure decision logic would notice a wrong comparison, operator or branch                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                     |
 | **Integration** | `*.integration.spec.ts` — vitest project `integration`, `just test-integration`                                                                                         | the libs against real Postgres / Valkey / Redpanda (containers, the images of `docker/deps.yml`), and against the same behind Toxiproxy (`*chaos*`: outages, latency, resets): the unit of work commits and rolls back as one, the Valkey option bag connects and BullMQ's blocking poll outlives the command timeout                                                                                                                                                                                                                                                                       | route behaviour already proven with fakes; process-level behaviour                                    |
 | **E2E**         | [`e2e/`](e2e) (Playwright, API tests) — `just e2e` (production images) / `just e2e-spawn` (built processes)                                                             | what only a real process shows: it boots, is ready on its admin listener, is a scrape target, and the cross-process flow api → Kafka → worker → BullMQ                                                                                                                                                                                                                                                                                                                                  | per-route behaviour, error bodies (unit), the libs' semantics (integration)                           |
 | **Smoke**       | the `@smoke` titles in `e2e/` — `just e2e-smoke`, the `e2e-stack` CI job                                                                                                | the distroless images start and serve                                                                                                                                                                                                                                                                                                                                                                                                                                                   | everything else                                                                                       |
@@ -1586,6 +1635,7 @@ its own with its own threshold:
 | `tier-cache` | the two-level cache | 75.7 %; 100 % after its survivors were triaged | 95 |
 | `rate-limit` | the inbound rate limit | 87.8 % | 82 |
 | `logger` | masking of private data, debug subjects, the background guard, sampling, the runtime level | 82.3 %; 99.3 % after its survivors were triaged | 94 |
+| `sampling` | head sampling, the debug token, the retroactive buffer (arena, codec, processor) | 86.6 %; 100 % after its survivors were triaged | 95 |
 
 ```sh
 just mutate              # every target → reports/mutation/<target>.html (+ .json)

@@ -1,7 +1,9 @@
 /**
  * Shared pino logger configured for:
  *  - ECS (Elastic Common Schema) log format
- *  - OpenTelemetry trace/span context injection via mixin
+ *  - OpenTelemetry trace/span context injection via mixin: trace.id for a
+ *    trace that is in the trace store, trace.unsampled_id for one that is not
+ *    (a warn or error line of an unsampled trace exports it: trace-trigger.ts)
  *  - Request context (http.request.id) injection via mixin
  *  - ECS-compatible Fastify request/response serializers
  *  - Masking of private data in every attribute (redact.ts; LOG_REDACT_KEYS)
@@ -22,13 +24,14 @@
  *
  * ECS field reference: https://www.elastic.co/guide/en/ecs/current/ecs-field-reference.html
  */
-import { trace } from "@opentelemetry/api";
+import { isSpanContextValid, trace, TraceFlags } from "@opentelemetry/api";
 import pino from "pino";
 
 import { isDebugLogging, requestIdStorage, withDebugLogging } from "@base/common";
 
 import { DebugSubjects, runAsDebugSubject } from "./debug-subjects.js";
 import { LogSampler, messageOf, sampleSetting } from "./log-sampler.js";
+import { unsampledTraceExported } from "./trace-trigger.js";
 import { logRecordMasker, parseRedactKeys, redactQuery, redactUrl } from "./redact.js";
 import {
   DEFAULT_LOG_LEVEL_MAX_TTL_MS,
@@ -66,16 +69,29 @@ function ecsTimestamp(): string {
 
 // ─── Context mixin ────────────────────────────────────────────────────────────
 
-function contextMixin(): Record<string, string> {
+/** pino's level number of warn: from it up a line triggers its unsampled trace. */
+const WARN = 40;
+
+function contextMixin(_merged: object, levelValue: number): Record<string, string> {
   const fields: Record<string, string> = {};
 
-  // OTel trace correlation
-  const span = trace.getActiveSpan();
-  if (span?.isRecording() === true) {
-    const ctx = span.spanContext();
-    fields["trace.id"] = ctx.traceId;
+  // OTel trace correlation. trace.id is a link: a log viewer opens the trace
+  // from it. An unsampled trace has an id and no trace, so its lines carry
+  // the id under another name — still found together, never a dead link —
+  // unless this very line (a warn, an error) makes the trace exported
+  // (trace-trigger.ts).
+  const ctx = trace.getActiveSpan()?.spanContext();
+  if (ctx !== undefined && isSpanContextValid(ctx)) {
+    const linked =
+      (ctx.traceFlags & TraceFlags.SAMPLED) !== 0 ||
+      unsampledTraceExported(ctx.traceId, levelValue >= WARN);
+    if (linked) {
+      fields["trace.id"] = ctx.traceId;
+      fields["transaction.id"] = ctx.traceId;
+    } else {
+      fields["trace.unsampled_id"] = ctx.traceId;
+    }
     fields["span.id"] = ctx.spanId;
-    fields["transaction.id"] = ctx.traceId;
   }
 
   const requestId = requestIdStorage.getStore();

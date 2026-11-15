@@ -20,6 +20,8 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
+
+import { followDebugTrace } from "@base/common";
 import type { Job, JobsOptions, Queue } from "bullmq";
 
 const TRACER = "@base/jobs";
@@ -102,7 +104,8 @@ export function traceProcess<T>(
       parent,
       async (span) => {
         try {
-          const result = await fn();
+          // A message of a debug trace is logged like one.
+          const result = await followDebugTrace(fn);
           endSpan(span);
           return result;
         } catch (err) {

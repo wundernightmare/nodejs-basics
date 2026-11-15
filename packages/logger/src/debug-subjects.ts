@@ -6,7 +6,9 @@
  * work in `withDebugSubject(id, fn)`, and inside it
  *   - every log line passes, whatever the level and the sampler say;
  *   - the active span carries `debug.subject=<id>` — the attribute the
- *     collector's tail sampling keeps a trace for (docker/otel-collector).
+ *     collector's tail sampling keeps a trace for (docker/otel-collector);
+ *   - a trace the head sampler did not sample is exported from the
+ *     retroactive buffer (trace-trigger.ts), when the service has one.
  *
  *   GET    /admin/debug-subjects                    the list, sorted
  *   PUT    /admin/debug-subjects/{subject}?ttl=15m  add or extend; ttl is required
@@ -28,6 +30,7 @@ import { trace } from "@opentelemetry/api";
 import { withDebugLogging } from "@base/common";
 
 import { formatDuration } from "./log-level.js";
+import { triggerActiveTrace } from "./trace-trigger.js";
 
 /** The span attribute a debugged subject's spans carry. */
 export const DEBUG_SUBJECT_ATTRIBUTE = "debug.subject";
@@ -112,5 +115,8 @@ export function runAsDebugSubject<T>(
   // No subject is no subject — even if someone listed the empty string.
   if (!subject || !subjects.active(subject)) return fn();
   trace.getActiveSpan()?.setAttribute(DEBUG_SUBJECT_ATTRIBUTE, subject);
+  // An unsampled trace of a subject being debugged matters without a warn
+  // line to say so.
+  triggerActiveTrace();
   return withDebugLogging(fn);
 }
