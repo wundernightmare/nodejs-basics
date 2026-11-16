@@ -302,7 +302,6 @@ export interface ResilientClientConfig {
 
 /**
  * Promise-based semaphore with AIMD limit adjustment.
- * acquire() blocks when #inFlight >= #limit; release() decrements and wakes waiters.
  */
 class AdaptiveConcurrencyLimiter {
   #limit: number;
@@ -499,22 +498,18 @@ export class ResilientClient {
   async request(options: Dispatcher.RequestOptions): Promise<Dispatcher.ResponseData> {
     const opts = this.#applyUserAgent(this.#applyShortLived(this.#forwardRequestId(options)));
 
-    // Idempotent key — defined only for GET/HEAD when cache or coalescing is active.
     const key = this.#idempotentKey(opts);
 
-    // 1. Cache hit
     if (key !== undefined && key !== "" && this.#cacheConfig) {
       const hit = await this.#tryCacheHit(key, opts);
       if (hit) return hit;
     }
 
-    // 2. SingleFlight coalescing — attach to an existing in-flight promise
     if (key !== undefined && key !== "" && this.#coalesce) {
       const inflight = this.#inflightMap.get(key);
       if (inflight) return inflight;
     }
 
-    // 3. Issue the request (optionally register with the inflight map)
     const promise = this.#executeRequest(opts, key);
 
     if (key !== undefined && key !== "" && this.#coalesce) {
@@ -527,7 +522,6 @@ export class ResilientClient {
     try {
       return await promise;
     } catch (err) {
-      // 4. Fallback on OutboundError
       if (this.#fallback && err instanceof OutboundError) {
         const synthetic = await this.#fallback(this.baseUrl, opts, err).catch(() => null);
         if (synthetic !== null) return synthetic;
@@ -551,7 +545,6 @@ export class ResilientClient {
       pipelining,
       ...(keepAliveTimeout === undefined ? {} : { keepAliveTimeout }),
       ...(shortLived === true ? { keepAliveMaxTimeout: 0 } : {}),
-      // TLS options are only consulted when the base URL is https://.
       // The attempt timeout bounds making the connection too: a socket that
       // cannot be connected within it is closed, not left to undici's 10 s.
       connect: {
@@ -632,7 +625,6 @@ export class ResilientClient {
     try {
       let response = await this.#breaker.fire(opts);
 
-      // Buffer and cache for cacheable 2xx responses
       if (
         cacheKey !== undefined &&
         cacheKey !== "" &&
@@ -773,11 +765,6 @@ export class ResilientClient {
     return key !== undefined && key !== "";
   }
 
-  /**
-   * Full Jitter exponential back-off — delegated to the shared helper in
-   * `./backoff.ts`. Kept as a method so the class reads the per-instance
-   * spec fields without re-allocating a config object every attempt.
-   */
   #backoffDelay(attempt: number): number {
     return computeJitteredDelay(
       {
@@ -852,7 +839,6 @@ export class ResilientClient {
     }
 
     if (isStale) {
-      // Serve stale immediately; refresh in background
       this.#revalidate(opts, key);
       return this.#responseFromEntry(entry);
     }
@@ -885,12 +871,10 @@ export class ResilientClient {
     if (cache === undefined) return response;
     const chunks: Buffer[] = [];
     if (response.body !== null && response.body !== undefined) {
-      try {
-        for await (const chunk of response.body) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-        }
-      } catch {
-        // Body read error — skip caching, return empty body
+      // A read error is thrown to the caller: a cut-off body cached here
+      // would be served as a complete 2xx until the entry expires.
+      for await (const chunk of response.body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
       }
     }
     const buf = Buffer.concat(chunks);

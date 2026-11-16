@@ -119,7 +119,7 @@ describe("retroactive sampling codec", () => {
       expected.context.traceFlags = TraceFlags.SAMPLED;
       expect(view(restored as ReadableSpan)).toEqual(expected);
     }
-    // The scope is one object for all spans of a tracer, as before the buffer.
+    // The scope is one object for all spans of a tracer, as it is without the buffer.
     expect((roundTrip(codec, child) as ReadableSpan).instrumentationScope).toBe(
       root.instrumentationScope,
     );

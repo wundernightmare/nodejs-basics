@@ -141,7 +141,7 @@ describe.skipIf(infra.skip)("TierCache (integration, chaos)", () => {
       '{"key":"k","version":1}',
     );
     rows.set("k", 2);
-    await cache.invalidate("k"); // tombstone + publish
+    await cache.invalidate("k");
     expect((await cache.get("k"))?.version).toBe(2);
   });
 

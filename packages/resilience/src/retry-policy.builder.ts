@@ -109,10 +109,9 @@ export async function withRetry<T>(
 
   let attempt = 0;
   // The loop consumes attempts 0..maxAttempts inclusive — attempt=0 is
-  // the original call (no preceding delay), attempt>=1 is a retry. Using
-  // `<=` here instead of `<` means `maxAttempts=3` yields up to 3 retries
-  // on top of the initial call, matching the plain-English reading of
-  // the knob name.
+  // the original call (no preceding delay), attempt>=1 is a retry:
+  // `maxAttempts=3` yields up to 3 retries on top of the initial call,
+  // matching the plain-English reading of the knob name.
   while (true) {
     try {
       return await operation();

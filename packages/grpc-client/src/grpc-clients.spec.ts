@@ -331,8 +331,9 @@ describe("GrpcClients", () => {
 
   it("keeps the fraction of a timeout: a call that answers inside a sub-second timeout succeeds", async () => {
     await testCase("NB-1288", "gRPC: a timeout under a second is not zero");
-    // grpc-js reads the service config's string form "0.4s" as 4 ns: the call
-    // above "passed" on a deadline that had expired before it was sent.
+    // grpc-js reads the service config's string form "0.4s" as 4 ns (see
+    // MethodConfig.timeout in service-config.ts): in that form this deadline
+    // would expire before the call is sent.
     const { client, target } = connect({ timeoutMs: 400 });
     onUnary = (_call, reply) => {
       setTimeout(() => {

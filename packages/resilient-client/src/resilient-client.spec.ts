@@ -11,7 +11,6 @@ import type { ResilientClientConfig } from "./resilient-client.js";
 
 const BASE = "http://rc-test.local";
 
-/** Creates a ResilientClient with a MockPool as the dispatcher. */
 function makeClient(pool: MockPool, overrides: ResilientClientConfig = {}): ResilientClient {
   return new ResilientClient(BASE, {
     // Disable circuit breaker volume threshold so a single failure can trip it
@@ -138,7 +137,6 @@ describe("ResilientClient", () => {
     // volumeThreshold:1, so after one failure the breaker opens
     pool.intercept({ path: "/api", method: "GET" }).reply(503, "err").times(3);
 
-    // First call — fails, trips the breaker
     await expect(client.request({ path: "/api", method: "GET" })).rejects.toBeInstanceOf(
       OutboundError,
     );
@@ -148,7 +146,6 @@ describe("ResilientClient", () => {
 
     expect(client.breakerState).toBe("open");
 
-    // Second call — circuit is open, throws circuitOpen immediately
     await expect(client.request({ path: "/api", method: "GET" })).rejects.toSatisfy(
       (e: unknown) => e instanceof OutboundError && e.errorType === "circuit_open",
     );
@@ -182,7 +179,6 @@ describe("ResilientClient", () => {
     expect(clientWithFallback.breakerState).toBe("open");
     fallback.mockClear();
 
-    // Second call: circuit is open → OutboundError.circuitOpen → fallback returns 200
     const second = await clientWithFallback.request({ path: "/api", method: "GET" });
     expect(second.statusCode).toBe(200);
     expect(fallback).toHaveBeenCalledOnce();
@@ -193,7 +189,6 @@ describe("ResilientClient", () => {
   it("re-throws when fallback returns null", async () => {
     const fallback = vi.fn().mockResolvedValue(null);
     const clientWithFallback = makeClient(pool, { fallback });
-    // null fallback → original OutboundError is re-thrown
     pool.intercept({ path: "/api", method: "GET" }).reply(400, "err");
     await expect(
       clientWithFallback.request({ path: "/api", method: "GET" }),
@@ -454,14 +449,12 @@ describe("ResilientClient", () => {
       headers: { "content-type": "application/json" },
     });
 
-    // This call serves the stale entry (v:1)
     const stale = await cachedClient.request({ path: "/data", method: "GET" });
     expect(await (stale.body as unknown as CachedBodyReadable).json()).toEqual({ v: 1 });
 
     // Allow background refresh to complete
     await new Promise((r) => setTimeout(r, 50));
 
-    // Next call should return the refreshed v:2
     const fresh = await cachedClient.request({ path: "/data", method: "GET" });
     expect(await (fresh.body as unknown as CachedBodyReadable).json()).toEqual({ v: 2 });
   });
@@ -511,7 +504,6 @@ describe("ResilientClient", () => {
   });
 
   it("drains a null response body without error on retry status", async () => {
-    // Simulates a dispatcher that returns statusCode=429 with body=null
     const nullBodyDispatcher = {
       request: vi.fn().mockResolvedValue({
         statusCode: 429,
@@ -551,7 +543,6 @@ describe("ResilientClient", () => {
       headers: { "content-type": "application/json" },
     });
 
-    // Cache read throws → falls through to live fetch without error
     const res = await cachedClient.request({ path: "/data", method: "GET" });
     expect(res.statusCode).toBe(200);
   });
@@ -598,7 +589,6 @@ describe("ResilientClient", () => {
     await adaptiveClient.request({ path: "/fast", method: "GET" });
     await adaptiveClient.request({ path: "/fast", method: "GET" });
 
-    // Limit should have grown from 2
     expect(adaptiveClient.adaptiveLimit).toBeGreaterThanOrEqual(2);
   });
 

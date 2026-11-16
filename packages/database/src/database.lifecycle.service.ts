@@ -5,14 +5,14 @@ import { ecsError, pinoLogger } from "@base/logger";
 
 import { PG_POOL, PG_POOL_READONLY } from "./pg-pool.provider.js";
 
+const logger = pinoLogger.child({ "log.logger": "DatabaseLifecycle" });
+
 /**
  * Closes what DatabaseModule opened: both pools (the read-only one only when
  * it is a separate pool, not an alias of the primary). Runs in onApplicationShutdown — the last hook, after every
  * beforeApplicationShutdown (e.g. the outbox relay's final drain) that may
  * still need a connection. Idempotent: a second call is a no-op.
  */
-const logger = pinoLogger.child({ "log.logger": "DatabaseLifecycle" });
-
 @Injectable()
 export class DatabaseLifecycleService implements OnApplicationShutdown {
   private closed = false;

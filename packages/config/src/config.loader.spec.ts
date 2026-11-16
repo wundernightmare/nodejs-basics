@@ -207,7 +207,7 @@ describe("yamlConfigLoader + configSnapshot", () => {
     await testCase("NB-1033", "examples/kafka-sasl-ssl/configmap.yaml stays a working start");
     const docs = parseAllDocuments(
       readFileSync(join(workspaceRoot(), "examples/kafka-sasl-ssl/configmap.yaml"), "utf8"),
-    ).map((d) => d.toJS() as Record<string, any>); // oxlint-disable-line no-explicit-any
+    ).map((d) => d.toJS() as Record<string, any>); // oxlint-disable-line no-explicit-any -- a Kubernetes manifest read by key path, its shape is not typed here
     const configYaml = docs.find((d) => d["kind"] === "ConfigMap")?.["data"]["config.yaml"];
     const container = docs.find((d) => d["kind"] === "Deployment")?.["spec"]["template"]["spec"][
       "containers"

@@ -10,8 +10,8 @@ interface MethodConfig {
   /**
    * The object form on purpose. grpc-js (1.14) reads the string form's
    * fraction as that many nanoseconds — "0.4s" is 4 ns, "1.5s" is 1 s — so a
-   * timeout under a second expired every call at once and any other lost its
-   * fraction.
+   * timeout under a second would expire every call at once and any other
+   * would lose its fraction.
    */
   timeout?: { seconds: number; nanos: number };
   waitForReady?: boolean;
