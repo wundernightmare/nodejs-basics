@@ -26,7 +26,6 @@ import { TASK_LIST_PAGE_SIZE } from "./tasks.tokens.js";
     TaskUseCase,
     TaskQueryService,
 
-    // Bind port → implementation. Use cases inject by TASK_REPOSITORY token.
     { provide: TASK_REPOSITORY, useClass: SqlTaskRepository },
 
     // Configuration-driven value provider — a typical pattern for tunables

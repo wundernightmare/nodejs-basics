@@ -127,7 +127,6 @@ export async function createApp(): Promise<NestFastifyApplication> {
   // Known path, undeclared method → 405 + Allow (as a problem), not a 404.
   registerMethodNotAllowed(adapter.getInstance());
 
-  // Security plugins
   await app.register(helmet, {
     contentSecurityPolicy: false, // adjust per app — enable for HTML responses
   });

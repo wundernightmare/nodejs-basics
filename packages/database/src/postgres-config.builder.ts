@@ -41,8 +41,8 @@ export interface PostgresBuilderResult {
   /** When true the provider must use `require('pg').native.Pool`. */
   useNative: boolean;
   /**
-   * Statements executed on every fresh connection via `pool.on('connect')`
-   * — carries server-side budgets (statement_timeout, idle-in-transaction)
+   * Statements executed on every fresh connection before the pool hands it
+   * out (pg-pool `verify`, see buildPool) — carries server-side budgets (statement_timeout, idle-in-transaction)
    * that the pg-level PoolConfig fields above cannot set for all hosts
    * consistently. Empty when the operator disables every timeout.
    */
@@ -182,7 +182,6 @@ export function buildPostgresConfig(
     // silently drop idle conns otherwise.
     keepAlive: readBool(config, "DATABASE_KEEPALIVE"),
     keepAliveInitialDelayMillis: readInt(config, "DATABASE_KEEPALIVE_INITIAL_DELAY_MS"),
-    // Pool size
     max: readInt(config, "DATABASE_POOL_MAX"),
     min: readInt(config, "DATABASE_POOL_MIN"),
     idleTimeoutMillis: readInt(config, "DATABASE_POOL_IDLE_TIMEOUT_MS"),

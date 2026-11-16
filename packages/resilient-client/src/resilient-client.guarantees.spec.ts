@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { testCase } from "@base/testing";
 
+import { MemoryCache } from "./resilient-client.cache.js";
 import { ResilientClient } from "./resilient-client.js";
 import type { ResilientClientConfig } from "./resilient-client.js";
 
@@ -301,7 +302,6 @@ describe("ResilientClient — what the breaker counts", () => {
   });
 });
 
-/** A promise and the function that settles it. */
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((settle) => {
@@ -412,4 +412,34 @@ describe("ResilientClient — a connection that cannot be made", () => {
       await Promise.all(made.map((opened) => opened.close().catch(() => {})));
     }
   }, 20_000);
+});
+
+/** A body that fails after its first chunk, as a connection closed mid-response does. */
+async function* cutOff(): AsyncGenerator<string> {
+  yield '{"items":[1,';
+  await Promise.resolve();
+  throw Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" });
+}
+
+describe("ResilientClient — what is cached", () => {
+  it("does not cache or return a body whose read failed part-way", async () => {
+    await testCase("NB-1372", "a response whose body read fails is an error and is not cached");
+    const request = vi.fn(() =>
+      Promise.resolve({
+        statusCode: 200,
+        headers: {},
+        body: Readable.from(cutOff()),
+      }),
+    );
+    const cache = new MemoryCache();
+    const cached = client({ request, close: () => Promise.resolve() } as unknown as Dispatcher, {
+      retry: { maxRetries: 0 },
+      cache: { adapter: cache, ttlSeconds: 60 },
+    });
+
+    await expect(cached.request({ path: "/items", method: "GET" })).rejects.toMatchObject({
+      errorType: "network",
+    });
+    expect(cache.size).toBe(0);
+  });
 });

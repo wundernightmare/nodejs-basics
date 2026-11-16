@@ -4,8 +4,8 @@
  * `@base/resilient-client` already wraps every outbound HTTP call in
  * opossum — the HTTP paths therefore fast-fail within 5 s when a
  * downstream is dead and stop hammering it while the breaker is open.
- * The storage drivers (pg, cassandra-driver, iovalkey, librdkafka) did
- * not have an equivalent, so a totally-dead Postgres primary or Valkey
+ * The storage drivers (pg, cassandra-driver, iovalkey, librdkafka) have
+ * no equivalent: without one a totally-dead Postgres primary or Valkey
  * cluster would retry every request up to the `withRetry` budget, chew
  * through pool slots, and tail-latency an entire replica set into
  * timing out instead of 503-ing cleanly.

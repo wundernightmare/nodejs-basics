@@ -4,7 +4,7 @@
  * Pure data structure. No NestJS, no Prisma, no HTTP. The only outside
  * concept it leans on is the optimistic-lock `version` field, which the
  * repository increments on every write (see TaskAlreadyArchivedError +
- * OptimisticLockConflictError mapping in main.ts ERROR_MAP).
+ * OptimisticLockConflictError mapping in app.ts ERROR_MAP).
  */
 
 export const TaskStatus = {

@@ -280,7 +280,7 @@ export const pgBreakerProvider: FactoryProvider<DependencyCircuitBreaker> = {
       errorFilter: (err) => {
         // `true` = don't count towards open. Only network / pool
         // exhaustion failures should trip the breaker — a constraint
-        // violation or syntax error is a caller bug, not a broker outage.
+        // violation or syntax error is a caller bug, not a database outage.
         const code = (err as NodeJS.ErrnoException | undefined)?.code;
         if (typeof code === "string") {
           return !/^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE)$/u.test(code);

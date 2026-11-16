@@ -25,7 +25,6 @@ function broker(txerrs: number, extra: object = {}): object {
   return { ...PRODUCER, brokers: { "b/0": { nodeid: 0, state: "UP", txerrs }, ...extra } };
 }
 
-/** The kafka_* sample lines of a scrape, comments dropped. */
 function kafkaLines(text: string): string[] {
   return text.split("\n").filter((l) => l.startsWith("kafka_"));
 }

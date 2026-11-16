@@ -49,7 +49,6 @@ const headerGetter: TextMapGetter<KafkaHeaders | undefined> = {
   },
 };
 
-/** Ends `span`, marking it failed when `err` is set. */
 function endSpan(span: Span, err?: unknown): void {
   if (err !== undefined) {
     span.recordException(err instanceof Error ? err : JSON.stringify(err));

@@ -16,7 +16,7 @@ import { TaskEventsModule } from "./tasks/task-events.module.js";
       telemetry,
       configSnapshot,
       // An error nothing caught: a diagnostic report, then exit — the same
-      // as the API. Without it the worker died with Node's default message.
+      // as the API. Without it the worker dies with Node's default message.
       enableCrashReport: true,
       // The Kafka consumer and the job processor register their own /readyz
       // checks (ReadinessService.register).

@@ -11,7 +11,7 @@
  * bundle's AST (vite's parser), assigns every V8 range to real statements /
  * branches / functions and maps them through the source map. (c8 /
  * v8-to-istanbul remap by line and silently drop the *uncovered* ranges of a
- * bundle — every line came out covered, which is how this file came to be.)
+ * bundle — every line comes out covered.)
  *
  * Several processes (api, worker) contribute to the same files; their counts
  * are summed per statement — identical bundles have identical maps.

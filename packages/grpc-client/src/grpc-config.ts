@@ -119,7 +119,6 @@ export function resolveGrpcTarget(target: GrpcTargetConfig): ResolvedGrpcTarget 
   };
 }
 
-/** Does the target retry at all? */
 export function retries(target: ResolvedGrpcTarget): boolean {
   return target.retry.maxAttempts > 1;
 }

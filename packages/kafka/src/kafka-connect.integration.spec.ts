@@ -38,7 +38,6 @@ async function until(cond: () => boolean, ms: number): Promise<number> {
   return Date.now() - started;
 }
 
-/** The producer service, counting the clients it creates. */
 class CountingProducer extends KafkaProducerService {
   created = 0;
   protected override createProducer(): KafkaJS.Producer {
