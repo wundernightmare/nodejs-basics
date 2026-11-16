@@ -258,7 +258,6 @@ export class TargetPolicy {
     return this.#getRemainingMs?.();
   }
 
-  /** Counts a call that never reached gRPC. */
   countUnsent(method: string, outcome: string): void {
     this.#m.requests.add(1, { target: this.target, method, outcome });
   }

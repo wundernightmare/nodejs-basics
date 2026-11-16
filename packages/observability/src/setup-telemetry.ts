@@ -176,7 +176,7 @@ export function setupTelemetry(options: SetupTelemetryOptions = {}): TelemetryHa
   // Without one `context.active()` is always empty: every span becomes a root
   // and nothing propagates (NodeTracerProvider.register() would set it; the
   // BasicTracerProvider above does not). @fastify/otel parents its own spans
-  // explicitly, which is why its request trees looked fine without it.
+  // explicitly, so its request trees are whole even without one.
   context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
 
   // ─── W3C propagation ──────────────────────────────────────────────────────

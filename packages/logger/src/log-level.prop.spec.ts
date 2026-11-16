@@ -113,9 +113,8 @@ describe("parseDuration / formatDuration (property)", () => {
       }),
       {
         numRuns,
-        // Found by this property: a number too long for a double parsed to
-        // Infinity and was accepted as a "positive" duration; "0.0001" (or
-        // "0.0001ms") rounded to 0 and was returned as one.
+        // Neither is a duration: a number too long for a double parses to
+        // Infinity, and "0.0001" (or "0.0001ms") rounds to 0.
         examples: [["9".repeat(320)], [`${"9".repeat(320)}s`], ["0.0001"], ["0.0001ms"], ["1e3"]],
       },
     );

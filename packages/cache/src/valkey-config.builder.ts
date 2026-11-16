@@ -13,9 +13,9 @@
  * `toBullMqOptions` (forces null), so callers cannot accidentally pick the
  * wrong shape.
  *
- * Defaults preserve current dev behaviour: a `redis://localhost:6379`
- * URL with no extra env keys yields a plaintext connection with the
- * pre-existing `maxRetriesPerRequest=3` + `lazyConnect` semantics.
+ * With the defaults, a `redis://localhost:6379` URL with no extra env
+ * keys yields a plaintext connection with `maxRetriesPerRequest=3` +
+ * `lazyConnect` semantics.
  */
 import { readFileSync } from "node:fs";
 import type { ConnectionOptions as TlsConnectionOptions } from "node:tls";

@@ -66,8 +66,7 @@ export async function setupBullBoard(
   // structurally identical FastifyPluginCallback is a different nominal type
   // from the one NestFastifyApplication.register expects. Type-only cast.
   type Plugin = Parameters<NestFastifyApplication["register"]>[0];
-  // tsgolint resolves fastify once and calls the cast unnecessary; tsgo does not.
-  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion
+  // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- tsgolint resolves fastify once and calls the cast unnecessary; tsgo does not
   const board = serverAdapter.registerPlugin() as Plugin;
 
   // A scope of its own, so the guard covers the board and nothing else.

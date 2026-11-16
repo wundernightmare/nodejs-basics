@@ -34,7 +34,7 @@ describe("computeJitteredDelay", () => {
 
   it("grows the cap exponentially until maxTimeout bites", () => {
     const spec = { minTimeout: 100, maxTimeout: 10_000, factor: 2 };
-    // rng returns 1.0 on every call so we read the raw cap at each attempt.
+    // rng returns 0.9999 on every call so we read the raw cap (less one, floored) at each attempt.
     const draws = [0.9999, 0.9999, 0.9999, 0.9999];
     const rng = fixedRng(draws);
     // Attempt 0: cap=100  → 99

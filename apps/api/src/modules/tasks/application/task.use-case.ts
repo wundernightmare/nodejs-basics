@@ -14,7 +14,7 @@
  *
  * The use case throws domain errors (TaskNotFoundError, TaskAlreadyArchivedError,
  * OptimisticLockConflictError). The global DomainExceptionFilter maps them to
- * HTTP via apps/api/src/main.ts ERROR_MAP.
+ * HTTP via apps/api/src/app.ts ERROR_MAP.
  */
 import { Inject, Injectable } from "@nestjs/common";
 

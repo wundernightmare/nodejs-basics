@@ -20,7 +20,7 @@ import { readBool, readInt, readJson, readSecretFile, readString } from "@base/c
  * mapping from env.registry to runtime behaviour grep-able (and matches the
  * librdkafka docs a platform team hands out).
  *
- * Behaviour preserved for local dev / tests: when the security / tunable env
+ * For local dev / tests: when the security / tunable env
  * vars are unset the returned configs degrade to plaintext + librdkafka
  * defaults, so an untouched `localhost:9092` broker keeps working. Buffer and
  * message sizes are the exception: always set from their own keys.

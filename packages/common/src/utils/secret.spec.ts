@@ -27,7 +27,7 @@ describe("Secret", () => {
     expect(secret.fingerprint()).toBe(FINGERPRINT);
     expect(String(secret)).toBe(shown);
     // What a careless log line does (the linter refuses it in product code).
-    // oxlint-disable-next-line typescript/restrict-template-expressions
+    // oxlint-disable-next-line typescript/restrict-template-expressions -- the Secret in a template literal is what is asserted
     expect(`token=${secret}`).toBe(`token=${shown}`);
     expect(JSON.stringify({ db: { password: secret } })).toBe(`{"db":{"password":"${shown}"}}`);
     expect(inspect(secret)).toBe(shown);

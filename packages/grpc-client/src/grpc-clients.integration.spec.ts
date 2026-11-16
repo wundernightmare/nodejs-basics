@@ -64,7 +64,6 @@ interface Answer {
   took: number;
 }
 
-/** A unary call of `path` with a raw message. */
 function unary(
   client: Client,
   path: string,
@@ -845,7 +844,6 @@ describe.skipIf(infra.skip)(
             ...noRetries,
           });
           const service = unique("lb");
-          // Both alive.
           for (let i = 0; i < 6; i += 1) expect((await send(client, 1, service)).err).toBeNull();
 
           await plain.down();

@@ -18,7 +18,6 @@
  */
 import { randomInt } from "node:crypto";
 
-/** The most shards an arena has. */
 export const SHARDS_MAX = 64;
 /** The least a shard holds, so a small buffer has fewer shards: a span is a few hundred bytes. */
 export const SHARD_MIN_BYTES = 256 * 1024;
@@ -296,7 +295,6 @@ export class Arena {
       return { outcome: "rate_limited", payloads: [] };
     }
     if (this.#triggered.size >= TRIGGERED_MAX) {
-      // The oldest id: the first one of the Set.
       for (const oldest of this.#triggered) {
         this.#triggered.delete(oldest);
         break;
@@ -330,7 +328,6 @@ export class Arena {
     return out;
   }
 
-  /** The bytes the rings were allocated with: the memory of the arena. */
   allocatedBytes(): number {
     return this.#shards.length * this.recordMaxBytes;
   }

@@ -122,7 +122,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
     const statusCode =
       (Reflect.getMetadata(HTTP_CODE_METADATA, context.getHandler()) as number | undefined) ?? 200;
 
-    // Step 1: check existing entry
     let existing: string | null;
     try {
       existing = await this.store.get(storeKey);
@@ -161,7 +160,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
       await this.store.del(storeKey).catch(() => {});
     }
 
-    // Step 2: acquire processing lock (atomic SET NX)
     let acquired: boolean;
     try {
       acquired = await this.store.setNx(storeKey, PROCESSING_SENTINEL, LOCK_TTL_SECONDS);
@@ -176,7 +174,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
       throw new ConflictException("A request with this Idempotency-Key is already being processed");
     }
 
-    // Step 3: execute handler, cache result, release lock on error
     let result: unknown;
     try {
       result = await firstValueFrom(next.handle());

@@ -1,7 +1,7 @@
 /**
  * Full Jitter exponential back-off — AWS variant.
  *
- * Extracted from ResilientClient so the same curve can be reused by retry
+ * Separate from ResilientClient so the same curve can be reused by retry
  * wrappers around non-HTTP drivers (ClickHouse HTTP via the client, Scylla
  * binary protocol, Valkey RESP, Kafka producer/consumer policies). Keeping
  * one implementation means a single cap-behaviour contract, one place for

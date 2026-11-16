@@ -139,8 +139,8 @@ describe("redact (property)", () => {
       ),
       {
         numRuns,
-        // Found by this property: `out[key] = …` turned an own "__proto__"
-        // key into the prototype of the copy and dropped it.
+        // An own "__proto__" key stays a key of the copy: `out[key] = …`
+        // would make it the copy's prototype and drop it.
         examples: [[ownProto('{"__proto__": {"a": "b"}, "c": 1}')]],
       },
     );

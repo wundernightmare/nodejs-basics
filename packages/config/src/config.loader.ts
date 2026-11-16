@@ -79,14 +79,6 @@ export interface ConfigSnapshot {
 const sources = new Map<string, ConfigSource>();
 
 /**
- * The effective configuration: every ENV_REGISTRY key with the value the
- * process is actually running with (after env, YAML and defaults) and where
- * it came from. Keys the registry marks `secret` are fingerprinted here, so
- * no caller can leak them; the rest is raw — pass it through redact()
- * (@base/logger) before showing it to anyone (URL passwords, keys that only
- * look like secrets); the admin server does.
- */
-/**
  * What a `Secret` prints: the first four bytes of the SHA-256 in hex — enough
  * to tell whether two pods run the same value, or whether a rotation landed.
  */
@@ -95,6 +87,14 @@ function fingerprinted(value: string): string {
   return `[redacted:${createHash("sha256").update(value).digest("hex").slice(0, 8)}]`;
 }
 
+/**
+ * The effective configuration: every ENV_REGISTRY key with the value the
+ * process is actually running with (after env, YAML and defaults) and where
+ * it came from. Keys the registry marks `secret` are fingerprinted here, so
+ * no caller can leak them; the rest is raw — pass it through redact()
+ * (@base/logger) before showing it to anyone (URL passwords, keys that only
+ * look like secrets); the admin server does.
+ */
 export function configSnapshot(): ConfigSnapshot {
   const config: Record<string, string | null> = {};
   const provenance: Record<string, ConfigSource> = {};
@@ -278,9 +278,6 @@ function load(options: LoadOptions): Record<string, unknown> {
   return file;
 }
 
-/**
- * Apply registry defaults for keys that are still unset after YAML + env merge.
- */
 function applyDefaults(appDefaults: Readonly<Record<string, string>>): void {
   for (const entry of ENV_REGISTRY) {
     const value = appDefaults[entry.key] ?? entry.default;
