@@ -141,6 +141,10 @@ high-signal, easy-to-miss bits.
   own `OTEL_SERVICE_NAME`; it imports nothing that reads env) — so modules that
   read `process.env` on load see `config.yaml`. Same in `apps/worker`.
   `env.registry.spec.ts` pins the order.
+- **Comments carry what the code in front of the reader does not** — a
+  reason, an invariant, a contract — and never restate a name, a type or the
+  next lines. The rules are CONTRIBUTING "Comments"; read them before writing
+  or reviewing a comment.
 - **Config values**: a new registry entry gets its `type` (+ `min`/`max`) and
   its `default` — the only one: read it with
   `readInt/readNumber/readBool/readJson/readString(config, KEY)` from
