@@ -71,6 +71,9 @@ RUN rm -rf node_modules/.pnpm/@oxlint-tsgolint+linux-* \
  && rm -rf node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript/deps \
  && find node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript/build \
       -type f ! -name '*.node' ! -name '*.so*' -delete
+RUN bash scripts/copy-native-runtime.sh \
+    node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript \
+    /native-libs
 
 # ── Stage 2 – runtime ────────────────────────────────────────────────────────
 # distroless/nodejs ships node + glibc/libstdc++ — no shell, no package manager.
@@ -86,6 +89,7 @@ LABEL org.opencontainers.image.title="nodejs-basics-api" \
       org.opencontainers.image.licenses="UNLICENSED"
 
 WORKDIR /repo/apps/api
+COPY --from=builder /native-libs/ /
 COPY --from=builder --chown=nonroot:nonroot /repo /repo
 
 ENV NODE_ENV=production
