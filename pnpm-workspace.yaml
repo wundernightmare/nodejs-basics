@@ -93,3 +93,5 @@ minimumReleaseAgeExclude:
   # Drops deepmerge (GHSA-gcqx-w48m-w2h4, no fixed deepmerge release exists);
   # released 2026-11-08, clears the window on 2026-11-15. Remove after 2026-11-16.
   - 'nestjs-zod@5.6.0'
+patchedDependencies:
+  '@confluentinc/kafka-javascript@1.11.0': patches/@confluentinc__kafka-javascript@1.11.0.patch

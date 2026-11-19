@@ -181,6 +181,9 @@ overrides:
   glob@>=9 <14.0.2: ^14.0.4
   minimatch@>=7 <11.0.1: ^11.0.5
 
+patchedDependencies:
+  '@confluentinc/kafka-javascript@1.11.0': 33605a570d7683fcd6b4fae8897fe522e73bdd481f9008d79e06521b7dbdf1ed
+
 importers:
 
   .:
@@ -426,7 +429,7 @@ importers:
         version: link:../../packages/observability
       '@confluentinc/kafka-javascript':
         specifier: 1.11.0
-        version: 1.11.0(supports-color@10.2.2)
+        version: 1.11.0(patch_hash=33605a570d7683fcd6b4fae8897fe522e73bdd481f9008d79e06521b7dbdf1ed)(supports-color@10.2.2)
       '@nestjs/common':
         specifier: 12.1.2
         version: 12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@10.2.2)
@@ -738,7 +741,7 @@ importers:
         version: link:../logger
       '@confluentinc/kafka-javascript':
         specifier: 1.11.0
-        version: 1.11.0(supports-color@10.2.2)
+        version: 1.11.0(patch_hash=33605a570d7683fcd6b4fae8897fe522e73bdd481f9008d79e06521b7dbdf1ed)(supports-color@10.2.2)
       '@nestjs/common':
         specifier: 12.x
         version: 12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@10.2.2)
@@ -5302,7 +5305,7 @@ snapshots:
       - bullmq
       - typescript
 
-  '@confluentinc/kafka-javascript@1.11.0(supports-color@10.2.2)':
+  '@confluentinc/kafka-javascript@1.11.0(patch_hash=33605a570d7683fcd6b4fae8897fe522e73bdd481f9008d79e06521b7dbdf1ed)(supports-color@10.2.2)':
     dependencies:
       '@mapbox/node-pre-gyp': 2.0.3(supports-color@10.2.2)
       bindings: 1.5.0
