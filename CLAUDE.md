@@ -332,8 +332,8 @@ high-signal, easy-to-miss bits.
 - **BullMQ connections** must NOT set `commandTimeout` (its blocking poll
   legitimately outlives any per-command timeout) — see `@base/cache`
   `toBullMqOptions`.
-- **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs24-debian13`;
-  builder `node:24-trixie`, the same glibc line for the native Kafka addon;
+- **Docker images**: multi-stage distroless (`gcr.io/distroless/nodejs26-debian13`;
+  builder `node:26.13.1-trixie`, the same glibc line for the native Kafka addon;
   pnpm via `corepack install` from `packageManager`). The build runs
   `pnpm build` (tsc for packages, Vite for the apps) and copies the whole
   workspace — the app bundle imports its externals by path relative to

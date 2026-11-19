@@ -7,7 +7,7 @@ import type { Plugin, UserConfig } from "vite";
 /**
  * The Vite build every app shares (`apps/<app>/vite.config.ts` calls this).
  *
- * One bundle per app — `dist/main.js` (ESM, Node 24, source map):
+ * One bundle per app — `dist/main.js` (ESM, Node 26, source map):
  *
  * - `@base/*` workspace packages are bundled from their `src/` (the `source`
  *   export condition, the same one vitest and `start:dev` use), so an app

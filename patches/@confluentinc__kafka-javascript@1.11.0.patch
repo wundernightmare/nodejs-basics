@@ -1,0 +1,13 @@
+diff --git a/util/configure.js b/util/configure.js
+index dfedc2235b62ad8eafe9e8c3e04428698f131a78..279156e76a200248d5b3b24cffe45aac38cdb857 100644
+--- a/util/configure.js
++++ b/util/configure.js
+@@ -20,7 +20,7 @@ var childProcess = require('child_process');
+ try {
+   let opts = '--install-deps --source-deps-only --disable-lz4-ext --enable-static --enable-strip --disable-gssapi';
+   if (process.env['CKJS_LINKING'] === 'dynamic')
+-    opts = '';
++    opts = '--disable-curl --disable-gssapi';
+   childProcess.execSync(`./configure ${opts} --prefix=${releaseDir} --libdir=${releaseDir}`, {
+     cwd: baseDir,
+     stdio: [0,1,2]

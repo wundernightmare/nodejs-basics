@@ -7,6 +7,10 @@ set shell := ["bash", "-c"]
 # signing key — into every recipe. Absent file = no-op. Knobs: .env.example.
 set dotenv-load := true
 
+export CKJS_LINKING := env("CKJS_LINKING", "dynamic")
+export BUILD_LIBRDKAFKA := env("BUILD_LIBRDKAFKA", "1")
+export npm_config_build_from_source := env("npm_config_build_from_source", "true")
+
 API  := "apps/api"
 DEPS := "docker/deps.yml"
 OBS  := "docker/observability.yml"

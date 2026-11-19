@@ -5,7 +5,7 @@ on:
     branches: [master]
     tags: ["v*"]
   pull_request:
-  # Weekly on master: the base images (node:24-trixie, distroless) move under
+  # Weekly on master: the base images (node:26-trixie, distroless) move under
   # an unchanged Dockerfile, and grype's database grows daily. A red run here
   # means "rebuild / bump the base", not "someone broke the build".
   schedule:
