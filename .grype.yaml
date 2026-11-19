@@ -2,7 +2,7 @@
 # `docker-scan-ci` and the docker CI jobs (grype from its pinned image against
 # a `docker save` tar). App-layer npm dependencies are gated strictly here (and
 # by osv-scanner in `just sec-deps`); the waivers below are scoped to the
-# immutable distroless base (gcr.io/distroless/nodejs24-debian13:nonroot),
+# immutable distroless base (gcr.io/distroless/nodejs26-debian13:nonroot),
 # which cannot be patched package-by-package — you bump the whole base image.
 # So they only ever silence base-image findings, never an npm-dep CVE the app
 # actually introduces.
@@ -26,9 +26,9 @@ ignore:
       type: deb
 
   # ── Distroless node runtime ─────────────────────────────────────────────────
-  # The `node` binary version is whatever gcr.io/distroless/nodejs24-debian13
+  # The `node` binary version is whatever gcr.io/distroless/nodejs26-debian13
   # ships; we can't independently bump it. Addressed by refreshing the base
-  # image when distroless publishes the next patched Node 24.x.
+  # image when distroless publishes the next patched Node 26.x.
   # Removal trigger: remove when grype reports no HIGH+ on the node binary for
   # the pinned base (re-check on each base bump; if a specific advisory is
   # what keeps this alive, name it here so the trigger is verifiable).

@@ -389,7 +389,8 @@ describe.skipIf(infra.skip)(
         {
           name: "server certificate for another name",
           port: () => server.ports.tls,
-          cause: /IP: 127\.0\.0\.1 is not in the cert|altnames|Hostname/iu,
+          cause:
+            /IP: 127\.0\.0\.1 is not in the cert|altnames|Hostname|TLS ServerName to an IP address/iu,
           options: (): GrpcClientsOptions => ({ channelOptions: {} }),
         },
         {

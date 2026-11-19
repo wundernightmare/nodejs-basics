@@ -40,6 +40,8 @@ concurrency:
 
 env:
   TZ: UTC
+  CKJS_LINKING: dynamic
+  npm_config_build_from_source: "true"
 
 jobs:
   versions:
