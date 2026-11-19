@@ -15,7 +15,7 @@
 #   DATABASE_PASSWORD_FILE   a mounted Secret with the password (optional)
 # ─────────────────────────────────────────────────────────────────────────────
 
-ARG NODE_VERSION=26
+ARG NODE_VERSION=26.13.1
 # corepack pinned like everything else (.gitlab-ci.yml COREPACK_VERSION in step).
 ARG COREPACK_VERSION=0.36.0
 
@@ -23,15 +23,19 @@ FROM node:${NODE_VERSION}-trixie AS builder
 ARG COREPACK_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
+ENV CKJS_LINKING=dynamic BUILD_LIBRDKAFKA=1 \
+    npm_config_build_from_source=true npm_config_nodedir=/usr/local
 WORKDIR /repo
 COPY . .
 # pnpm from `packageManager` in package.json — see apps/api/Dockerfile.
 RUN npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm fetch --store-dir /pnpm/store
+RUN --network=none --mount=type=cache,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --store-dir /pnpm/store
 RUN pnpm --filter @base/migrate build
 
-FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
+FROM gcr.io/distroless/nodejs26-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-migrate" \
       org.opencontainers.image.description="Forward-only SQL migrations for nodejs-basics" \

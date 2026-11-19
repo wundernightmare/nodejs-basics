@@ -19,8 +19,8 @@
 #   • Distroless Node runtime — no shell, no package manager, no build tools
 #   • Non-root principal (uid 65532 / "nonroot")
 #   • Only the app bundle + production node_modules ship. The native
-#     @confluentinc/kafka-javascript addon links libstdc++/glibc only
-#     (librdkafka is statically bundled), which distroless/nodejs provides.
+#     @confluentinc/kafka-javascript addon and bundled librdkafka .so files
+#     link libstdc++/glibc only, which distroless/nodejs provides.
 #   • No secrets, credentials or TLS material baked into any layer
 #
 # Runtime injection (never bake these into the image)
@@ -31,7 +31,7 @@
 #   KAFKA_BROKERS  broker1:9092,broker2:9092
 # ─────────────────────────────────────────────────────────────────────────────
 
-ARG NODE_VERSION=26
+ARG NODE_VERSION=26.13.1
 # corepack pinned like everything else (.gitlab-ci.yml COREPACK_VERSION in step).
 ARG COREPACK_VERSION=0.36.0
 
@@ -40,6 +40,8 @@ FROM node:${NODE_VERSION}-trixie AS builder
 ARG COREPACK_VERSION
 ENV PNPM_HOME=/pnpm
 ENV PATH="$PNPM_HOME:$PATH"
+ENV CKJS_LINKING=dynamic BUILD_LIBRDKAFKA=1 \
+    npm_config_build_from_source=true npm_config_nodedir=/usr/local
 WORKDIR /repo
 COPY . .
 # pnpm comes from `packageManager` in package.json (corepack reads it), so the
@@ -47,7 +49,9 @@ COPY . .
 # bundled with Node lags behind the npm registry's signing keys.
 RUN npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 RUN --mount=type=cache,target=/pnpm/store \
-    pnpm install --frozen-lockfile
+    pnpm fetch --store-dir /pnpm/store
+RUN --network=none --mount=type=cache,target=/pnpm/store \
+    pnpm install --frozen-lockfile --offline --store-dir /pnpm/store
 # Build every package + the app (workspace packages emit their dist in place).
 RUN pnpm build
 # Strip the dev tools that ship via devDependencies: Go binaries — tsc
@@ -63,14 +67,17 @@ RUN rm -rf node_modules/.pnpm/@oxlint-tsgolint+linux-* \
            node_modules/.pnpm/@typescript+typescript-linux-* \
            node_modules/.pnpm/lefthook-linux-* \
            node_modules/.pnpm/lefthook-* \
-           node_modules/.pnpm/allure-commandline@*
+           node_modules/.pnpm/allure-commandline@* \
+ && rm -rf node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript/deps \
+ && find node_modules/.pnpm/@confluentinc+kafka-javascript@*/node_modules/@confluentinc/kafka-javascript/build \
+      -type f ! -name '*.node' ! -name '*.so*' -delete
 
 # ── Stage 2 – runtime ────────────────────────────────────────────────────────
 # distroless/nodejs ships node + glibc/libstdc++ — no shell, no package manager.
 # The whole built workspace ships so the api's @base/* symlinks resolve to their
 # in-place dist; the native @confluentinc/kafka-javascript addon (built on the
 # matching glibc) loads against distroless' libstdc++.
-FROM gcr.io/distroless/nodejs24-debian13:nonroot AS runtime
+FROM gcr.io/distroless/nodejs26-debian13:nonroot AS runtime
 
 LABEL org.opencontainers.image.title="nodejs-basics-api" \
       org.opencontainers.image.description="Reference NestJS API over Postgres + Valkey + Kafka (nodejs-basics)" \

@@ -105,9 +105,9 @@ just stack-down
 ```
 
 The distroless images build the whole pnpm workspace and ship it on
-`gcr.io/distroless/nodejs24-debian13` (non-root). The native
-`@confluentinc/kafka-javascript` addon links only libstdc++/glibc (librdkafka is
-bundled), which the distroless base provides.
+`gcr.io/distroless/nodejs26-debian13` (non-root). The native
+`@confluentinc/kafka-javascript` addon and its bundled librdkafka shared
+libraries link only libstdc++/glibc, which the distroless base provides.
 
 ### Tests, e2e, load, security
 

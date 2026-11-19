@@ -35,6 +35,9 @@ variables:
   # corepack itself (it installs the pnpm from `packageManager`) — the
   # Dockerfiles' ARG COREPACK_VERSION carries the same pin. Not :latest.
   COREPACK_VERSION: "0.36.0"
+  CKJS_LINKING: dynamic
+  npm_config_build_from_source: "true"
+  npm_config_nodedir: /usr/local
   # ── Closed-network knobs — defaults are the public upstreams ──────────────
   # Registry hosts, used as the prefix of the scanner / docker images below.
   # Point at a pull-through cache (Harbor proxy project, Nexus docker-proxy,
