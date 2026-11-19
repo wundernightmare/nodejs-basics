@@ -27,7 +27,7 @@ stages:
   - docker
 
 default:
-  image: ${DOCKER_HUB}/library/node:24-trixie
+  image: ${DOCKER_HUB}/library/node:26-trixie
   before_script:
     - npm install -g corepack@${COREPACK_VERSION} && corepack enable && corepack install
 

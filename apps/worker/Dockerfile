@@ -15,7 +15,7 @@
 #   KAFKA_BROKERS  broker1:9092,broker2:9092
 # ─────────────────────────────────────────────────────────────────────────────
 
-ARG NODE_VERSION=24
+ARG NODE_VERSION=26
 # corepack pinned like everything else (.gitlab-ci.yml COREPACK_VERSION in step).
 ARG COREPACK_VERSION=0.36.0
 

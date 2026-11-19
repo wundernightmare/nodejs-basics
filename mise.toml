@@ -14,7 +14,7 @@
 # changes.
 
 [tools]
-node = "24.22.2"
+node = "26.13.1"
 k6   = "2.3.0"
 
 # JRE for allure-commandline (`just allure-report`)
