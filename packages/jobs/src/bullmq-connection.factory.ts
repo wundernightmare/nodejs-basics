@@ -1,7 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import type { ConnectionOptions } from "bullmq";
 
-import { buildValkeyConfig, toBullMqOptions } from "@base/cache";
+import { buildValkeyConfig, createValkeyClient, toBullMqOptions } from "@base/cache";
 
 /**
  * Build BullMQ's ConnectionOptions from the shared VALKEY_* env surface.
@@ -14,5 +14,7 @@ import { buildValkeyConfig, toBullMqOptions } from "@base/cache";
  */
 export function createBullMQConnection(config: ConfigService): ConnectionOptions {
   const built = buildValkeyConfig(config);
-  return toBullMqOptions(built);
+  const options = toBullMqOptions(built);
+  if (built.topology !== "cluster") return options;
+  return createValkeyClient(built, options);
 }

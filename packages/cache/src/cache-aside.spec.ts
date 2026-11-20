@@ -22,6 +22,18 @@ function memory(): AsideClient & {
       data.set(key, value);
       return Promise.resolve("OK");
     },
+    call: (...args: Array<string | number>) => {
+      const [, key, value, , old] = args;
+      if (data.get(String(key)) !== old) return Promise.resolve(null);
+      data.set(String(key), String(value));
+      return Promise.resolve("OK");
+    },
+    eval: (_script, _numKeys, ...args) => {
+      const [key, old, value] = args;
+      if (data.get(String(key)) !== old) return Promise.resolve(0);
+      data.set(String(key), String(value));
+      return Promise.resolve(1);
+    },
   };
 }
 
@@ -120,21 +132,21 @@ describe("CacheAside", () => {
   it("a cache that is down or corrupt never fails a read", async () => {
     await testCase("NB-1141", "cache-aside: the source of truth always wins");
     const warn = vi.fn<(obj: Record<string, unknown>, msg: string) => void>();
-    const down: AsideClient = {
+    const down = {
+      ...memory(),
       get: () => Promise.reject(new Error("ECONNREFUSED")),
-      set: () => Promise.reject(new Error("ECONNREFUSED")),
+      set: vi.fn(() => Promise.reject(new Error("ECONNREFUSED"))),
     };
     const cache = new CacheAside(down, { logger: { warn } });
     expect(await cache.get("k", 1_000, () => Promise.resolve(7))).toEqual({ value: 7, hit: false });
-    expect(warn.mock.calls.map((c) => c[1])).toEqual([
-      "Cache lookup failed, loading from source",
-      "Cache write failed",
-    ]);
+    expect(warn.mock.calls.map((c) => c[1])).toEqual(["Cache lookup failed, loading from source"]);
+    expect(down.set).not.toHaveBeenCalled();
 
     const client = memory();
     client.data.set("bad", "{not json");
     const corrupt = new CacheAside(client, { logger: { warn } });
     expect((await corrupt.get("bad", 1_000, () => Promise.resolve("fresh"))).value).toBe("fresh");
+    expect(client.data.get("bad")).toBe('"fresh"');
 
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;

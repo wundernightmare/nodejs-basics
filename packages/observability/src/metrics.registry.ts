@@ -497,7 +497,7 @@ export const METRIC_REGISTRY: readonly MetricEntry[] = [
     kind: "ObservableGauge",
     labels: ["check", "critical"],
     description:
-      "Readiness check result as of the last probe: 1 passing, 0 failing; critical checks gate /readyz.",
+      "Latest readiness check result: 1 passing, 0 failing; critical checks gate /readyz.",
     watch:
       "0 with critical=true: the pod is out of the load balancer — the check's name is the dependency.",
     source: "packages/observability",

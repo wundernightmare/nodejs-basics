@@ -71,7 +71,10 @@ database backup.
 | `javascriptHeap` | `totalMemory`, `usedMemory`, `memoryLimit`, per space |
 | `libuv` | open handles: sockets, timers — a leak of those is here, not in the heap |
 | `resourceUsage` | `rss`, `maxRss`, CPU time |
-| `environmentVariables` | the process environment — **credentials included** |
+
+`environmentVariables` is removed from the main report and every worker
+subreport before the file is written or uploaded: environment-based credentials
+must not become diagnostic artifacts.
 
 `rss` far above `javascriptHeap.totalMemory` means the memory is not
 JavaScript's: buffers, native clients (librdkafka), a memory-backed volume. No

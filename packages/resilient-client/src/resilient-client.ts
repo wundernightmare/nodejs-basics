@@ -300,6 +300,29 @@ export interface ResilientClientConfig {
 
 // ─── Internal: adaptive concurrency limiter ───────────────────────────────────
 
+function validateAdaptiveConcurrency(cfg: AdaptiveConcurrencyConfig): void {
+  const initial = cfg.initialLimit ?? 10;
+  const min = cfg.minLimit ?? 1;
+  const max = cfg.maxLimit ?? 200;
+  const backoff = cfg.backoffFactor ?? 0.9;
+  const target = cfg.targetRttFactor ?? 2;
+  if (!(Number.isFinite(initial) && initial >= 1)) {
+    throw new Error("adaptiveConcurrency.initialLimit must be at least 1");
+  }
+  if (!(Number.isFinite(min) && min >= 1)) {
+    throw new Error("adaptiveConcurrency.minLimit must be at least 1");
+  }
+  if (!(Number.isFinite(max) && max >= min)) {
+    throw new Error("adaptiveConcurrency.maxLimit must be at least minLimit");
+  }
+  if (!(Number.isFinite(backoff) && backoff > 0 && backoff <= 1)) {
+    throw new Error("adaptiveConcurrency.backoffFactor must be in (0, 1]");
+  }
+  if (!(Number.isFinite(target) && target > 0)) {
+    throw new Error("adaptiveConcurrency.targetRttFactor must be positive");
+  }
+}
+
 /**
  * Promise-based semaphore with AIMD limit adjustment.
  */
@@ -311,6 +334,7 @@ class AdaptiveConcurrencyLimiter {
   readonly #targetRttFactor: number;
   #inFlight = 0;
   #minRtt = Infinity;
+  #closed = false;
   readonly #waiters: Array<() => void> = [];
 
   constructor(cfg: AdaptiveConcurrencyConfig) {
@@ -331,6 +355,7 @@ class AdaptiveConcurrencyLimiter {
   async acquire(): Promise<void> {
     // Re-check after each wakeup — another acquire() may have raced ahead.
     while (true) {
+      if (this.#closed) throw OutboundError.shuttingDown();
       if (this.#inFlight < this.#limit) {
         this.#inFlight++;
         return;
@@ -339,6 +364,11 @@ class AdaptiveConcurrencyLimiter {
         this.#waiters.push(resolve);
       });
     }
+  }
+
+  close(): void {
+    this.#closed = true;
+    for (const resolve of this.#waiters.splice(0)) resolve();
   }
 
   release(rttMs: number, failed: boolean): void {
@@ -417,6 +447,9 @@ export class ResilientClient {
     private readonly baseUrl: string,
     private readonly config: ResilientClientConfig = {},
   ) {
+    if (config.adaptiveConcurrency?.enabled === true) {
+      validateAdaptiveConcurrency(config.adaptiveConcurrency);
+    }
     this.#shortLived = config.shortLived ?? false;
     this.#rejectOnRateLimit = config.rateLimit?.rejectOnRateLimit ?? false;
 
@@ -532,6 +565,7 @@ export class ResilientClient {
 
   /** Closes the underlying pool and stops the rate limiter. */
   async close(): Promise<void> {
+    this.#adaptiveLimiter?.close();
     await Promise.all([this.#dispatcher.close(), this.#limiter.stop({ dropWaitingJobs: false })]);
     this.#breaker.shutdown();
   }

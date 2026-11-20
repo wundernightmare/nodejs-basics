@@ -1,10 +1,16 @@
 import { setTimeout as delay } from "node:timers/promises";
 
-import { type BeforeApplicationShutdown, Inject, Injectable } from "@nestjs/common";
+import {
+  type BeforeApplicationShutdown,
+  Inject,
+  Injectable,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from "@nestjs/common";
 import { metrics } from "@opentelemetry/api";
 
 import { processEnv, readInt } from "@base/config";
-import { AppLogger } from "@base/logger";
+import { AppLogger, redactUrl } from "@base/logger";
 
 /**
  * What GET /readyz reports:
@@ -77,27 +83,38 @@ export const READINESS_CHECKS = Symbol("READINESS_CHECKS");
  * so load balancers stop routing before the socket goes away and probes keep
  * answering while the API drains.
  *
- * Each check's last result is health_check_up{check,critical} (1 passing,
- * 0 failing), as of the last /readyz probe — the metric golang-basics
- * exports under the same name.
+ * Checks run at boot and every HEALTH_CHECK_INTERVAL_MS. /readyz returns the
+ * latest snapshot without calling dependencies. Each result is exported as
+ * health_check_up{check,critical} (1 passing, 0 failing).
  */
 @Injectable()
-export class ReadinessService implements BeforeApplicationShutdown {
+export class ReadinessService
+  implements BeforeApplicationShutdown, OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger: ReturnType<AppLogger["child"]>;
   private readonly registered: ReadinessCheck[] = [];
+  private readonly intervalMs: number;
   private ready = true;
   private last: { name: string; up: boolean; optional: boolean }[] = [];
+  private snapshot:
+    | { checks: Record<string, string>; criticalFailing: boolean; optionalFailing: boolean }
+    | undefined;
+  private refreshing: Promise<void> | undefined;
+  private timer: NodeJS.Timeout | undefined;
+  private dirty = true;
+  private stopped = false;
 
   constructor(
     @Inject(READINESS_CHECKS) private readonly checks: ReadinessCheck[],
     appLogger: AppLogger,
   ) {
     this.logger = appLogger.child(ReadinessService.name);
+    this.intervalMs = readInt(processEnv, "HEALTH_CHECK_INTERVAL_MS");
     metrics
       .getMeter("health")
       .createObservableGauge("health_check_up", {
         description:
-          "Readiness check result as of the last probe: 1 passing, 0 failing; critical checks gate /readyz.",
+          "Latest readiness check result: 1 passing, 0 failing; critical checks gate /readyz.",
       })
       .addCallback((result) => {
         for (const { name, up, optional } of this.last) {
@@ -111,6 +128,28 @@ export class ReadinessService implements BeforeApplicationShutdown {
     const idx = this.registered.findIndex((c) => c.name === check.name);
     if (idx === -1) this.registered.push(check);
     else this.registered[idx] = check;
+    this.dirty = true;
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.refresh();
+    this.schedule();
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.timer);
+    await this.refreshing;
+  }
+
+  private schedule(): void {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => {
+      void this.refresh().finally(() => {
+        this.schedule();
+      });
+    }, this.intervalMs);
+    this.timer.unref();
   }
 
   /**
@@ -137,7 +176,27 @@ export class ReadinessService implements BeforeApplicationShutdown {
     if (delayMs > 0) await delay(delayMs);
   }
 
+  /** Returns cached results; a newly registered check is evaluated before answering. */
   async check(): Promise<ReadinessResult> {
+    if (this.dirty || this.snapshot === undefined) await this.refresh();
+    const snapshot = this.snapshot;
+    if (snapshot === undefined) return { status: "not_ready", ok: false, checks: {} };
+
+    let status: ReadinessStatus = "ok";
+    if (!this.ready || snapshot.criticalFailing) status = "not_ready";
+    else if (snapshot.optionalFailing) status = "degraded";
+    return { status, ok: status !== "not_ready", checks: { ...snapshot.checks } };
+  }
+
+  private refresh(): Promise<void> {
+    if (this.refreshing !== undefined) return this.refreshing;
+    this.refreshing = this.evaluate().finally(() => {
+      this.refreshing = undefined;
+    });
+    return this.refreshing;
+  }
+
+  private async evaluate(): Promise<void> {
     const all = [...this.checks, ...this.registered];
     const results = await Promise.all(
       all.map(async (entry) => {
@@ -155,7 +214,7 @@ export class ReadinessService implements BeforeApplicationShutdown {
           return { name: entry.name, value: result, optional: entry.optional === true };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          return { name: entry.name, value: message, optional: entry.optional === true };
+          return { name: entry.name, value: redactUrl(message), optional: entry.optional === true };
         } finally {
           clearTimeout(timer);
         }
@@ -176,10 +235,7 @@ export class ReadinessService implements BeforeApplicationShutdown {
       if (optional) optionalFailing = true;
       else criticalFailing = true;
     }
-
-    let status: ReadinessStatus = "ok";
-    if (!this.ready || criticalFailing) status = "not_ready";
-    else if (optionalFailing) status = "degraded";
-    return { status, ok: status !== "not_ready", checks };
+    this.snapshot = { checks, criticalFailing, optionalFailing };
+    this.dirty = false;
   }
 }

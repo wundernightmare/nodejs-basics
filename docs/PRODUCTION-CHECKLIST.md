@@ -12,7 +12,7 @@ runtimes differ the row says how.
 | --- | --- | --- |
 | The V8 heap limit is checked against the container's memory limit at start; a heap that does not fit is reported with the `--max-old-space-size` to use (Node cannot change it while running) | `packages/observability/src/runtime-memory.ts` (`RUNTIME_HEAP_LIMIT_RATIO`), gauge `nodejs_container_memory_limit_bytes` | `runtime-memory.spec.ts` |
 | CPU profile on demand, behind the token, on the internal port | `packages/observability/src/cpu-profile.ts` (`POST /debug/cpu-profile`) | `cpu-profile.spec.ts`, `admin-server.service.spec.ts` |
-| Heap snapshot when it matters — near the heap limit, on SIGUSR2, on demand — and a diagnostic report of a process that died; both shipped to object storage when a bucket is set | `heap-snapshot.service.ts` (`HEAP_OOM_THRESHOLD`, `HEAP_SNAPSHOT_S3_BUCKET`), `crash-report.service.ts`, [DIAGNOSTICS.md](DIAGNOSTICS.md) | `heap-snapshot.service.spec.ts` |
+| Heap snapshot when it matters — near the heap limit, on SIGUSR2, on demand — and a diagnostic report of a process that died; both shipped to object storage when a bucket is set; environment variables excluded from every report | `heap-snapshot.service.ts` (`HEAP_OOM_THRESHOLD`, `HEAP_SNAPSHOT_S3_BUCKET`), `crash-report.service.ts`, [DIAGNOSTICS.md](DIAGNOSTICS.md) | `heap-snapshot.service.spec.ts`, `crash-report.service.spec.ts` |
 | Continuous profiling — **opt-in** `PYROSCOPE_SERVER_ADDRESS` | `packages/observability/src/setup-telemetry.ts` (push SDK: Node has no scrape-able pprof endpoint) | — |
 | Runtime metrics: event-loop delay, heap, GC, handles | `packages/observability/src/node-metrics.ts` | `node-metrics.spec.ts` |
 | Nothing left running: every test file must leave no handle that keeps the process alive | `packages/testing/src/leaks.setup.ts` | every suite; `leaks.spec.ts` |
@@ -37,7 +37,7 @@ Not here: a flight recorder (a Go runtime facility) and a FIPS build mode —
 | Rule | Where | Proof |
 | --- | --- | --- |
 | Operational endpoints on a separate port, token-guarded; without a token the service refuses to start on a public interface | `packages/observability/src/admin-server.service.ts`, `admin-auth.ts` (`ADMIN_PORT`, `ADMIN_TOKEN`) | `admin-server.service.spec.ts`, `admin-auth.spec.ts` |
-| Liveness is not readiness; readiness has critical and optional checks | `packages/observability/src/readiness.service.ts` | `readiness.service.spec.ts`, `e2e/tests/health.spec.ts` |
+| Liveness is not readiness; critical and optional checks run in the background, probes use the cached redacted snapshot | `packages/observability/src/readiness.service.ts` (`HEALTH_CHECK_INTERVAL_MS`) | `readiness.service.spec.ts`, `e2e/tests/health.spec.ts` |
 | RED metrics in and out, runtime metrics, `build_info`; every metric is in one registry | `packages/observability/src/metrics.registry.ts`; the contract shared with the Go sibling: golang-basics `docs/METRICS.md` | `metrics.registry.spec.ts`, `dashboards.spec.ts` |
 | Traces over OTLP, W3C propagation | `packages/observability/src/setup-telemetry.ts` (`OTEL_*`) | `pg-tracing.integration.spec.ts`, `e2e/tests/observability.spec.ts` |
 | Tail-based sampling: errors, slow traces and debug subjects kept in full | the collector: `docker/otel-collector/config.yaml` | `tail-sampling.integration.spec.ts` (the real collector with that file) |

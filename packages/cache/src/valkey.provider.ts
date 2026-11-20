@@ -1,10 +1,15 @@
 import type { FactoryProvider } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Redis as Valkey, type RedisOptions } from "iovalkey";
+import { Cluster, Redis as Valkey } from "iovalkey";
 
 import { DependencyCircuitBreaker } from "@base/resilience";
 
-import { buildValkeyConfig, toClientOptions } from "./valkey-config.builder.js";
+import {
+  buildRetryStrategy,
+  buildValkeyConfig,
+  toClientOptions,
+  type ValkeyBuilderResult,
+} from "./valkey-config.builder.js";
 import { registerValkeyMetrics, type ValkeyMetricsHandle } from "./valkey-metrics.js";
 import { guardValkeyClient } from "./valkey-deadline.js";
 import { traceValkeyClient } from "./valkey-tracing.js";
@@ -16,6 +21,22 @@ export const VALKEY_BREAKER = Symbol("VALKEY_BREAKER");
 
 /** DI token for the Valkey OTel metrics handle (disposable). */
 export const VALKEY_METRICS = Symbol("VALKEY_METRICS");
+
+export function createValkeyClient(
+  built: ValkeyBuilderResult,
+  options: Record<string, unknown> = toClientOptions(built),
+): Valkey {
+  if (built.topology !== "cluster") {
+    return new Valkey(options);
+  }
+  const { host: _host, port: _port, lazyConnect, enableOfflineQueue, ...redisOptions } = options;
+  return new Cluster(built.addresses, {
+    lazyConnect: lazyConnect === true,
+    enableOfflineQueue: enableOfflineQueue === true,
+    clusterRetryStrategy: buildRetryStrategy(built.reconnect),
+    redisOptions,
+  }) as unknown as Valkey;
+}
 
 /**
  * Nest `FactoryProvider` for the shared Valkey client.
@@ -33,9 +54,8 @@ export const valkeyProvider: FactoryProvider<Valkey> = {
   inject: [ConfigService],
   useFactory: (config: ConfigService): Valkey => {
     const built = buildValkeyConfig(config);
-    const opts = toClientOptions(built) as RedisOptions;
     // Spans (valkey-tracing.ts), then the request budget (valkey-deadline.ts).
-    return guardValkeyClient(traceValkeyClient(new Valkey(opts)));
+    return guardValkeyClient(traceValkeyClient(createValkeyClient(built)));
   },
 };
 

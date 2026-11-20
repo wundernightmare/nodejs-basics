@@ -100,6 +100,54 @@ describe("valkey config builder", () => {
     }
   });
 
+  it("selects standalone, cluster and Sentinel from the URL", async () => {
+    await testCase("NB-316", "VALKEY_URL selects standalone, cluster seeds or Sentinel");
+    expect(buildValkeyConfig(config({})).topology).toBe("standalone");
+
+    const cluster = buildValkeyConfig(
+      config({
+        VALKEY_URL: "redis://cache-a:6379?addr=cache-b:6380&addr=cache-c:6381",
+      }),
+    );
+    expect(cluster).toMatchObject({
+      topology: "cluster",
+      addresses: [
+        { host: "cache-a", port: 6379 },
+        { host: "cache-b", port: 6380 },
+        { host: "cache-c", port: 6381 },
+      ],
+    });
+    expect(() =>
+      buildValkeyConfig(config({ VALKEY_URL: "redis://cache-a/1?addr=cache-b" })),
+    ).toThrow("cluster");
+
+    const sentinel = buildValkeyConfig(
+      config({
+        VALKEY_URL: "rediss://sentinel-a:26379?addr=sentinel-b:26380&master_set=primary",
+        VALKEY_CA_PEM: "ca",
+      }),
+    );
+    expect(sentinel).toMatchObject({ topology: "sentinel", masterSet: "primary" });
+    expect(toClientOptions(sentinel)).toMatchObject({
+      sentinels: [
+        { host: "sentinel-a", port: 26379 },
+        { host: "sentinel-b", port: 26380 },
+      ],
+      name: "primary",
+      enableTLSForSentinelMode: true,
+      sentinelTLS: { ca: Buffer.from("ca"), rejectUnauthorized: true },
+    });
+  });
+
+  it("selects IFEQ or Lua compare-and-set explicitly", async () => {
+    await testCase("NB-317", "VALKEY_COMPARE_AND_SET selects IFEQ or Lua");
+    expect(buildValkeyConfig(config({})).compareAndSet).toBe("ifeq");
+    expect(buildValkeyConfig(config({ VALKEY_COMPARE_AND_SET: "lua" })).compareAndSet).toBe("lua");
+    expect(() => buildValkeyConfig(config({ VALKEY_COMPARE_AND_SET: "watch" }))).toThrow(
+      "expected one of ifeq|lua",
+    );
+  });
+
   it("rejects VALKEY_EXTRA_PROPERTIES that is not a JSON object", async () => {
     await testCase("NB-315", "extra properties must be an object");
     expect(() => buildValkeyConfig(config({ VALKEY_EXTRA_PROPERTIES: "[1]" }))).toThrow(

@@ -13,6 +13,7 @@ import {
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
+  type BucketLocationConstraint,
   type CompletedPart,
 } from "@aws-sdk/client-s3";
 import { metrics, SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
@@ -39,6 +40,14 @@ export class S3Error extends Error {
       `s3: ${operation} ${JSON.stringify(key)}: ${cause instanceof Error ? cause.message : "unknown error"}`,
     );
     this.name = "S3Error";
+  }
+}
+
+/** The configured bucket does not exist. */
+export class S3BucketNotFoundError extends S3Error {
+  constructor(operation: S3Operation, key: string, cause: unknown) {
+    super(operation, key, cause);
+    this.name = "S3BucketNotFoundError";
   }
 }
 
@@ -89,9 +98,16 @@ interface ListPage {
   NextContinuationToken?: string;
 }
 
-const NOT_FOUND = new Set(["NoSuchKey", "NotFound", "NoSuchBucket"]);
+const NOT_FOUND = new Set(["NoSuchKey", "NotFound"]);
 
-/** A missing key or bucket: the modelled errors, or the bare 404 a HEAD answers with. */
+function errorName(err: unknown): string | undefined {
+  return typeof err === "object" && err !== null ? (err as { name?: string }).name : undefined;
+}
+
+function isBucketNotFound(err: unknown): boolean {
+  return errorName(err) === "NoSuchBucket";
+}
+
 function isNotFound(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   const { name, $metadata } = err as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -331,18 +347,33 @@ export class S3Store {
       await this.ready();
       return;
     } catch (err) {
-      if (!this.#config.autoCreateBucket || !(err instanceof S3Error) || !isNotFound(err.cause)) {
+      if (
+        !this.#config.autoCreateBucket ||
+        !(err instanceof S3Error) ||
+        (!isNotFound(err.cause) && !isBucketNotFound(err.cause))
+      ) {
         throw err;
       }
     }
     try {
       await this.#call("create_bucket", "", this.#config.opTimeoutMs, false, (abortSignal) =>
-        this.#api.send(new CreateBucketCommand({ Bucket: this.#config.bucket }), { abortSignal }),
+        this.#api.send(
+          new CreateBucketCommand({
+            Bucket: this.#config.bucket,
+            ...(this.#config.endpoint === "" && this.#config.region !== "us-east-1"
+              ? {
+                  CreateBucketConfiguration: {
+                    LocationConstraint: this.#config.region as BucketLocationConstraint,
+                  },
+                }
+              : {}),
+          }),
+          { abortSignal },
+        ),
       );
     } catch (err) {
-      // Somebody else created it meanwhile: that is what was asked for.
-      const name = err instanceof S3Error ? (err.cause as { name?: string }).name : undefined;
-      if (name !== "BucketAlreadyOwnedByYou" && name !== "BucketAlreadyExists") throw err;
+      const name = err instanceof S3Error ? errorName(err.cause) : undefined;
+      if (name !== "BucketAlreadyOwnedByYou") throw err;
     }
   }
 
@@ -441,16 +472,19 @@ export class S3Store {
       ]);
       return { found: true, value };
     } catch (err) {
-      if (notFoundOk && isNotFound(err)) return { found: false, value: undefined };
+      if (notFoundOk && isNotFound(err) && !isBucketNotFound(err)) {
+        return { found: false, value: undefined };
+      }
       this.#errors.add(1, { operation });
+      const cause = deadline.aborted
+        ? new Error(`timed out after ${timeoutMs} ms`, { cause: err })
+        : err;
       const failure =
         err instanceof S3TooLargeError
           ? err
-          : new S3Error(
-              operation,
-              key,
-              deadline.aborted ? new Error(`timed out after ${timeoutMs} ms`, { cause: err }) : err,
-            );
+          : isBucketNotFound(err)
+            ? new S3BucketNotFoundError(operation, key, cause)
+            : new S3Error(operation, key, cause);
       span.recordException(failure);
       span.setStatus({ code: SpanStatusCode.ERROR, message: `${operation} failed` });
       throw failure;
@@ -492,6 +526,7 @@ export class S3Upload {
   #uploadId: string | undefined;
   readonly #parts: CompletedPart[] = [];
   #done = false;
+  #failure: { value: unknown } | undefined;
 
   /** @internal — use S3Store.upload(). */
   constructor(
@@ -515,21 +550,31 @@ export class S3Upload {
 
   /** Buffers chunk, sending a part each time the buffer fills. */
   async write(chunk: Uint8Array | string): Promise<void> {
+    if (this.#failure !== undefined) throw this.#failure.value;
     if (this.#done) throw new Error(`s3: upload ${JSON.stringify(this.#key)}: already finished`);
-    let rest: Uint8Array = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-    this.#size += rest.byteLength;
-    while (rest.byteLength > 0) {
-      const room = this.#config.uploadPartBytes - this.#buffered;
-      const take = rest.subarray(0, room);
-      this.#chunks.push(take);
-      this.#buffered += take.byteLength;
-      rest = rest.subarray(take.byteLength);
-      if (this.#buffered === this.#config.uploadPartBytes) await this.#flushPart();
+    try {
+      let rest: Uint8Array = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      this.#size += rest.byteLength;
+      while (rest.byteLength > 0) {
+        const room = this.#config.uploadPartBytes - this.#buffered;
+        const take = rest.subarray(0, room);
+        this.#chunks.push(take);
+        this.#buffered += take.byteLength;
+        rest = rest.subarray(take.byteLength);
+        if (this.#buffered === this.#config.uploadPartBytes) await this.#flushPart();
+      }
+    } catch (err) {
+      this.#failure = { value: err };
+      throw err;
     }
   }
 
   /** Sends what is buffered and makes the object visible. On a failure the upload is aborted. */
   async close(): Promise<void> {
+    if (this.#failure !== undefined) {
+      if (!this.#done) await this.abort();
+      throw this.#failure.value;
+    }
     if (this.#done) return;
     try {
       if (this.#uploadId === undefined) {
@@ -564,6 +609,7 @@ export class S3Upload {
       }
       this.#done = true;
     } catch (err) {
+      this.#failure = { value: err };
       await this.abort();
       throw err;
     }

@@ -406,6 +406,10 @@ client: from a trusted peer the client is the first `X-Forwarded-For` entry
 that is not itself a trusted proxy, from anyone else the header is ignored.
 The admin listener (probes, `/metrics`) is never limited.
 
+Readiness checks run at boot and every `HEALTH_CHECK_INTERVAL_MS` (10 s).
+`/readyz` returns the latest snapshot with credentials in URLs redacted; probes
+do not call dependencies.
+
 On SIGTERM `/readyz` turns 503 first, the api keeps serving for
 `HTTP_SHUTDOWN_DELAY_MS` (2 s — the time a load balancer needs to stop
 routing; 0 in tests and `just dev`), then stops accepting and drains, and the
@@ -426,7 +430,7 @@ adds what it has no answer for.
 | Retry amplification | service config `retryThrottling` (token bucket per channel)                                                                                                     |
 | Load balancing      | `round_robin` (default) or `pick_first`                                                                                                                         |
 | Dead connections    | keepalive pings — off by default: a server closes a connection that pings more often than it allows (5 min by default), so agree `keepalive.timeMs` with it     |
-| Transport           | TLS with the system roots unless `insecure: true`; other credentials through `credentials`                                                                      |
+| Transport           | TLS with system roots or `caFile`; `insecure: true` selects plaintext; other credentials through `credentials`                                                     |
 | Circuit breaker     | **added**: opossum, as an interceptor above the retries                                                                                                         |
 | Metrics, tracing    | **added**: `grpc_client_*` (the contract shared with golang-basics) and a CLIENT span per call, `traceparent` in the metadata                                   |
 
@@ -463,8 +467,9 @@ grpc.close(); // on shutdown, after whatever makes the calls has stopped
   `timeoutMs` bounds the whole call.
 - **Config**: `GrpcTargetConfig` (JSDoc has every key and default) — an
   omitted key keeps its default, **zero means disabled**; an invalid list
-  fails the constructor with every problem named. The service config comes
-  from here only (a DNS TXT one is ignored). The keys are golang-basics'
+  fails the constructor with every problem named. `caFile` gives one target a
+  private trust store; `waitForReady` requires a positive `timeoutMs`. The
+  service config comes from here only (a DNS TXT one is ignored). The keys are golang-basics'
   `grpcx` YAML in camelCase and milliseconds; the breaker differs where
   opossum does (`>` instead of `≥`, one probe, no transitions counter).
 - **Against real servers** — `grpc-clients.integration.spec.ts` runs the
@@ -887,6 +892,22 @@ give it the admin token: every request must then carry it, as
 of HTTP Basic auth (any user name). Without a token there is no guard; that is
 for a local stack only.
 
+### Valkey topologies and compare-and-set
+
+`VALKEY_URL` selects the client topology without a second set of keys:
+
+```text
+standalone: redis://cache:6379/0
+cluster:    redis://cache-a:6379?addr=cache-b:6379&addr=cache-c:6379
+sentinel:   redis://sentinel-a:26379?addr=sentinel-b:26379&master_set=primary
+```
+
+A cluster uses DB 0. TLS and the configured CA apply to Sentinel connections as
+well as to data connections. BullMQ uses the same topology. `TierCache` and
+`CacheAside` replace existing entries atomically: `VALKEY_COMPARE_AND_SET=ifeq`
+(the default) uses `SET IFEQ` on Valkey 8.1+; `lua` supports older servers and
+requires `EVAL` permission.
+
 ### Cache-aside
 
 `CacheAside` (`@base/cache`) is the read-through helper over the Valkey
@@ -906,7 +927,9 @@ await afterCommit(() => cache.tombstone(`task:${id}`, 5_000));
   row just before the commit cannot write it back, because its fill is refused
   until the tombstone expires (make that a few times the slowest load).
 - A cache that is down, slow or corrupt is a miss and a warning — never an
-  error for the caller. `cache_lookups_total{result}` gives the hit ratio.
+  error for the caller. A corrupt entry is replaced by compare-and-set, and a
+  failed lookup does not cost a second timed-out command.
+  `cache_lookups_total{result}` gives the hit ratio.
 
 ### Two-level cache
 
@@ -941,8 +964,10 @@ await afterCommit(() => creds.invalidate(keyOf(apiKey)));
   in L2 and publishes it, so every other process drops it too. Pub/Sub is at
   most once: each time the subscription is re-established, L1 is emptied.
 - **A load that raced an invalidation is cached nowhere**: L2 refuses the
-  fill (tombstone, or `SET … IFEQ` for a refresh — Valkey ≥ 8.1), and then L1
-  does not keep it either.
+  fill (tombstone, or compare-and-set for a refresh), and then L1 does not keep
+  it either. Invalidation affects its own key, not unrelated fills in flight.
+- L1 limits are UTF-8 byte budgets for the key and encoded envelope, including
+  non-ASCII values; oversize entries are served from L2 without entering L1.
 - **A read that follows an invalidation starts its own lookup**: one already
   in flight may have read the old row, so it answers the callers it has and
   nobody else.
@@ -973,13 +998,18 @@ wrap around it each time — the counterpart of golang-basics' `libs/s3`:
 const config = s3ConfigFromEnv(process.env, "INGEST_"); // INGEST_S3_BUCKET, …
 if (s3Configured(config)) {
   const store = new S3Store(config);
-  readiness.register("s3", () => store.ready(), { critical: false });
+  readiness.register({ name: "s3", check: () => store.ready().then(() => "ok"), optional: true });
   await store.put(key, body, "application/zstd");
 }
 ```
 
 - The constructor does no network I/O; `ensure()` verifies the bucket (and
-  creates it with `S3_AUTO_CREATE_BUCKET`, for local stacks).
+  creates it with `S3_AUTO_CREATE_BUCKET`, for local stacks). On AWS a new
+  bucket is created in `S3_REGION`; `BucketAlreadyExists` (a name held by
+  another account) is an error; `BucketAlreadyOwnedByYou` is accepted.
+- `S3BucketNotFoundError` distinguishes a missing bucket from a missing key.
+  After `write()` fails, `close()` aborts the multipart upload instead of
+  publishing an incomplete object.
 - **Every call has its own deadline**, the SDK's retries inside it:
   `S3_OP_TIMEOUT_MS` (10 s) for put / head / a list page / a delete batch,
   `S3_TRANSFER_TIMEOUT_MS` (60 s) for a get or a multipart part.

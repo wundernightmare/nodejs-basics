@@ -271,6 +271,19 @@ const REGISTRY = [
   },
 
   {
+    key: "HEALTH_CHECK_INTERVAL_MS",
+    yaml: "app.health_check_interval_ms",
+    type: "int",
+    min: 1,
+    required: false,
+    default: "10000",
+    description:
+      "How often dependency readiness checks run in the background. /readyz returns the latest " +
+      "snapshot without calling dependencies.",
+    usedIn: ["observability"],
+  },
+
+  {
     key: "ADMIN_HOST",
     yaml: "app.admin_host",
     required: false,
@@ -963,6 +976,19 @@ const REGISTRY = [
     required: false,
     default: "5000",
     description: "Reconnect delay cap.",
+    usedIn: ["cache"],
+  },
+
+  {
+    key: "VALKEY_COMPARE_AND_SET",
+    yaml: "cache.compare_and_set",
+    type: "enum",
+    values: ["ifeq", "lua"],
+    required: false,
+    default: "ifeq",
+    description:
+      "Atomic cache replacement: SET IFEQ on Valkey 8.1+, or a Lua compare-and-set for older " +
+      "servers (requires EVAL permission). Used by TierCache and CacheAside.",
     usedIn: ["cache"],
   },
 

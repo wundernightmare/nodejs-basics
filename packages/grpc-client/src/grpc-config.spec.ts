@@ -30,6 +30,7 @@ describe("gRPC target config", () => {
     expect(resolveGrpcTarget(base)).toEqual({
       ...base,
       insecure: false,
+      caFile: "",
       timeoutMs: 5000,
       waitForReady: false,
       loadBalancing: "round_robin",
@@ -84,6 +85,16 @@ describe("gRPC target config", () => {
 
   it.each<[string, Partial<GrpcTargetConfig>, string]>([
     ["no address", { address: "" }, "address is required"],
+    [
+      "waitForReady without a deadline",
+      { waitForReady: true, timeoutMs: 0 },
+      "timeoutMs must be > 0 with waitForReady",
+    ],
+    [
+      "a CA on a plaintext target",
+      { insecure: true, caFile: "ca.pem" },
+      "caFile is set but insecure is true",
+    ],
     ["negative timeout", { timeoutMs: -1 }, "timeoutMs must be a whole number ≥ 0"],
     ["fractional timeout", { timeoutMs: 1.5 }, "timeoutMs must be a whole number ≥ 0"],
     [

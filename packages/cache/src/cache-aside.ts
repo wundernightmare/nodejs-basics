@@ -1,6 +1,8 @@
 import { metrics } from "@opentelemetry/api";
 import type { Counter, Meter } from "@opentelemetry/api";
 
+import { compareAndSet, type CompareAndSetMode, type ValkeyCasClient } from "./valkey-cas.js";
+
 /**
  * Marks a key as "recently invalidated": a lookup reports it as a miss and a
  * cache fill (SET NX) cannot overwrite it. Not valid JSON, so no cached value
@@ -8,8 +10,7 @@ import type { Counter, Meter } from "@opentelemetry/api";
  */
 export const TOMBSTONE = "\u0000valkey:tombstone";
 
-/** The two commands the helper needs — an iovalkey client, or a stand-in in a test. */
-export interface AsideClient {
+export interface AsideClient extends ValkeyCasClient {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, px: "PX", ms: number): Promise<unknown>;
   set(key: string, value: string, px: "PX", ms: number, nx: "NX"): Promise<unknown>;
@@ -25,6 +26,8 @@ export interface CacheAsideOptions {
   meter?: Meter;
   /** Random source for the TTL jitter, in [0, 1). Default: Math.random. */
   random?: () => number;
+  /** "ifeq" requires Valkey 8.1+; "lua" supports older servers. Default: "ifeq". */
+  compareAndSet?: CompareAndSetMode;
 }
 
 /**
@@ -52,16 +55,21 @@ export function jitter(ttlMs: number, random: () => number = Math.random): numbe
  *   value — treat it as read-only.
  * - The fill is a SET NX with ttl ±10 %: it never overwrites a tombstone, so a
  *   load that raced an invalidation cannot resurrect stale data.
- * - A corrupt entry, a failed lookup or a failed fill is a miss / a warning:
- *   the source of truth always wins, so caching never turns a readable value
- *   into an error. The loader's own error is thrown as it is.
+ * - Corrupt entries are replaced only if unchanged since the lookup. Lookup
+ *   failures skip the cache fill; loader errors propagate unchanged.
  *
  * Values are JSON; a loader that returns undefined is not cached.
  */
+type LookupResult =
+  | { kind: "hit"; value: unknown }
+  | { kind: "miss"; old?: string }
+  | { kind: "error" };
+
 export class CacheAside {
   readonly #client: AsideClient;
   readonly #logger: AsideLogger | undefined;
   readonly #random: () => number;
+  readonly #compareAndSet: CompareAndSetMode;
   readonly #lookups: Counter;
   readonly #flights = new Map<string, Promise<unknown>>();
 
@@ -69,6 +77,7 @@ export class CacheAside {
     this.#client = client;
     this.#logger = options.logger;
     this.#random = options.random ?? Math.random;
+    this.#compareAndSet = options.compareAndSet ?? "ifeq";
     this.#lookups = (options.meter ?? metrics.getMeter("cache")).createCounter(
       "cache_lookups_total",
       {
@@ -85,11 +94,11 @@ export class CacheAside {
     load: () => Promise<T>,
   ): Promise<{ value: T; hit: boolean }> {
     const cached = await this.#lookup(key);
-    if (cached !== undefined) return { value: cached.value as T, hit: true };
+    if (cached.kind === "hit") return { value: cached.value as T, hit: true };
 
     let flight = this.#flights.get(key) as Promise<T> | undefined;
     if (flight === undefined) {
-      flight = this.#loadAndFill(key, ttlMs, load).finally(() => {
+      flight = this.#loadAndFill(key, ttlMs, load, cached).finally(() => {
         this.#flights.delete(key);
       });
       this.#flights.set(key, flight);
@@ -115,29 +124,34 @@ export class CacheAside {
     await this.#client.set(key, TOMBSTONE, "PX", Math.ceil(ttlMs));
   }
 
-  async #lookup(key: string): Promise<{ value: unknown } | undefined> {
+  async #lookup(key: string): Promise<LookupResult> {
     let raw: string | null;
     try {
       raw = await this.#client.get(key);
     } catch (err) {
       this.#lookups.add(1, { result: "error" });
       this.#warn(key, "Cache lookup failed, loading from source", err);
-      return undefined;
+      return { kind: "error" };
     }
     if (raw === null || raw === TOMBSTONE) {
       this.#lookups.add(1, { result: "miss" });
-      return undefined;
+      return { kind: "miss" };
     }
     this.#lookups.add(1, { result: "hit" });
     try {
-      return { value: JSON.parse(raw) as unknown };
+      return { kind: "hit", value: JSON.parse(raw) as unknown };
     } catch {
       this.#warn(key, "Discarding corrupt cache entry");
-      return undefined;
+      return { kind: "miss", old: raw };
     }
   }
 
-  async #loadAndFill<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  async #loadAndFill<T>(
+    key: string,
+    ttlMs: number,
+    load: () => Promise<T>,
+    lookup: LookupResult,
+  ): Promise<T> {
     const value = await load();
     let encoded: string | undefined;
     try {
@@ -145,10 +159,14 @@ export class CacheAside {
     } catch (err) {
       this.#warn(key, "Cannot encode value for the cache", err);
     }
-    if (encoded !== undefined) {
+    if (encoded !== undefined && lookup.kind !== "error") {
       try {
         const ttl = Math.max(1, Math.ceil(jitter(ttlMs, this.#random)));
-        await this.#client.set(key, encoded, "PX", ttl, "NX");
+        if (lookup.kind === "miss" && lookup.old !== undefined) {
+          await compareAndSet(this.#client, this.#compareAndSet, key, lookup.old, encoded, ttl);
+        } else {
+          await this.#client.set(key, encoded, "PX", ttl, "NX");
+        }
       } catch (err) {
         this.#warn(key, "Cache write failed", err);
       }

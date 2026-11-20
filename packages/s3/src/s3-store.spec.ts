@@ -137,6 +137,17 @@ describe("S3Store", () => {
     }
   });
 
+  it("does not confuse a missing bucket with a missing key", async () => {
+    await testCase("NB-1210", "s3 store: a missing bucket is an error, not an absent key");
+    const api = fakeApi({
+      GetObject: () => Promise.reject(awsError("NoSuchBucket", 404)),
+      HeadObject: () => Promise.reject(awsError("NoSuchBucket", 404)),
+    });
+    const s3 = store(api);
+    await expect(s3.get("k", 10)).rejects.toMatchObject({ name: "S3BucketNotFoundError" });
+    await expect(s3.head("k")).rejects.toMatchObject({ name: "S3BucketNotFoundError" });
+  });
+
   it("refuses an object over the limit, declared or not", async () => {
     await testCase("NB-1211", "s3 store: get is bounded by the caller's limit");
     let destroyed = 0;
@@ -259,12 +270,26 @@ describe("S3Store", () => {
     await store(creating, { autoCreateBucket: true }).ensure();
     expect(creating.sent.map((s) => s.name)).toEqual(["HeadBucket", "CreateBucket"]);
 
+    const explicitlyMissing = fakeApi({
+      HeadBucket: () => Promise.reject(awsError("NoSuchBucket", 404)),
+    });
+    await store(explicitlyMissing, { autoCreateBucket: true }).ensure();
+    expect(explicitlyMissing.sent.map((s) => s.name)).toEqual(["HeadBucket", "CreateBucket"]);
+
     // Lost the race to another instance: the bucket is there, which is what was asked for.
     const raced = fakeApi({
       ...missing,
       CreateBucket: () => Promise.reject(awsError("BucketAlreadyOwnedByYou", 409)),
     });
     await store(raced, { autoCreateBucket: true }).ensure();
+
+    const taken = fakeApi({
+      ...missing,
+      CreateBucket: () => Promise.reject(awsError("BucketAlreadyExists", 409)),
+    });
+    await expect(store(taken, { autoCreateBucket: true }).ensure()).rejects.toThrow(
+      "BucketAlreadyExists",
+    );
 
     const denied = fakeApi({
       ...missing,
@@ -283,6 +308,24 @@ describe("S3Store", () => {
     const present = fakeApi();
     await store(present, { autoCreateBucket: true }).ensure();
     expect(present.sent.map((s) => s.name)).toEqual(["HeadBucket"]);
+  });
+
+  it("creates an AWS bucket in its configured region", async () => {
+    await testCase("NB-1216", "s3 store: ensure creates an AWS bucket in S3_REGION");
+    for (const [endpoint, region, location] of [
+      ["", "eu-west-1", "eu-west-1"],
+      ["", "us-east-1", undefined],
+      ["https://s3.internal", "eu-west-1", undefined],
+    ] as const) {
+      const api = fakeApi({
+        HeadBucket: () => Promise.reject(awsError("NotFound", 404)),
+      });
+      await store(api, { endpoint, region, autoCreateBucket: true }).ensure();
+      const created = api.sent.find((s) => s.name === "CreateBucket")?.input;
+      expect(created?.["CreateBucketConfiguration"]).toEqual(
+        location === undefined ? undefined : { LocationConstraint: location },
+      );
+    }
   });
 
   it("uploads a small object as one put", async () => {
@@ -332,6 +375,25 @@ describe("S3Store", () => {
         { PartNumber: 3, ETag: "etag-3" },
       ],
     });
+  });
+
+  it("never completes an upload after one of its parts failed", async () => {
+    await testCase("NB-1382", "s3 upload: a failed write cannot complete the object");
+    const api = fakeApi({
+      CreateMultipartUpload: () => ({ UploadId: "u1" }),
+      UploadPart: (sent) =>
+        sent.input["PartNumber"] === 2
+          ? Promise.reject(awsError("InternalError", 500))
+          : { ETag: `etag-${String(sent.input["PartNumber"])}` },
+    });
+    const upload = store(api, { uploadPartBytes: MIN_PART_BYTES }).upload("big");
+    await expect(upload.write(Buffer.alloc(2 * MIN_PART_BYTES))).rejects.toThrow("InternalError");
+    await expect(upload.write("more")).rejects.toThrow("InternalError");
+    await expect(upload.close()).rejects.toThrow("InternalError");
+    await expect(upload.close()).rejects.toThrow("InternalError");
+
+    expect(api.sent.some((s) => s.name === "CompleteMultipartUpload")).toBe(false);
+    expect(api.sent.filter((s) => s.name === "AbortMultipartUpload")).toHaveLength(1);
   });
 
   it("aborts an upload that fails midway, and one the writer gives up", async () => {

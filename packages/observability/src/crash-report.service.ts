@@ -23,7 +23,7 @@
  * S3 key pattern:
  *   <PREFIX>/<SERVICE>/<HOSTNAME>/<DATE>/crash-<ts>.<ext>
  */
-import { createReadStream, unlink } from "node:fs";
+import { createReadStream, unlink, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -38,6 +38,22 @@ const S3_BUCKET = process.env["HEAP_SNAPSHOT_S3_BUCKET"];
 const S3_PREFIX = process.env["CRASH_REPORT_S3_PREFIX"] ?? "crash-reports";
 const SERVICE_NAME = process.env["OTEL_SERVICE_NAME"] ?? "app";
 const UPLOAD_TIMEOUT_MS = 10_000;
+
+interface DiagnosticReport {
+  environmentVariables?: unknown;
+  workers?: DiagnosticReport[];
+}
+
+function removeEnvironment(report: DiagnosticReport): void {
+  delete report.environmentVariables;
+  for (const worker of report.workers ?? []) removeEnvironment(worker);
+}
+
+export function writeCrashReport(path: string): void {
+  const report = process.report.getReport() as DiagnosticReport;
+  removeEnvironment(report);
+  writeFileSync(path, JSON.stringify(report), { mode: 0o600 });
+}
 
 /**
  * Synchronous ECS-formatted log line written directly to stderr.
@@ -120,7 +136,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
     const reportLocalPath = join(tmpdir(), `${base}.json`);
     const snapshotLocalPath = join(tmpdir(), `${base}.heapsnapshot`);
 
-    process.report.writeReport(reportLocalPath);
+    writeCrashReport(reportLocalPath);
     v8.writeHeapSnapshot(snapshotLocalPath);
 
     this.logger.info(
@@ -174,7 +190,7 @@ export class CrashReportService implements OnApplicationBootstrap, OnApplication
     const snapshotLocalPath = join(tmpdir(), `${base}.heapsnapshot`);
 
     try {
-      process.report.writeReport(reportLocalPath);
+      writeCrashReport(reportLocalPath);
       crashLog("info", { "file.path": reportLocalPath }, "Diagnostic report written");
     } catch {
       crashLog("warn", {}, "Failed to write diagnostic report");
