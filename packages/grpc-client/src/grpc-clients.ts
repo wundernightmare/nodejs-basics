@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import {
   Channel,
   type ChannelCredentials,
@@ -89,6 +91,16 @@ export class GrpcClients {
     const problems = grpcTargetProblems(resolved);
     if (problems.length > 0) throw new Error(`invalid gRPC targets: ${problems.join("; ")}`);
 
+    const trust = new Map<string, Buffer>();
+    for (const target of resolved) {
+      if (target.caFile === "") continue;
+      try {
+        trust.set(target.name, readFileSync(target.caFile));
+      } catch (err) {
+        throw new Error(`gRPC target ${target.name}: cannot read caFile`, { cause: err });
+      }
+    }
+
     const instruments = createInstruments(opts.meter ?? metrics.getMeter("grpc.client"), () =>
       [...this.#targets].map(([name, { policy }]) => [name, policy.breakerState]),
     );
@@ -96,9 +108,12 @@ export class GrpcClients {
       instruments.dispose();
     };
     for (const config of resolved) {
+      const ca = trust.get(config.name);
       const creds = config.insecure
         ? credentials.createInsecure()
-        : (opts.credentials ?? credentials.createSsl());
+        : ca !== undefined
+          ? credentials.createSsl(ca)
+          : (opts.credentials ?? credentials.createSsl());
       this.#targets.set(config.name, {
         config,
         credentials: creds,

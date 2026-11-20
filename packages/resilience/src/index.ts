@@ -1,3 +1,4 @@
+export { type BackoffSpec, computeJitteredDelay, sleep } from "./backoff.js";
 export {
   buildCircuitBreaker,
   type CircuitBreakerConfig,

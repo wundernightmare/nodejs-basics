@@ -73,6 +73,16 @@ function resolveCa(config: ConfigService): Buffer | undefined {
   return undefined;
 }
 
+function withoutSSLMode(connectionString: string): string {
+  const at = connectionString.indexOf("?");
+  if (at === -1) return connectionString;
+  const base = connectionString.slice(0, at);
+  const params = new URLSearchParams(connectionString.slice(at + 1));
+  params.delete("sslmode");
+  const query = params.toString();
+  return query === "" ? base : `${base}?${query}`;
+}
+
 export function buildPostgresConfig(
   config: ConfigService,
   opts: { variant?: "primary" | "readonly" } = {},
@@ -123,12 +133,6 @@ export function buildPostgresConfig(
     password: readSecretFile(config, "DATABASE_PASSWORD_FILE"),
   });
 
-  // ── TLS block on the pg Pool ─────────────────────────────────────────────
-  //
-  // pg's `ssl` option accepts tls.ConnectionOptions. It overlays libpq's
-  // sslmode — use both: the URL param tells libpq to enable TLS, the
-  // pool option fills in CA + skipVerify so Node's TLS path has what it
-  // needs. No-op when no CA is configured AND sslmode is absent.
   const skipVerify = readBool(config, "DATABASE_SSL_SKIP_VERIFY");
   const ca = resolveCa(config);
   const sslMode = readString(config, "DATABASE_SSL_MODE");
@@ -140,12 +144,8 @@ export function buildPostgresConfig(
         rejectUnauthorized: !skipVerify,
       }
     : (false as const);
-  // ssl=false (vs undefined) is intentional: pg.Pool's URL parser overlays
-  // sslmode → ssl on top-level options when present, but if a downstream
-  // adapter (e.g. @prisma/adapter-pg) reconstructs the pool from
-  // pool.options, the URL re-parse can pick up stray TLS state. Explicit
-  // false in PoolConfig forces ssl off across both the original pool and
-  // any clone built off pool.options.
+  // In pg 8.23, a URL's sslmode overrides the explicit ssl object.
+  const connectionString = useNative || ssl === false ? decorated : withoutSSLMode(decorated);
 
   // ── Session-level server budgets ─────────────────────────────────────────
   //
@@ -177,7 +177,7 @@ export function buildPostgresConfig(
 
   // ── Pool / query knobs ───────────────────────────────────────────────────
   const poolOptions: PoolConfig = {
-    connectionString: decorated,
+    connectionString,
     // TCP keepalive defaults to on — managed LBs (AWS NLB, GCP, Yandex)
     // silently drop idle conns otherwise.
     keepAlive: readBool(config, "DATABASE_KEEPALIVE"),

@@ -1,6 +1,6 @@
 import type { ConfigService } from "@nestjs/config";
 
-import { computeJitteredDelay, sleep } from "@base/resilient-client";
+import { computeJitteredDelay, sleep } from "./backoff.js";
 
 /**
  * Normalised retry policy shared across every downstream driver

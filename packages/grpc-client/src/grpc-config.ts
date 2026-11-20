@@ -12,6 +12,8 @@ export interface GrpcTargetConfig {
   address: string;
   /** Plaintext instead of TLS with the system roots. Default: false. */
   insecure?: boolean;
+  /** CA bundle for this target; replaces system roots and cannot be used with insecure. */
+  caFile?: string;
   /** Whole call, retries included; a caller's shorter deadline wins. 0 = only the caller's. Default: 5000. */
   timeoutMs?: number;
   /** Queue calls while the connection is down instead of failing them. Default: false. */
@@ -60,6 +62,7 @@ export interface ResolvedGrpcTarget {
   name: string;
   address: string;
   insecure: boolean;
+  caFile: string;
   timeoutMs: number;
   waitForReady: boolean;
   loadBalancing: string;
@@ -92,6 +95,7 @@ export function resolveGrpcTarget(target: GrpcTargetConfig): ResolvedGrpcTarget 
     name: target.name,
     address: target.address,
     insecure: target.insecure ?? false,
+    caFile: target.caFile ?? "",
     timeoutMs: target.timeoutMs ?? 5000,
     waitForReady: target.waitForReady ?? false,
     loadBalancing: target.loadBalancing ?? "round_robin",
@@ -141,6 +145,8 @@ function problemsOf(target: ResolvedGrpcTarget): string[] {
 
   check(target.address !== "", "address is required");
   check(isCount(target.timeoutMs), "timeoutMs must be a whole number ≥ 0");
+  check(!target.waitForReady || target.timeoutMs > 0, "timeoutMs must be > 0 with waitForReady");
+  check(!(target.insecure && target.caFile !== ""), "caFile is set but insecure is true");
   check(
     target.loadBalancing === "round_robin" || target.loadBalancing === "pick_first",
     "loadBalancing must be round_robin or pick_first",

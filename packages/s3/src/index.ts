@@ -7,6 +7,7 @@ export {
   type S3Config,
 } from "./s3-config.js";
 export {
+  S3BucketNotFoundError,
   S3Error,
   S3Store,
   S3TooLargeError,

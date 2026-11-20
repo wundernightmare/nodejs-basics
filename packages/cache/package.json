@@ -30,7 +30,6 @@
     "@base/common": "workspace:*",
     "@base/config": "workspace:*",
     "@base/resilience": "workspace:*",
-    "@base/resilient-client": "workspace:*",
     "@opentelemetry/api": "1.9.1",
     "iovalkey": "0.4.0"
   },
@@ -39,6 +38,7 @@
     "@nestjs/config": "12.x"
   },
   "devDependencies": {
-    "@base/testing": "workspace:*"
+    "@base/testing": "workspace:*",
+    "testcontainers": "12.2.1"
   }
 }

@@ -1,24 +1,29 @@
-import type { Redis as Valkey } from "iovalkey";
+import { Cluster, type Redis as Valkey } from "iovalkey";
 
 import { TOMBSTONE } from "./cache-aside.js";
 import type { TierCacheLogger, TierRemote } from "./tier-cache.js";
+import { compareAndSet, type CompareAndSetMode } from "./valkey-cas.js";
 
 /**
  * {@link TierRemote} over a Valkey client. Commands go through the client it
  * is given (its commandTimeout, tracing and deadline guard apply); a
  * subscription gets a connection of its own, as the protocol requires.
  *
- * `replace` is SET … IFEQ (Valkey ≥ 8.1): a tombstone or a newer value
- * written in between makes the comparison fail, so a refresh that raced an
- * invalidation cannot resurrect stale data.
+ * `replace` is an atomic compare-and-set: SET … IFEQ on Valkey 8.1+, or Lua
+ * for older servers. A tombstone or a newer value makes the comparison fail.
  */
 export class ValkeyRemote implements TierRemote {
-  readonly #client: Valkey;
+  readonly #client: Valkey | Cluster;
   readonly #logger: TierCacheLogger | undefined;
+  readonly #compareAndSet: CompareAndSetMode;
 
-  constructor(client: Valkey, options: { logger?: TierCacheLogger } = {}) {
+  constructor(
+    client: Valkey | Cluster,
+    options: { logger?: TierCacheLogger; compareAndSet?: CompareAndSetMode } = {},
+  ) {
     this.#client = client;
     this.#logger = options.logger;
+    this.#compareAndSet = options.compareAndSet ?? "ifeq";
   }
 
   async get(key: string): Promise<string | undefined> {
@@ -31,8 +36,7 @@ export class ValkeyRemote implements TierRemote {
   }
 
   async replace(key: string, old: string, value: string, ttlMs: number): Promise<boolean> {
-    const reply = await this.#client.call("SET", key, value, "IFEQ", old, "PX", px(ttlMs));
-    return reply === "OK";
+    return compareAndSet(this.#client, this.#compareAndSet, key, old, value, ttlMs);
   }
 
   async tombstone(key: string, ttlMs: number): Promise<void> {
@@ -58,12 +62,16 @@ export class ValkeyRemote implements TierRemote {
   ): Promise<() => Promise<void>> {
     // Resubscribing by hand, on every "ready": the acknowledgement is the
     // point from which no message is missed, and autoResubscribe hides it.
-    const connection = this.#client.duplicate({
+    const overrides = {
       autoResubscribe: false,
       enableOfflineQueue: false,
       lazyConnect: false,
       maxRetriesPerRequest: null,
-    });
+    };
+    const connection =
+      this.#client instanceof Cluster
+        ? this.#client.duplicate(undefined, overrides)
+        : this.#client.duplicate(overrides);
     connection.on("error", (err: Error) => {
       this.#logger?.warn(
         { "cache.channel": channel, "error.message": err.message },

@@ -45,6 +45,7 @@
   },
   "devDependencies": {
     "@base/testing": "workspace:*",
-    "@types/pg": "8.23.1"
+    "@types/pg": "8.23.1",
+    "testcontainers": "12.2.1"
   }
 }

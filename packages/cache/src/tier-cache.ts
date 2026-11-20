@@ -216,6 +216,11 @@ interface Entry<T> {
   bytes: number;
 }
 
+interface Epoch {
+  key: number;
+  all: number;
+}
+
 type Source = "l2" | "load" | "stale_error" | "not_found";
 
 interface Resolved<T> {
@@ -307,12 +312,9 @@ export class TierCache<T> {
 
   readonly #local = new Map<string, Entry<T>>();
   #bytes = 0;
-  /**
-   * Bumped by every invalidation. A fill checks that it has not moved since
-   * its lookup began: a value read just before an invalidation must not be
-   * written to L1 just after it and live there for a full TTL.
-   */
-  #epoch = 0;
+  /** A fill must not cross an invalidation of its key or a full reset. */
+  readonly #epochs = new Map<string, number>();
+  #resets = 0;
 
   /** The lookup a read of the key may join. An invalidation takes it out: see #forget. */
   readonly #flights = new Map<string, Promise<Resolved<T>>>();
@@ -494,7 +496,7 @@ export class TierCache<T> {
     } catch {
       return undefined; // corrupt payload: as good as absent
     }
-    return { softMs, hardMs, value, size: held.length };
+    return { softMs, hardMs, value, size: Buffer.byteLength(held) };
   }
 
   /**
@@ -504,7 +506,7 @@ export class TierCache<T> {
    * never falls back to an expired one.
    */
   async #resolve(key: string, refreshing: boolean, signal: AbortSignal): Promise<Resolved<T>> {
-    const epoch = this.#epoch;
+    const epoch = this.#epochOf(key);
     const remoteKey = this.#prefix + key;
 
     // What L2 holds now: the value a refresh replaces (compare-and-set), and
@@ -536,8 +538,7 @@ export class TierCache<T> {
     }
 
     if (value === undefined) {
-      // Gone from the source: stop serving what L1 and L2 still have.
-      this.#invalidateLocal(key);
+      this.#drop(key);
       if (held !== undefined) {
         await this.#remoteCall(
           // Stryker disable next-line OptionalChaining: L2 held something, so there is an L2
@@ -568,7 +569,14 @@ export class TierCache<T> {
     // not keep it either. With L2 unreachable there is nobody to ask — and
     // nobody to learn of an invalidation from; L1 keeps it for its TTL.
     if (await this.#remoteStore(remoteKey, held, envelope, hardTtl + this.#cfg.staleIfErrorMs)) {
-      this.#fill(epoch, key, value, filledAt + softTtl, filledAt + hardTtl, envelope.length);
+      this.#fill(
+        epoch,
+        key,
+        value,
+        filledAt + softTtl,
+        filledAt + hardTtl,
+        Buffer.byteLength(envelope),
+      );
     }
     return { value, source: "load" };
   }
@@ -605,14 +613,15 @@ export class TierCache<T> {
    * oldest entries. A value that outgrew L1 takes its previous version out:
    * that one must not be served in place of the one just read.
    */
-  #fill(epoch: number, key: string, value: T, softMs: number, hardMs: number, size: number): void {
-    const bytes = key.length + size;
+  #fill(epoch: Epoch, key: string, value: T, softMs: number, hardMs: number, size: number): void {
+    const bytes = Buffer.byteLength(key) + size;
     if (bytes > this.#cfg.maxEntryBytes) {
       this.#oversize.add(1, this.#labels);
       this.#drop(key);
       return;
     }
-    if (this.#epoch !== epoch) return;
+    const current = this.#epochOf(key);
+    if (current.key !== epoch.key || current.all !== epoch.all) return;
 
     this.#drop(key);
     this.#local.set(key, { softMs, hardMs, value, bytes });
@@ -624,6 +633,10 @@ export class TierCache<T> {
     }
   }
 
+  #epochOf(key: string): Epoch {
+    return { key: this.#epochs.get(key) ?? 0, all: this.#resets };
+  }
+
   #drop(key: string): void {
     const entry = this.#local.get(key);
     if (entry === undefined) return;
@@ -632,7 +645,7 @@ export class TierCache<T> {
   }
 
   #invalidateLocal(key: string): void {
-    this.#epoch += 1;
+    this.#epochs.set(key, (this.#epochs.get(key) ?? 0) + 1);
     this.#drop(key);
     // The lookup in flight may have read the old row: its callers keep it,
     // the next read starts its own.
@@ -642,7 +655,7 @@ export class TierCache<T> {
 
   /** Empties L1: invalidations may have been missed. */
   #reset(): void {
-    this.#epoch += 1;
+    this.#resets += 1;
     this.#local.clear();
     this.#bytes = 0;
     this.#flights.clear();

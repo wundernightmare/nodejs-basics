@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppLogger, pinoLogger } from "@base/logger";
 import { captureMetrics, metricValue, testCase } from "@base/testing";
@@ -69,6 +69,51 @@ describe("ReadinessService", () => {
     expect((await s.check()).status).toBe("not_ready");
     s.register({ ...failing, check: async () => "ok" });
     expect(await s.check()).toEqual({ status: "ok", ok: true, checks: { kafka: "ok" } });
+  });
+
+  it("answers repeated probes from one snapshot and refreshes it in the background", async () => {
+    await testCase(
+      "NB-1384",
+      "Readiness: probes do not call dependencies; the background loop does",
+    );
+    vi.useFakeTimers();
+    const saved = process.env["HEALTH_CHECK_INTERVAL_MS"];
+    process.env["HEALTH_CHECK_INTERVAL_MS"] = "10";
+    let calls = 0;
+    const s = service([
+      {
+        name: "db",
+        check: () => {
+          calls += 1;
+          return Promise.resolve("ok");
+        },
+      },
+    ]);
+    try {
+      await s.onApplicationBootstrap();
+      await s.check();
+      await s.check();
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(calls).toBe(3);
+      await s.onApplicationShutdown();
+    } finally {
+      if (saved === undefined) delete process.env["HEALTH_CHECK_INTERVAL_MS"];
+      else process.env["HEALTH_CHECK_INTERVAL_MS"] = saved;
+      vi.useRealTimers();
+    }
+  });
+
+  it("redacts credentials in a failed check's answer", async () => {
+    await testCase("NB-1385", "Readiness: dependency errors are redacted");
+    const s = service([
+      {
+        name: "db",
+        check: () => Promise.reject(new Error("postgres://app:secret@db/app?password=secret")),
+      },
+    ]);
+    const result = await s.check();
+    expect(result.checks["db"]).toBe("postgres://app:xxxxx@db/app?password=[redacted]");
   });
 
   it("closing the gate (beforeApplicationShutdown) makes it not_ready regardless of checks", async () => {

@@ -3,7 +3,9 @@ export {
   buildValkeyConfig,
   toBullMqOptions,
   toClientOptions,
+  type ValkeyAddress,
   type ValkeyBuilderResult,
+  type ValkeyTopology,
 } from "./valkey-config.builder.js";
 export { ValkeyLifecycleService } from "./valkey.lifecycle.service.js";
 export { ValkeyModule } from "./valkey.module.js";
@@ -11,11 +13,13 @@ export {
   VALKEY_BREAKER,
   VALKEY_CLIENT,
   VALKEY_METRICS,
+  createValkeyClient,
   valkeyBreakerProvider,
   valkeyMetricsProvider,
   valkeyProvider,
 } from "./valkey.provider.js";
 export { registerValkeyMetrics, type ValkeyMetricsHandle } from "./valkey-metrics.js";
+export { compareAndSet, type CompareAndSetMode, type ValkeyCasClient } from "./valkey-cas.js";
 export { guardValkeyClient } from "./valkey-deadline.js";
 export { traceValkeyClient } from "./valkey-tracing.js";
 export {

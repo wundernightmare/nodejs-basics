@@ -9,6 +9,16 @@ import { meta, testCase } from "@base/testing";
 
 import { buildPostgresConfig } from "./postgres-config.builder.js";
 
+function buildWithNative(native: boolean) {
+  return buildPostgresConfig(
+    new ConfigService({
+      DATABASE_URL: "postgresql://app:app@localhost:5432/app?sslmode=verify-full",
+      DATABASE_SSL_CA_PEM: "test-ca",
+      DATABASE_USE_NATIVE: native,
+    }),
+  );
+}
+
 describe("buildPostgresConfig", () => {
   meta({ epic: "nodejs-basics", feature: "database", owner: "@team-platform", tags: ["database"] });
 
@@ -31,5 +41,19 @@ describe("buildPostgresConfig", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("keeps the explicit TLS options ahead of sslmode for pure-JS pg", async () => {
+    await testCase("NB-1381", "Postgres TLS: the URL cannot discard the configured CA");
+    const pure = buildWithNative(false);
+    expect(new URL(String(pure.poolOptions.connectionString)).searchParams.has("sslmode")).toBe(
+      false,
+    );
+    expect(pure.poolOptions.ssl).toEqual({ ca: Buffer.from("test-ca"), rejectUnauthorized: true });
+    expect(
+      new URL(String(buildWithNative(true).poolOptions.connectionString)).searchParams.get(
+        "sslmode",
+      ),
+    ).toBe("verify-full");
   });
 });

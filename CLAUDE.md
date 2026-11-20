@@ -214,6 +214,10 @@ high-signal, easy-to-miss bits.
   migrate). Tests run with `ADMIN_HOST=127.0.0.1` and
   `HTTP_SHUTDOWN_DELAY_MS=0` (vitest.config.ts `test.env`, the e2e spawn
   harness, schemathesis.sh); `scripts/dev.mjs` sets `ADMIN_INSECURE=true`.
+- **Readiness is cached and redacted**: checks run at boot and every
+  `HEALTH_CHECK_INTERVAL_MS`; `/readyz` reads the snapshot and never calls a
+  dependency per probe. Register with `ReadinessService.register({ name, check,
+  optional })`; `optional: true` degrades without closing readiness.
 - **Data services**: `apps/api` (Postgres + Valkey + Kafka) and `apps/worker`
   (Kafka consumer → jobs) need the backing services. `just deps` (or
   `just stack-up` for the whole thing in containers). The broker is **Redpanda**
@@ -222,6 +226,11 @@ high-signal, easy-to-miss bits.
   scripts/dev.mjs and the stack publishes the same ports — so 9090 stays free
   (Cockpit on Fedora, Prometheus) and `docker/prometheus/prometheus.yml`
   scrapes `host.docker.internal:9091/9093` in both modes.
+- **Valkey topology is selected by `VALKEY_URL`**: repeated `addr=` selects a
+  cluster, `master_set=` selects Sentinel, otherwise standalone. Cluster uses
+  DB 0. `VALKEY_COMPARE_AND_SET=ifeq` (8.1+) or `lua` (older, needs EVAL) chooses
+  the shared atomic replacement used by TierCache and CacheAside; BullMQ gets
+  the same topology and must keep `maxRetriesPerRequest=null` for blocking work.
 - **Log fields are masked by name** (`@base/logger` redact.ts, also
   `/admin/config`): a key containing `password|token|secret|auth|cert|dsn|
   cookie|credential|api_key|…` is written as `[redacted]` — do not name an

@@ -28,17 +28,30 @@ import {
   buildCircuitBreaker,
   buildRetryPolicy,
   type CircuitBreakerConfig,
+  computeJitteredDelay,
   type RetryPolicy,
 } from "@base/resilience";
-import { computeJitteredDelay } from "@base/resilient-client";
+
+import type { CompareAndSetMode } from "./valkey-cas.js";
+
+export type ValkeyTopology = "standalone" | "cluster" | "sentinel";
+
+export interface ValkeyAddress {
+  host: string;
+  port: number;
+}
 
 /**
  * Shared parsed shape — flat enough for both the Valkey provider and the
  * BullMQ factory to consume without further env reads.
  */
 export interface ValkeyBuilderResult {
+  topology: ValkeyTopology;
+  addresses: ValkeyAddress[];
   host: string;
   port: number;
+  masterSet?: string | undefined;
+  compareAndSet: CompareAndSetMode;
   username?: string | undefined;
   /** Never a plain string: it cannot be logged or serialised by accident; `expose()` at the driver. */
   password: Secret;
@@ -92,6 +105,12 @@ function resolveCa(config: ConfigService): Buffer | undefined {
   return undefined;
 }
 
+function parseAddress(raw: string): ValkeyAddress {
+  const parsed = new URL(`redis://${raw}`);
+  if (parsed.hostname === "") throw new Error("VALKEY_URL contains an empty address");
+  return { host: parsed.hostname, port: parsed.port === "" ? 6379 : Number(parsed.port) };
+}
+
 export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
   // Set whenever Valkey is on — the loader checks it (@base/config integrations.ts).
   const url = readString(config, "VALKEY_URL");
@@ -125,9 +144,32 @@ export function buildValkeyConfig(config: ConfigService): ValkeyBuilderResult {
       ? null
       : readInt(config, "VALKEY_MAX_RETRIES_PER_REQUEST");
 
+  const compareAndSet = readString(config, "VALKEY_COMPARE_AND_SET");
+  if (compareAndSet !== "ifeq" && compareAndSet !== "lua") {
+    throw new Error("VALKEY_COMPARE_AND_SET: expected one of ifeq|lua");
+  }
+
+  const addresses = [
+    { host: parsed.hostname, port: parsed.port === "" ? 6379 : Number(parsed.port) },
+    ...parsed.searchParams.getAll("addr").map((address) => parseAddress(address)),
+  ];
+  const masterSet = parsed.searchParams.get("master_set") ?? undefined;
+  const topology: ValkeyTopology =
+    masterSet !== undefined ? "sentinel" : addresses.length > 1 ? "cluster" : "standalone";
+  if (topology === "sentinel" && masterSet === "") {
+    throw new Error("VALKEY_URL master_set must name the Sentinel master");
+  }
+  if (topology === "cluster" && db !== 0) {
+    throw new Error("VALKEY_URL: a cluster uses DB 0");
+  }
+
   return {
-    host: parsed.hostname,
-    port: parsed.port ? Number(parsed.port) : 6379,
+    topology,
+    addresses,
+    host: addresses[0]?.host ?? "",
+    port: addresses[0]?.port ?? 6379,
+    ...(masterSet !== undefined ? { masterSet } : {}),
+    compareAndSet,
     username,
     password,
     db,
@@ -186,6 +228,17 @@ export function buildRetryStrategy(
     );
 }
 
+function endpointOptions(result: ValkeyBuilderResult): Record<string, unknown> {
+  if (result.topology !== "sentinel") return { host: result.host, port: result.port };
+  return {
+    sentinels: result.addresses,
+    name: result.masterSet,
+    ...(result.tls === undefined
+      ? {}
+      : { enableTLSForSentinelMode: true, sentinelTLS: result.tls }),
+  };
+}
+
 /**
  * Shape the parsed config into the option bag the regular Valkey client
  * expects. Adds `lazyConnect` + `enableOfflineQueue=false`: commands fail
@@ -193,8 +246,7 @@ export function buildRetryStrategy(
  */
 export function toClientOptions(result: ValkeyBuilderResult): Record<string, unknown> {
   return {
-    host: result.host,
-    port: result.port,
+    ...endpointOptions(result),
     ...(result.username ? { username: result.username } : {}),
     ...(result.password.isSet ? { password: result.password.expose() } : {}),
     db: result.db,
@@ -225,8 +277,7 @@ export function toClientOptions(result: ValkeyBuilderResult): Record<string, unk
  */
 export function toBullMqOptions(result: ValkeyBuilderResult): Record<string, unknown> {
   return {
-    host: result.host,
-    port: result.port,
+    ...endpointOptions(result),
     ...(result.username ? { username: result.username } : {}),
     ...(result.password.isSet ? { password: result.password.expose() } : {}),
     db: result.db,

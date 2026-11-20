@@ -37,6 +37,23 @@ describe("ResilientClient — adaptive concurrency", () => {
     expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
   });
 
+  it("rejects a limiter that can never admit a request", async () => {
+    expect(() => client(0)).toThrow("initialLimit must be at least 1");
+  });
+
+  it("rejects waiters when the client closes", async () => {
+    const c = client(1);
+    pool.intercept({ path: "/busy", method: "GET" }).reply(200, "busy").delay(50);
+    pool.intercept({ path: "/waiting", method: "GET" }).reply(200, "waiting");
+    const first = c.request({ path: "/busy", method: "GET" });
+    const waiting = c.request({ path: "/waiting", method: "GET" }).catch((err: unknown) => err);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const closing = c.close().catch((err: unknown) => err);
+    expect(await waiting).toMatchObject({ errorType: "shutting_down" });
+    expect(await closing).toBeUndefined();
+    await first;
+  });
+
   it("lowers the limit when a response is far slower than the best seen", async () => {
     // Large enough for ceil(limit × 0.9) to actually move.
     const c = client(20);

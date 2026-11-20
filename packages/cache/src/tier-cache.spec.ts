@@ -1092,6 +1092,46 @@ describe("TierCache", () => {
     }
   });
 
+  it("counts the UTF-8 bytes of keys and encoded values", async () => {
+    await testCase("NB-1187", "tier cache: L1 stays within its byte budget for Unicode");
+    let loads = 0;
+    const envelope = encodeEnvelope(clock + 1_000, clock + 10_000, '"😀"');
+    const bytes = Buffer.byteLength("k" + envelope);
+    const cache = new TierCache<string>(
+      { name: "unicode", hardTtlMs: 10_000, maxEntryBytes: bytes - 1 },
+      () => {
+        loads += 1;
+        return Promise.resolve("😀");
+      },
+      undefined,
+      { now: () => clock, random: () => 0.5 },
+    );
+    try {
+      await cache.get("k");
+      await cache.get("k");
+      expect(loads).toBe(2);
+    } finally {
+      await cache.close();
+    }
+  });
+
+  it("does not cancel a key's fill because another key was invalidated", async () => {
+    await testCase("NB-1183", "tier cache: invalidation affects only its key");
+    const { cache, source } = rig(undefined);
+    source.rows.set("k", 1);
+    let release!: () => void;
+    source.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reading = cache.get("k");
+    await settle();
+    await cache.invalidate("other");
+    release();
+    await reading;
+    await cache.get("k");
+    expect(source.loads).toBe(1);
+  });
+
   it("reports every outcome under its own label", async () => {
     await testCase(
       "NB-1346",
@@ -1109,7 +1149,7 @@ describe("TierCache", () => {
       source.rows.set("k", 1);
       await cache.get("k"); // load
       await cache.get("k"); // fresh
-      await cache.get("absent"); // not_found (and a local invalidation of the key)
+      await cache.get("absent"); // not_found
       server.reconnect(); // a reset
       await cache.get("k"); // l2
 
@@ -1135,7 +1175,7 @@ describe("TierCache", () => {
         ),
       ).toEqual([1, 1, 1, 1, 1, 1, 3]);
       expect(count("tiercache_refreshes_total", { result: "error" })).toBe(1);
-      expect(count("tiercache_invalidations_total", { scope: "key" })).toBe(1);
+      expect(count("tiercache_invalidations_total", { scope: "key" })).toBeLessThanOrEqual(0);
       expect(count("tiercache_invalidations_total", { scope: "all" })).toBe(2); // subscribed, reconnected
       expect(count("tiercache_l2_bypassed_total", {})).toBe(1);
       expect(text).toContain("# UNIT tiercache_l1_bytes By");
